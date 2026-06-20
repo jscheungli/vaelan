@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Clients · {{ company.name }}{% endblock %}
+{% macro stbadge(s) -%}
+  {% if s == 'ok' %}<span class="badge text-bg-success">ok</span>
+  {% elif s == 'no_siret' %}<span class="badge text-bg-danger">SIRET manquant</span>
+  {% elif s == 'no_pennylane' %}<span class="badge text-bg-warning">absent de Pennylane</span>
+  {% elif s == 'incoherent' %}<span class="badge text-bg-danger">incohérent</span>
+  {% else %}<span class="badge text-bg-secondary">{{ s }}</span>{% endif %}
+{%- endmacro %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Clients</li>
+</ol></nav>
+
+<div class="d-flex align-items-center mb-3">
+  <h1 class="h4 mb-0">Comptes clients (pro)</h1>
+  <form method="post" action="/c/{{ company.code }}/clients/sync" class="ms-auto">
+    <button class="btn btn-sm btn-dark"><i class="bi bi-arrow-repeat"></i> Synchroniser</button>
+  </form>
+</div>
+<p class="text-muted small">Correspondance TopOrder ↔ Pennylane par SIRET. Vaelan détecte les anomalies ;
+la correction se fait dans TopOrder / Pennylane, puis on resynchronise.</p>
+
+<div class="mb-3">
+  <span class="me-3"><span class="badge text-bg-success">{{ counts.get('ok', 0) }}</span> ok</span>
+  <span class="me-3"><span class="badge text-bg-danger">{{ counts.get('no_siret', 0) }}</span> sans SIRET</span>
+  <span class="me-3"><span class="badge text-bg-warning">{{ counts.get('no_pennylane', 0) }}</span> absents de Pennylane</span>
+  {% if counts.get('unknown') %}<span class="me-3"><span class="badge text-bg-secondary">{{ counts.get('unknown') }}</span> non synchronisés</span>{% endif %}
+</div>
+
+{% if not rows %}
+  <div class="alert alert-info">Aucun client. Lance une <strong>synchronisation</strong> pour construire la table.</div>
+{% endif %}
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead><tr class="small text-muted"><th>Étab.</th><th>Client TopOrder</th><th>SIRET</th><th>Statut</th><th>Compte 411</th><th>Note</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="small">
+      <td>{{ r.establishment }}</td>
+      <td>{{ r.toporder_name or '—' }}</td>
+      <td><code>{{ r.siret or '' }}</code></td>
+      <td>{{ stbadge(r.status) }}</td>
+      <td>{{ r.account_411 or '' }}</td>
+      <td class="text-muted">{{ r.note or '' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

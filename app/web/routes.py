@@ -10,9 +10,10 @@ from app.core.security import authenticate, current_user, user_companies, role_f
 from app.core import registry
 from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
-from app.models import Company, Run
+from app.models import Company, Run, ClientAccount
 from app.packs.sterna_caisse import config as caisse_config
 from app.packs.sterna_caisse.jobs import run_cadrage
+from app.packs.sterna_caisse.clients_sync import sync_clients
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -118,6 +119,31 @@ def import_run(request: Request, code: str,
     label = f"Cadrage caisse · {short} · {date_from}→{date_to}"
     start_job("cadrage", lambda ctx: run_cadrage(ctx, establishment, date_from, date_to, data),
               company_id=company.id, pack="sterna.caisse", label=label)
+    return RedirectResponse("/jobs", status_code=303)
+
+
+# ----------------------------- Clients (correspondance) -----------------------------
+@router.get("/c/{code}/clients", response_class=HTMLResponse)
+def clients_page(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    from collections import Counter
+    with Session(engine) as s:
+        rows = s.exec(select(ClientAccount).where(ClientAccount.company_id == company.id)
+                      .order_by(ClientAccount.establishment, ClientAccount.toporder_name)).all()
+    counts = Counter(r.status for r in rows)
+    return templates.TemplateResponse(request, "clients.html",
+                                      _ctx(request, company=company, rows=rows, counts=dict(counts)))
+
+
+@router.post("/c/{code}/clients/sync")
+def clients_sync_action(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    start_job("sync_clients", lambda ctx: sync_clients(ctx, company.code),
+              company_id=company.id, pack="sterna.caisse", label="Synchronisation comptes clients")
     return RedirectResponse("/jobs", status_code=303)
 
 

@@ -71,6 +71,27 @@ class DailyState(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ClientAccount(SQLModel, table=True):
+    """Table de correspondance client PRO : TopOrder ↔ Pennylane (clé = SIRET).
+
+    Statut : ok / no_siret / no_pennylane / incoherent. Vaelan ne fait que
+    détecter et alerter ; la correction se fait dans TopOrder / Pennylane.
+    """
+    __tablename__ = "client_accounts"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="companies.id", index=True)
+    establishment: str = Field(index=True)            # SL / LP / SM
+    toporder_company_id: str = Field(index=True)
+    toporder_name: Optional[str] = None
+    siret: Optional[str] = None
+    pennylane_customer_id: Optional[int] = None
+    account_411: Optional[str] = None                 # numéro de compte Pennylane
+    status: str = "unknown"                            # ok / no_siret / no_pennylane / incoherent
+    note: Optional[str] = None
+    last_synced: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ImportBatch(SQLModel, table=True):
     """Un lot d'import (= un CSV = un identifiant compact dans les libellés)."""
     __tablename__ = "imports"
