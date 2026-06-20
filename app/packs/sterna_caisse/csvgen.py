@@ -47,7 +47,7 @@ _PAYKEY = {"CB": "cb", "Carte": "cb", "Espèce": "especes", "Espece": "especes",
            "Ticket restaurant": "ticket_resto", "Titre restaurant": "ticket_resto"}
 
 
-def _resolver(company_id: int):
+def _resolver(company_id: int, cfg: dict):
     """Construit le routeur de créances depuis la table de correspondance (DB).
 
     Renvoie resolve(pfx, coid, cid) -> (numéro de compte 411, nom) ou (None, None)
@@ -64,30 +64,32 @@ def _resolver(company_id: int):
             acc, nm = b2b.get((pfx, coid), (None, None))
             return (acc, nm or "client") if acc else (None, None)
         if cid and cid != ZERO:
-            return config.caisse_accounts(pfx)["b2c_commun"], "Particulier"
+            return cfg["est"][pfx]["b2c_commun"], "Particulier"
         return None, None
 
     return resolve
 
 
 def build_toslt(establishment, date_from, date_to, company_id,
-                batch_code, on_progress=None) -> dict:
+                batch_code, company_code, on_progress=None) -> dict:
     """Construit les lignes du CSV TOSLT. Ne touche à rien si `unresolved` non vide."""
     est = config.ESTABLISHMENTS[establishment]
     pfx = est["pfx"]
     shop_id = est["shop_id"]
-    cat_family = config.ANALYTIC_FAMILY
-    cat_label = config.ANALYTIC_CATEGORY[pfx]
+    cfg = config.resolve(company_code)                 # comptes/journaux éditables (DB + défauts)
+    ecfg = cfg["est"][pfx]
+    cat_family = cfg["analytic_family"]
+    cat_label = ecfg["category"]
     client = toporder.for_establishment(establishment)
     if client is None:
         raise RuntimeError(f"Clé TopOrder absente pour {establishment} "
                            f"({toporder.env_var_for(establishment)})")
-    resolve = _resolver(company_id)
+    resolve = _resolver(company_id, cfg)
 
-    journal = config.journal_code(pfx, "tickets")     # ex. TOSLT
-    ca_acc = config.CA_ANONYME                         # 70101
-    tva_acc = config.TVA_ACCOUNT
-    acc = config.caisse_accounts(pfx)
+    journal = ecfg["journal_tickets"]                  # ex. TOSLT
+    ca_acc = cfg["ca_anonyme"]                          # 70101
+    tva_acc = cfg["tva"]
+    acc = ecfg
     ecart_acc = acc["ecart"]
 
     import time

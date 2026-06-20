@@ -72,7 +72,10 @@ def _actual_by_account(pl, journal_id, start, end):
 
 def run_verify(ctx, company_code, pfx):
     establishment = next((n for n, e in config.ESTABLISHMENTS.items() if e["pfx"] == pfx), pfx)
-    journal_id = config.JOURNALS[pfx]["tickets"]
+    cfg = config.resolve(company_code)
+    ecfg = cfg["est"][pfx]
+    journal_id = int(ecfg["journal_tickets_id"])
+    journal_label = ecfg["journal_tickets"]
     with Session(engine) as s:
         company = s.exec(select(Company).where(Company.code == company_code)).first()
         if not company:
@@ -90,7 +93,7 @@ def run_verify(ctx, company_code, pfx):
     start = min(b.date_from for b in batches)
     end = max(b.date_to for b in batches)
     label = f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
-    ctx.log(f"Vérification Pennylane · {establishment} · {label} (journal {config.journal_code(pfx,'tickets')})")
+    ctx.log(f"Vérification Pennylane · {establishment} · {label} (journal {journal_label})")
     ctx.progress(0, 3, step="lecture de l'attendu (CSV générés)…")
     expected, used, missing = _expected_by_account(company.id, pfx, start, end)
     if missing:
@@ -108,7 +111,7 @@ def run_verify(ctx, company_code, pfx):
     accounts = sorted(set(expected) | set(actual))
     diffs = []
     lines = [f"VÉRIFICATION PENNYLANE — {establishment} — {label}",
-             f"Journal {config.journal_code(pfx,'tickets')} · {n_entries} écritures Pennylane · lots {', '.join(used) or '—'}",
+             f"Journal {journal_label} · {n_entries} écritures Pennylane · lots {', '.join(used) or '—'}",
              "", f"  {'Compte':<12}{'Attendu (CSV)':>16}{'Pennylane':>16}    État", ""]
     for acc in accounts:
         ev = expected.get(acc, 0.0)

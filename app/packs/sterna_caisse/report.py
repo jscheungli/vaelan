@@ -17,15 +17,14 @@ def _rate_from_label(taux: str) -> str:
     return taux.replace("%", "").replace(",", ".").strip()
 
 
-def aggregate_rows(rows) -> dict:
+def aggregate_rows(rows, cfg) -> dict:
     """Relit les lignes du CSV généré et reconstitue les totaux par poste."""
-    ca_acc = config.CA_ANONYME
-    rev_tva = {v: k for k, v in config.TVA_ACCOUNT.items()}
+    ca_acc = cfg["ca_anonyme"]
+    rev_tva = {v: k for k, v in cfg["tva"].items()}
     ht_by_rate, tva_by_rate, pay = defaultdict(float), defaultdict(float), defaultdict(float)
     deb = cred = 0.0
     pay_lbl = {}
-    for est in config.ESTABLISHMENTS.values():
-        a = config.caisse_accounts(est["pfx"])
+    for a in cfg["est"].values():
         pay_lbl[a["cb"]] = "CB"
         pay_lbl[a["especes"]] = "Espèce"
         pay_lbl[a["ticket_resto"]] = "Ticket restaurant"

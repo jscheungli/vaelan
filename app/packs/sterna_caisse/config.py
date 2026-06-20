@@ -60,9 +60,99 @@ def journal_code(pfx: str, kind: str) -> str:
 
 
 def caisse_accounts(pfx: str) -> dict:
-    """Comptes d'encaissement / écart de caisse de l'établissement."""
+    """Comptes d'encaissement / écart de caisse de l'établissement (défauts)."""
     x = _X[pfx]
     return {
         "especes": f"41125{x}01", "cb": f"41125{x}02", "ticket_resto": f"41125{x}03",
         "autres": f"41125{x}04", "ecart": f"41125{x}06", "b2c_commun": f"41125{x}09",
     }
+
+
+# ------------------------------------------------------------------ config résolue
+# Schéma plat éditable : groupes -> {clé: (libellé, valeur par défaut)}. La page
+# Configuration lit/écrit ces clés ; resolve() applique les surcharges DB (Setting).
+def _defaults() -> dict:
+    est = {}
+    for name, e in ESTABLISHMENTS.items():
+        pfx = e["pfx"]
+        j = JOURNALS[pfx]
+        est[pfx] = {
+            "category": ANALYTIC_CATEGORY[pfx],
+            "journal_tickets": journal_code(pfx, "tickets"),
+            "journal_tickets_id": str(j["tickets"]),
+            "journal_factures": journal_code(pfx, "factures"),
+            "journal_factures_id": str(j["factures"]),
+            **caisse_accounts(pfx),
+        }
+    return {"ca_anonyme": CA_ANONYME, "ca_b2c": CA_B2C, "ca_b2b": CA_B2B,
+            "analytic_family": ANALYTIC_FAMILY, "tva": dict(TVA_ACCOUNT), "est": est}
+
+
+# libellés lisibles pour la page Configuration (clé « : » -> libellé)
+ACCOUNT_FIELDS = [("especes", "Espèces"), ("cb", "CB"), ("ticket_resto", "Ticket restaurant"),
+                  ("autres", "Autres / compte client"), ("ecart", "Écart de caisse"),
+                  ("b2c_commun", "Particuliers (compte commun)")]
+JOURNAL_FIELDS = [("journal_tickets", "Code journal Tickets (CSV)"),
+                  ("journal_tickets_id", "ID journal Tickets (API)"),
+                  ("journal_factures", "Code journal Factures (CSV)"),
+                  ("journal_factures_id", "ID journal Factures (API)"),
+                  ("category", "Catégorie analytique")]
+
+
+def _set_path(d, key, value):
+    parts = key.split(":")
+    cur = d
+    for p in parts[:-1]:
+        if p not in cur or not isinstance(cur[p], dict):
+            return
+        cur = cur[p]
+    if parts[-1] in cur:
+        cur[parts[-1]] = value
+
+
+def resolve(company_code: str) -> dict:
+    """Config effective d'une société : défauts du code + surcharges DB (Setting)."""
+    from sqlmodel import Session, select
+    from app.core.db import engine
+    from app.models import Setting
+    cfg = _defaults()
+    with Session(engine) as s:
+        for st in s.exec(select(Setting).where(Setting.company_code == company_code)).all():
+            _set_path(cfg, st.key, st.value)
+    return cfg
+
+
+def config_sections(cfg: dict) -> list:
+    """Structure la page Configuration : sections -> champs {key, label, value}."""
+    sections = [
+        {"title": "Comptes de vente (CA)", "fields": [
+            {"key": "ca_anonyme", "label": "CA caisse anonyme (Tickets)", "value": cfg["ca_anonyme"]},
+            {"key": "ca_b2c", "label": "CA particuliers / B2C (différé)", "value": cfg["ca_b2c"]},
+            {"key": "ca_b2b", "label": "CA B2B", "value": cfg["ca_b2b"]},
+        ]},
+        {"title": "Comptes de TVA collectée", "fields": [
+            {"key": f"tva:{r}", "label": f"TVA {r}%", "value": v} for r, v in cfg["tva"].items()
+        ]},
+        {"title": "Analytique", "fields": [
+            {"key": "analytic_family", "label": "Famille de catégories", "value": cfg["analytic_family"]},
+        ]},
+    ]
+    for pfx, e in cfg["est"].items():
+        sections.append({"title": f"Établissement {pfx}", "fields": [
+            {"key": f"est:{pfx}:{k}", "label": lbl, "value": e[k]}
+            for k, lbl in JOURNAL_FIELDS + ACCOUNT_FIELDS
+        ]})
+    return sections
+
+
+def flat_defaults() -> dict:
+    """Toutes les clés éditables -> valeur par défaut (pour comparer/réinitialiser)."""
+    out = {"ca_anonyme": CA_ANONYME, "ca_b2c": CA_B2C, "ca_b2b": CA_B2B,
+           "analytic_family": ANALYTIC_FAMILY}
+    for r, acc in TVA_ACCOUNT.items():
+        out[f"tva:{r}"] = acc
+    d = _defaults()["est"]
+    for pfx, e in d.items():
+        for k, v in e.items():
+            out[f"est:{pfx}:{k}"] = v
+    return out

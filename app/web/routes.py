@@ -169,6 +169,48 @@ def import_run(request: Request, code: str,
     return RedirectResponse("/jobs", status_code=303)
 
 
+# ----------------------------- Configuration (comptes / journaux) -----------------------------
+@router.get("/c/{code}/config", response_class=HTMLResponse)
+def config_page(request: Request, code: str, saved: str = ""):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    cfg = caisse_config.resolve(company.code)
+    sections = caisse_config.config_sections(cfg)
+    defaults = caisse_config.flat_defaults()
+    return templates.TemplateResponse(request, "config.html",
+                                      _ctx(request, company=company, sections=sections,
+                                           defaults=defaults, saved=bool(saved)))
+
+
+@router.post("/c/{code}/config")
+async def config_save(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    from app.models import Setting
+    form = await request.form()
+    defaults = caisse_config.flat_defaults()
+    with Session(engine) as s:
+        existing = {st.key: st for st in s.exec(select(Setting).where(
+            Setting.company_code == company.code)).all()}
+        for key, default in defaults.items():
+            if key not in form:
+                continue
+            val = str(form[key]).strip()
+            st = existing.get(key)
+            if val == default or val == "":
+                if st:
+                    s.delete(st)                       # retour au défaut -> on retire la surcharge
+            elif st:
+                st.value = val
+                s.add(st)
+            else:
+                s.add(Setting(company_code=company.code, key=key, value=val))
+        s.commit()
+    return RedirectResponse(f"/c/{code}/config?saved=1", status_code=303)
+
+
 # ----------------------------- Suivi de clôture (tableau de bord) -----------------------------
 @router.get("/c/{code}/suivi", response_class=HTMLResponse)
 def suivi_page(request: Request, code: str):

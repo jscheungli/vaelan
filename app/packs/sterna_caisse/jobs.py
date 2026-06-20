@@ -93,7 +93,8 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
 
     # 2) Construction TOSLT (un seul pull ; renvoie CA + paiements même si pré-vol bloque)
     ctx.progress(0, total, step="calcul TOSLT depuis les tickets…")
-    res = csvgen.build_toslt(establishment, date_from, date_to, company.id, code, on_progress=_prog)
+    res = csvgen.build_toslt(establishment, date_from, date_to, company.id, code,
+                             company_code, on_progress=_prog)
     ctx.log(f"Tickets : CA TTC {res['ca_ttc']:.2f} € ({res['n_tickets']} tickets)")
 
     # 3) VERROU cadrage : on ne génère QUE si ça cadre avec la synthèse
@@ -144,7 +145,7 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
             amount=res["ca_ttc"], csv_path=str(path)))
         s.commit()
 
-    csv_agg = report.aggregate_rows(res["rows"])
+    csv_agg = report.aggregate_rows(res["rows"], config.resolve(company_code))
     _emit_report(csv_agg=csv_agg, batch_code=code, balanced=res["balanced"])
 
     bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"

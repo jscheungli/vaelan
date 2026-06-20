@@ -99,6 +99,20 @@ class ClientAccount(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Setting(SQLModel, table=True):
+    """Réglage éditable d'une société : surcharge une valeur de config par défaut.
+
+    Clé hiérarchique séparée par « : » (ex. ca_anonyme, tva:2.1, est:SL:cb). Seules
+    les valeurs RÉELLEMENT modifiées sont stockées (sinon = défaut du code).
+    """
+    __tablename__ = "settings"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    key: str = Field(index=True)
+    value: str
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class JobArtifact(SQLModel, table=True):
     """Fichier rattaché à une tâche, stocké EN BASE (durable, survit aux redéploys
     Render qui réinitialisent le disque). kind = input (synthèse PDF) / csv (export)."""
