@@ -6,7 +6,7 @@ packs s'appuiera sur ces tables + ses propres tables au besoin.
 """
 from datetime import datetime, date
 from typing import Optional
-from sqlalchemy import BigInteger, Column
+from sqlalchemy import BigInteger, LargeBinary, Column
 from sqlmodel import SQLModel, Field
 
 
@@ -50,6 +50,7 @@ class Run(SQLModel, table=True):
     summary: Optional[str] = None
     log: Optional[str] = None  # journal détaillé (texte/JSON), pensé pour être relu
     report: Optional[str] = None  # compte rendu téléchargeable (rapprochement détaillé)
+    app_version: Optional[str] = None  # version de Vaelan active au moment de la tâche (debug)
     # progression (pour l'affichage live de la page Jobs)
     step: Optional[str] = None
     progress_current: Optional[int] = None
@@ -98,11 +99,25 @@ class ClientAccount(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class JobArtifact(SQLModel, table=True):
+    """Fichier rattaché à une tâche, stocké EN BASE (durable, survit aux redéploys
+    Render qui réinitialisent le disque). kind = input (synthèse PDF) / csv (export)."""
+    __tablename__ = "job_artifacts"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: int = Field(foreign_key="runs.id", index=True)
+    kind: str = Field(index=True)                 # input / csv
+    name: str
+    content_type: str = "application/octet-stream"
+    data: bytes = Field(sa_column=Column(LargeBinary))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ImportBatch(SQLModel, table=True):
     """Un lot d'import (= un CSV = un identifiant compact dans les libellés)."""
     __tablename__ = "imports"
     id: Optional[int] = Field(default=None, primary_key=True)
     company_id: int = Field(foreign_key="companies.id", index=True)
+    run_id: Optional[int] = Field(default=None, foreign_key="runs.id")  # tâche qui l'a produit
     establishment: str
     code: str = Field(index=True)         # identifiant compact, ex. A37
     kind: str                             # toslt / toslf / ...

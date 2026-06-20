@@ -25,6 +25,8 @@ _COLUMN_ADDS = [
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS progress_total INTEGER",
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS report VARCHAR",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS app_version VARCHAR",
+    "ALTER TABLE imports ADD COLUMN IF NOT EXISTS run_id INTEGER",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_name VARCHAR",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_reg_no VARCHAR",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_external_ref VARCHAR",

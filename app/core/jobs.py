@@ -13,7 +13,8 @@ from typing import Callable, Optional
 
 from sqlmodel import Session, select
 from app.core.db import engine
-from app.models import Run
+from app.core.config import APP_VERSION
+from app.models import Run, JobArtifact
 
 
 class JobContext:
@@ -49,6 +50,18 @@ class JobContext:
         """Attache un compte rendu téléchargeable à la tâche."""
         self._update(report=text)
 
+    def add_artifact(self, kind: str, name: str, data: bytes,
+                     content_type: str = "application/octet-stream"):
+        """Rattache un fichier téléchargeable (stocké en base) à la tâche."""
+        with Session(engine) as s:
+            # un seul artefact par (tâche, kind) : on remplace
+            for a in s.exec(select(JobArtifact).where(
+                    JobArtifact.run_id == self.run_id, JobArtifact.kind == kind)).all():
+                s.delete(a)
+            s.add(JobArtifact(run_id=self.run_id, kind=kind, name=name,
+                              data=data, content_type=content_type))
+            s.commit()
+
 
 def start_job(kind: str, fn: Callable[[JobContext], Optional[str]],
               company_id: Optional[int] = None, pack: Optional[str] = None,
@@ -56,7 +69,7 @@ def start_job(kind: str, fn: Callable[[JobContext], Optional[str]],
     """Crée un run et lance la fonction dans un thread daemon. Renvoie l'id du run."""
     with Session(engine) as s:
         run = Run(kind=kind, company_id=company_id, pack=pack, label=label, status="running",
-                  step="démarrage…", progress_current=0)
+                  step="démarrage…", progress_current=0, app_version=APP_VERSION)
         s.add(run)
         s.commit()
         s.refresh(run)

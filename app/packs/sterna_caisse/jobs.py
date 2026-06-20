@@ -55,7 +55,8 @@ def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to):
     return issues
 
 
-def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, synthese_bytes):
+def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
+                       synthese_bytes, synthese_name="synthese.pdf"):
     from datetime import date as _date
     pfx = config.ESTABLISHMENTS[establishment]["pfx"]
     with Session(_db_engine) as s:
@@ -65,6 +66,8 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, syn
 
     code = _batch_code(company.id, pfx, "tickets")
     ctx.log(f"Lot {code} · {establishment} · {date_from} → {date_to}")
+    # on garde la synthèse d'entrée (re-téléchargeable depuis la tâche)
+    ctx.add_artifact("input", synthese_name, synthese_bytes, "application/pdf")
 
     # 1) Synthèse (son « nombre de clients » sert de total approx. pour la barre)
     ctx.progress(0, None, step="lecture du journal de synthèse…")
@@ -102,18 +105,21 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, syn
                                     syn, res, csv=None, n_tickets=res["n_tickets"]))
         return f"Cadré ✓ mais bloqué : {len(res['unresolved'])} créance(s) sans compte client à corriger"
 
-    # 5) Écriture du CSV
+    # 5) Écriture du CSV (sur disque pour debug local + EN BASE comme artefact durable)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    path = EXPORT_DIR / f"import_TOSLT_{code}_{date_from}_{date_to}.csv"
+    fname = f"import_TOSLT_{code}_{date_from}_{date_to}.csv"
+    path = EXPORT_DIR / fname
     buf = io.StringIO()
     w = _csv.writer(buf)
     w.writerow(res["header"])
     w.writerows(res["rows"])
-    path.write_text("﻿" + buf.getvalue(), encoding="utf-8")  # BOM pour Pennylane
+    csv_text = "﻿" + buf.getvalue()  # BOM pour Pennylane
+    path.write_text(csv_text, encoding="utf-8")
+    ctx.add_artifact("csv", fname, csv_text.encode("utf-8"), "text/csv")
 
     with Session(_db_engine) as s:
         s.add(ImportBatch(
-            company_id=company.id, establishment=pfx, code=code, kind="toslt",
+            company_id=company.id, run_id=ctx.run_id, establishment=pfx, code=code, kind="toslt",
             date_from=_date.fromisoformat(date_from), date_to=_date.fromisoformat(date_to),
             status="generated", n_entries=res["n_agg"] + res["n_creances"],
             amount=res["ca_ttc"], csv_path=str(path)))
@@ -132,8 +138,10 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, syn
     return f"Cadré ✓ — lot {code} généré — CA TTC {res['ca_ttc']:.2f} € · {res['n_creances']} créances · {bal}"
 
 
-def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes):
+def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,
+                synthese_name="synthese.pdf"):
     ctx.log(f"Établissement : {establishment} | période {date_from} → {date_to}")
+    ctx.add_artifact("input", synthese_name, synthese_bytes, "application/pdf")
 
     # On parse la synthèse d'abord : son « nombre de clients » sert de total
     # approximatif pour une barre de progression en % pendant le pull.

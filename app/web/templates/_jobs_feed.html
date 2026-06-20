@@ -32,22 +32,28 @@
 <div class="table-responsive">
 <table class="table table-sm align-middle">
   <thead><tr class="small text-muted">
-    <th>#</th><th>Société</th><th>Tâche</th><th>Statut</th><th>Résumé</th><th>Démarré</th><th>Durée</th><th>Compte rendu</th>
+    <th>#</th><th>Société</th><th>Tâche</th><th>Statut</th><th>Résumé</th><th>Version</th><th>Démarré</th><th>Durée</th><th>Fichiers</th>
   </tr></thead>
   <tbody>
   {% for r in recent %}
+    {% set ak = arts.get(r.id, []) %}
     <tr class="small">
       <td>{{ r.id }}</td>
       <td>{{ cmap.get(r.company_id, '—') }}</td>
       <td>{{ r.label or r.kind }}</td>
       <td>{{ statusbadge(r.status) }}</td>
       <td>{{ r.summary or '' }}</td>
+      <td class="text-muted">{% if r.app_version %}<code>v{{ r.app_version }}</code>{% endif %}</td>
       <td class="text-muted">{{ r.started_at.strftime('%d/%m %H:%M') if r.started_at else '' }}</td>
       <td class="text-muted">{% if r.finished_at and r.started_at %}{{ '%.0fs' % (r.finished_at - r.started_at).total_seconds() }}{% endif %}</td>
-      <td>{% if r.report %}<a class="btn btn-sm btn-outline-dark py-0" href="/jobs/{{ r.id }}/report"><i class="bi bi-download"></i> .txt</a>{% endif %}</td>
+      <td class="text-nowrap">
+        {% if 'csv' in ak %}<a class="btn btn-sm btn-outline-dark py-0 mb-1" href="/jobs/{{ r.id }}/artifact/csv" title="CSV d'import"><i class="bi bi-filetype-csv"></i> CSV</a>{% endif %}
+        {% if r.report %}<a class="btn btn-sm btn-outline-dark py-0 mb-1" href="/jobs/{{ r.id }}/report" title="Compte rendu de rapprochement"><i class="bi bi-file-text"></i> CR</a>{% endif %}
+        {% if 'input' in ak %}<a class="btn btn-sm btn-outline-secondary py-0 mb-1" href="/jobs/{{ r.id }}/artifact/input" title="Synthèse PDF fournie en entrée"><i class="bi bi-file-pdf"></i> Synthèse</a>{% endif %}
+      </td>
     </tr>
   {% else %}
-    <tr><td colspan="8" class="text-muted small">Aucune tâche pour l'instant.</td></tr>
+    <tr><td colspan="9" class="text-muted small">Aucune tâche pour l'instant.</td></tr>
   {% endfor %}
   </tbody>
 </table>

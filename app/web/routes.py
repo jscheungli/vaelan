@@ -10,7 +10,7 @@ from app.core.security import authenticate, current_user, user_companies, role_f
 from app.core import registry
 from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
-from app.models import Company, Run, ClientAccount, ImportBatch
+from app.models import Company, Run, ClientAccount, ImportBatch, JobArtifact
 from app.packs.sterna_caisse import config as caisse_config
 from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt
 from app.packs.sterna_caisse.clients_sync import sync_clients
@@ -119,10 +119,11 @@ def generate_run(request: Request, code: str,
     if redir:
         return redir
     data = synthese.file.read()
+    fname = synthese.filename or "synthese.pdf"
     short = establishment.replace("OCOPAIN ", "")
     label = f"Cadrage + génération TOSLT · {short} · {date_from}→{date_to}"
     start_job("generate_toslt",
-              lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data),
+              lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data, fname),
               company_id=company.id, pack="sterna.caisse", label=label)
     return RedirectResponse("/jobs", status_code=303)
 
@@ -132,11 +133,22 @@ def batch_download(request: Request, code: str, batch_id: int):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
+    from fastapi.responses import Response
     with Session(engine) as s:
         b = s.get(ImportBatch, batch_id)
-    if not b or b.company_id != company.id or not b.csv_path or not os.path.exists(b.csv_path):
-        return RedirectResponse(f"/c/{code}/import", status_code=303)
-    return FileResponse(b.csv_path, media_type="text/csv", filename=os.path.basename(b.csv_path))
+        if not b or b.company_id != company.id:
+            return RedirectResponse(f"/c/{code}/import", status_code=303)
+        # priorité à l'artefact en base (durable) ; repli sur le fichier disque
+        art = None
+        if b.run_id:
+            art = s.exec(select(JobArtifact).where(
+                JobArtifact.run_id == b.run_id, JobArtifact.kind == "csv")).first()
+    if art:
+        return Response(content=art.data, media_type="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="{art.name}"'})
+    if b.csv_path and os.path.exists(b.csv_path):
+        return FileResponse(b.csv_path, media_type="text/csv", filename=os.path.basename(b.csv_path))
+    return RedirectResponse(f"/c/{code}/import", status_code=303)
 
 
 @router.post("/c/{code}/import")
@@ -147,9 +159,10 @@ def import_run(request: Request, code: str,
     if redir:
         return redir
     data = synthese.file.read()
+    fname = synthese.filename or "synthese.pdf"
     short = establishment.replace("OCOPAIN ", "")
     label = f"Cadrage caisse · {short} · {date_from}→{date_to}"
-    start_job("cadrage", lambda ctx: run_cadrage(ctx, establishment, date_from, date_to, data),
+    start_job("cadrage", lambda ctx: run_cadrage(ctx, establishment, date_from, date_to, data, fname),
               company_id=company.id, pack="sterna.caisse", label=label)
     return RedirectResponse("/jobs", status_code=303)
 
@@ -223,8 +236,16 @@ def jobs_feed(request: Request):
         running = s.exec(select(Run).where(Run.status == "running").order_by(Run.id.desc())).all()
         recent = s.exec(select(Run).where(Run.status != "running").order_by(Run.id.desc()).limit(30)).all()
         cmap = {c.id: c.name for c in s.exec(select(Company)).all()}
+        # quels runs ont quels artefacts (requête légère : run_id + kind, sans les données)
+        ids = [r.id for r in recent]
+        arts = {}
+        if ids:
+            for run_id, kind in s.exec(
+                    select(JobArtifact.run_id, JobArtifact.kind)
+                    .where(JobArtifact.run_id.in_(ids))).all():
+                arts.setdefault(run_id, set()).add(kind)
     return templates.TemplateResponse(request, "_jobs_feed.html",
-                                      _ctx(request, running=running, recent=recent, cmap=cmap))
+                                      _ctx(request, running=running, recent=recent, cmap=cmap, arts=arts))
 
 
 @router.get("/jobs/{run_id}/report")
@@ -239,6 +260,20 @@ def job_report(request: Request, run_id: int):
     fname = f"compte_rendu_{run.kind}_{run_id}.txt"
     return PlainTextResponse(run.report, headers={
         "Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/jobs/{run_id}/artifact/{kind}")
+def job_artifact(request: Request, run_id: int, kind: str):
+    if not current_user(request):
+        return RedirectResponse("/login", status_code=303)
+    from fastapi.responses import Response
+    with Session(engine) as s:
+        art = s.exec(select(JobArtifact).where(
+            JobArtifact.run_id == run_id, JobArtifact.kind == kind)).first()
+    if not art:
+        return RedirectResponse("/jobs", status_code=303)
+    return Response(content=art.data, media_type=art.content_type, headers={
+        "Content-Disposition": f'attachment; filename="{art.name}"'})
 
 
 @router.post("/jobs/demo")
