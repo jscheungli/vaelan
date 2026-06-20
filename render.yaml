@@ -4,6 +4,7 @@ services:
     name: vaelan
     runtime: python
     plan: starter
+    region: frankfurt          # Europe (même région que la base pour la connexion interne)
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -35,3 +36,4 @@ services:
 databases:
   - name: vaelan-db
     plan: basic-256mb
+    region: frankfurt          # Europe
