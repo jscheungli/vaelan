@@ -97,12 +97,14 @@ def jobs_feed(request: Request):
     with Session(engine) as s:
         running = s.exec(select(Run).where(Run.status == "running").order_by(Run.id.desc())).all()
         recent = s.exec(select(Run).where(Run.status != "running").order_by(Run.id.desc()).limit(30)).all()
-    return templates.TemplateResponse(request, "_jobs_feed.html", _ctx(request, running=running, recent=recent))
+        cmap = {c.id: c.name for c in s.exec(select(Company)).all()}
+    return templates.TemplateResponse(request, "_jobs_feed.html",
+                                      _ctx(request, running=running, recent=recent, cmap=cmap))
 
 
 @router.post("/jobs/demo")
 def jobs_demo(request: Request):
     if not current_user(request):
         return RedirectResponse("/login", status_code=303)
-    start_job("demo", demo_job)
+    start_job("demo", demo_job, label="Tâche de démonstration")
     return RedirectResponse("/jobs", status_code=303)

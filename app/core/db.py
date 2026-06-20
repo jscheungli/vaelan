@@ -19,6 +19,7 @@ def init_db() -> None:
 # Mini-migration : ajouts de colonnes idempotents en attendant Alembic.
 # (create_all ne modifie pas une table existante ; on ajoute les colonnes manquantes.)
 _COLUMN_ADDS = [
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS label VARCHAR",
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS step VARCHAR",
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS progress_current INTEGER",
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS progress_total INTEGER",

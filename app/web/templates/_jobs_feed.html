@@ -12,13 +12,14 @@
   {% set pct = ((r.progress_current or 0) * 100 // (r.progress_total or 1)) if r.progress_total else 0 %}
   <div class="card shadow-sm mb-2 status-warn">
     <div class="card-body py-2">
-      <div class="d-flex small">
-        <span class="fw-semibold">#{{ r.id }} · {{ r.kind }}</span>
-        <span class="ms-2 text-muted">{{ r.step or '' }}</span>
+      <div class="d-flex small align-items-center">
+        <span class="badge text-bg-light text-dark border">{{ cmap.get(r.company_id, '—') }}</span>
+        <span class="fw-semibold ms-2">{{ r.label or r.kind }}</span>
+        <span class="ms-2 text-muted">· {{ r.step or '' }}</span>
         <span class="ms-auto text-muted">{{ r.progress_current or 0 }}{% if r.progress_total %}/{{ r.progress_total }}{% endif %}</span>
       </div>
       <div class="progress mt-1" style="height:6px;">
-        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: {{ pct }}%"></div>
+        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: {{ pct if r.progress_total else 100 }}%"></div>
       </div>
     </div>
   </div>
@@ -30,19 +31,22 @@
 <h2 class="h6 text-uppercase text-muted mt-3">Historique</h2>
 <div class="table-responsive">
 <table class="table table-sm align-middle">
-  <thead><tr class="small text-muted"><th>#</th><th>Type</th><th>Statut</th><th>Résumé</th><th>Démarré</th><th>Durée</th></tr></thead>
+  <thead><tr class="small text-muted">
+    <th>#</th><th>Société</th><th>Tâche</th><th>Statut</th><th>Résumé</th><th>Démarré</th><th>Durée</th>
+  </tr></thead>
   <tbody>
   {% for r in recent %}
     <tr class="small">
       <td>{{ r.id }}</td>
-      <td>{{ r.kind }}</td>
+      <td>{{ cmap.get(r.company_id, '—') }}</td>
+      <td>{{ r.label or r.kind }}</td>
       <td>{{ statusbadge(r.status) }}</td>
       <td>{{ r.summary or '' }}</td>
       <td class="text-muted">{{ r.started_at.strftime('%d/%m %H:%M') if r.started_at else '' }}</td>
       <td class="text-muted">{% if r.finished_at and r.started_at %}{{ '%.0fs' % (r.finished_at - r.started_at).total_seconds() }}{% endif %}</td>
     </tr>
   {% else %}
-    <tr><td colspan="6" class="text-muted small">Aucune tâche pour l'instant.</td></tr>
+    <tr><td colspan="7" class="text-muted small">Aucune tâche pour l'instant.</td></tr>
   {% endfor %}
   </tbody>
 </table>

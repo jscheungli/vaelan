@@ -42,6 +42,7 @@ class Run(SQLModel, table=True):
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id")
     pack: Optional[str] = None
     kind: str
+    label: Optional[str] = None   # description lisible (ex. "Import caisse · Saint-Leu · 01/05→17/06")
     status: str = "running"   # running / ok / error / interrupted
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
