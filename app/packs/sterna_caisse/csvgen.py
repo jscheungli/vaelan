@@ -190,7 +190,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
             tot["ca_ht"] += ht
             if r in tva_acc and ttc_ - ht > 0.005:
                 rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
-                             f"TVA {rl}", "", piece, "", f"{ttc_ - ht:.2f}", "", "", ""])
+                             f"TVA {rl}", "", piece, "", f"{ttc_ - ht:.2f}", cat_family, cat_label, ""])
                 tot["tva"] += ttc_ - ht
         enc = 0.0
         for pt, amt in sorted(pay.items()):
@@ -198,9 +198,9 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 continue
             pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
             if amt > 0:
-                rows.append([date, journal, pacc, pt, pt, "", piece, f"{amt:.2f}", "", "", "", ""])
+                rows.append([date, journal, pacc, pt, pt, "", piece, f"{amt:.2f}", "", cat_family, cat_label, ""])
             else:
-                rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", "", "", ""])
+                rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", cat_family, cat_label, ""])
             enc += amt
         tot["enc"] += enc
         if cre_acc is not None:
@@ -208,7 +208,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
             lettr = f"F{cre_fnum}" if cre_fnum else ""
             rows.append([date, journal, str(cre_acc), "Créance client",
                          f"Créance {cre_fnum:07d} · {cre_nm}", "", piece,
-                         f"{cre_amt:.2f}", "", "", "", lettr])
+                         f"{cre_amt:.2f}", "", cat_family, cat_label, lettr])
             tot["creance"] += cre_amt
             ec = round(ttcsum - enc - cre_amt, 2)
         else:
@@ -217,7 +217,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
             rows.append([date, journal, ecart_acc, "Écart de caisse / avance",
                          ("Avance/dépôt" if ec < 0 else "Écart de caisse"), "", piece,
                          (f"{ec:.2f}" if ec > 0 else ""), (f"{-ec:.2f}" if ec < 0 else ""),
-                         "", "", ""])
+                         cat_family, cat_label, ""])
             tot["ecart"] += ec
 
     def piece_for(date, suffix=""):
