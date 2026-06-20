@@ -6,6 +6,7 @@ packs s'appuiera sur ces tables + ses propres tables au besoin.
 """
 from datetime import datetime, date
 from typing import Optional
+from sqlalchemy import BigInteger, Column
 from sqlmodel import SQLModel, Field
 
 
@@ -84,7 +85,8 @@ class ClientAccount(SQLModel, table=True):
     toporder_company_id: str = Field(index=True)
     toporder_name: Optional[str] = None
     siret: Optional[str] = None
-    pennylane_customer_id: Optional[int] = None
+    # ID Pennylane : BIGINT obligatoire (certains IDs dépassent l'INTEGER 32 bits)
+    pennylane_customer_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger))
     pennylane_name: Optional[str] = None              # nom côté Pennylane (pour voir la correspondance)
     pennylane_reg_no: Optional[str] = None            # SIRET/SIREN tel qu'enregistré dans Pennylane
     account_411: Optional[str] = None                 # numéro de compte Pennylane

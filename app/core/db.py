@@ -26,6 +26,8 @@ _COLUMN_ADDS = [
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_name VARCHAR",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_reg_no VARCHAR",
+    # certains IDs clients Pennylane dépassent l'INTEGER 32 bits -> BIGINT
+    "ALTER TABLE client_accounts ALTER COLUMN pennylane_customer_id TYPE BIGINT",
 ]
 
 
