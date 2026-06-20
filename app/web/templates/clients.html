@@ -35,13 +35,16 @@ la correction se fait dans TopOrder / Pennylane, puis on resynchronise.</p>
 {% endif %}
 <div class="table-responsive">
 <table class="table table-sm align-middle">
-  <thead><tr class="small text-muted"><th>Étab.</th><th>Client TopOrder</th><th>SIRET</th><th>Statut</th><th>Compte 411</th><th>Note</th></tr></thead>
+  <thead><tr class="small text-muted">
+    <th>Étab.</th><th>Client TopOrder</th><th>SIRET</th><th>↔ Client Pennylane</th><th>Statut</th><th>Compte 411</th><th>Note</th>
+  </tr></thead>
   <tbody>
   {% for r in rows %}
     <tr class="small">
       <td>{{ r.establishment }}</td>
       <td>{{ r.toporder_name or '—' }}</td>
       <td><code>{{ r.siret or '' }}</code></td>
+      <td>{{ r.pennylane_name or '' }}</td>
       <td>{{ stbadge(r.status) }}</td>
       <td>{{ r.account_411 or '' }}</td>
       <td class="text-muted">{{ r.note or '' }}</td>

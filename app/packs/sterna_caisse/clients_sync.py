@@ -57,7 +57,8 @@ def sync_clients(ctx, company_code="STERNA"):
         for c in d.get("items", []):
             sir = _siren(c.get("reg_no"))
             if sir:
-                pl_by_siren[sir] = {"id": c["id"], "acc_id": (c.get("ledger_account") or {}).get("id")}
+                pl_by_siren[sir] = {"id": c["id"], "name": c.get("name"),
+                                    "acc_id": (c.get("ledger_account") or {}).get("id")}
         if not d.get("has_more"):
             break
         cur = d.get("next_cursor")
@@ -91,6 +92,7 @@ def sync_clients(ctx, company_code="STERNA"):
                     m = pl_by_siren.get(sir)
                     if m:
                         row.pennylane_customer_id = m["id"]
+                        row.pennylane_name = m.get("name")
                         # résoudre le numéro de compte si pas déjà connu
                         if not row.account_411 and m.get("acc_id"):
                             num = _account_number(pl, m["acc_id"])
