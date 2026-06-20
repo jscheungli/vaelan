@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Sociétés · {{ app_name }}{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">Sociétés</h1>
+{% if not companies %}
+  <div class="alert alert-warning">Aucune société ne vous est accessible.</div>
+{% endif %}
+<div class="row g-3">
+  {% for c in companies %}
+  <div class="col-sm-6 col-lg-4">
+    <a class="text-decoration-none" href="/c/{{ c.code }}">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h5 mb-1">{{ c.name }}</h2>
+          <div class="text-muted small"><code>{{ c.code }}</code></div>
+          <div class="mt-3 text-end"><span class="btn btn-sm btn-outline-dark">Tableau de bord <i class="bi bi-arrow-right"></i></span></div>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

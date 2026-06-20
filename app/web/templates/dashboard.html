@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ company.name }} · {{ app_name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb small">
+    <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+    <li class="breadcrumb-item active">{{ company.name }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex align-items-center mb-3">
+  <h1 class="h4 mb-0">{{ company.name }}</h1>
+  <span class="badge text-bg-secondary ms-2">{{ role }}</span>
+  <span class="ms-auto small">
+    Pennylane :
+    {% if health.ok %}<span class="text-success"><i class="bi bi-check-circle-fill"></i> connecté</span>
+    {% else %}<span class="text-danger" title="{{ health.error }}"><i class="bi bi-x-circle-fill"></i> {{ health.error }}</span>{% endif %}
+  </span>
+</div>
+
+{% if not cards %}
+  <div class="alert alert-info">Aucun pack de contrôle n'est encore branché pour cette société.</div>
+{% endif %}
+
+{% for card in cards %}
+  <h2 class="h6 text-uppercase text-muted mt-4">{{ card.pack.title }}</h2>
+  <div class="row g-3">
+    {% for t in card.tiles %}
+    <div class="col-sm-6 col-lg-3">
+      <div class="card tile shadow-sm status-{{ t.status }}">
+        <div class="card-body py-3">
+          <div class="text-muted small text-truncate" title="{{ t.label }}">{{ t.label }}</div>
+          <div class="fs-5 fw-semibold">
+            {% if t.detail_url %}<a href="{{ t.detail_url }}">{{ t.value or '—' }}</a>{% else %}{{ t.value or '—' }}{% endif %}
+          </div>
+          {% if t.hint %}<div class="small text-muted">{{ t.hint }}</div>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if card.pack.actions %}
+  <div class="mt-2">
+    {% for a in card.pack.actions %}
+      <button class="btn btn-sm {{ 'btn-outline-danger' if a.danger else 'btn-outline-dark' }}" disabled>{{ a.label }}</button>
+    {% endfor %}
+    <span class="small text-muted ms-2">(actions branchées en Phase 1)</span>
+  </div>
+  {% endif %}
+{% endfor %}
+{% endblock %}
