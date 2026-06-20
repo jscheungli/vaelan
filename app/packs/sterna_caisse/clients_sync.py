@@ -59,6 +59,7 @@ def sync_clients(ctx, company_code="STERNA"):
             if sir:
                 pl_by_siren[sir] = {"id": c["id"], "name": c.get("name"),
                                     "reg_no": c.get("reg_no"),
+                                    "external_ref": c.get("external_reference"),
                                     "acc_id": (c.get("ledger_account") or {}).get("id")}
         if not d.get("has_more"):
             break
@@ -103,6 +104,7 @@ def sync_clients(ctx, company_code="STERNA"):
                     row.pennylane_customer_id = m["id"]
                     row.pennylane_name = m.get("name")
                     row.pennylane_reg_no = m.get("reg_no")
+                    row.pennylane_external_ref = m.get("external_ref")
                     if not row.account_411 and m.get("acc_id"):
                         row.account_411 = _account_number(pl, m["acc_id"])
                 if not sir:

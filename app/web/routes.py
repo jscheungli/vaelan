@@ -179,7 +179,7 @@ def clients_page(request: Request, code: str, q: str = "", etab: str = "",
         def _hit(r):
             return any(ql in (v or "").lower() for v in (
                 r.toporder_name, r.pennylane_name, r.siret, r.pennylane_reg_no,
-                r.account_411, str(r.pennylane_customer_id or "")))
+                r.pennylane_external_ref, r.account_411, str(r.pennylane_customer_id or "")))
         rows = [r for r in rows if _hit(r)]
 
     total = len(rows)

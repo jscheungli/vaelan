@@ -91,7 +91,7 @@ la correction se fait dans TopOrder / Pennylane, puis on resynchronise.</p>
       <td>{{ etbadge(r.establishment) }}</td>
       <td>{{ r.toporder_name or '—' }}</td>
       <td><code>{{ r.siret or '' }}</code></td>
-      <td class="border-start"><code title="customer id : {{ r.pennylane_customer_id or '' }}">{{ r.pennylane_reg_no or '' }}</code></td>
+      <td class="border-start"><code title="SIREN : {{ r.pennylane_reg_no or '—' }} · customer id : {{ r.pennylane_customer_id or '—' }}">{{ r.pennylane_external_ref or '' }}</code></td>
       <td>{{ r.pennylane_name or '' }}</td>
       <td>{{ r.account_411 or '' }}</td>
       <td class="border-start">{{ stbadge(r.status) }}</td>

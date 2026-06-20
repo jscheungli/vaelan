@@ -88,7 +88,8 @@ class ClientAccount(SQLModel, table=True):
     # ID Pennylane : BIGINT obligatoire (certains IDs dépassent l'INTEGER 32 bits)
     pennylane_customer_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger))
     pennylane_name: Optional[str] = None              # nom côté Pennylane (pour voir la correspondance)
-    pennylane_reg_no: Optional[str] = None            # SIRET/SIREN tel qu'enregistré dans Pennylane
+    pennylane_reg_no: Optional[str] = None            # SIREN (reg_no) côté Pennylane — sert au matching
+    pennylane_external_ref: Optional[str] = None      # « Identifiant client » Pennylane (external_reference = SIRET, champ d'unicité)
     account_411: Optional[str] = None                 # numéro de compte Pennylane
     status: str = "unknown"                            # ok / no_siret / no_pennylane / incoherent
     note: Optional[str] = None
