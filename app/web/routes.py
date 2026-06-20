@@ -171,38 +171,42 @@ def import_run(request: Request, code: str,
 
 # ----------------------------- Suivi de clôture (tableau de bord) -----------------------------
 @router.get("/c/{code}/suivi", response_class=HTMLResponse)
-def suivi_page(request: Request, code: str, period: str = ""):
+def suivi_page(request: Request, code: str):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
-    if not period or len(period) != 7:
-        from datetime import datetime, timedelta
-        period = (datetime.utcnow() + timedelta(hours=4)).strftime("%Y-%m")
-    board = caisse_suivi.build_board(company, period)
+    board = caisse_suivi.build_board(company)
     return templates.TemplateResponse(request, "suivi.html",
                                       _ctx(request, company=company, board=board))
 
 
 @router.post("/c/{code}/suivi/declare")
-def suivi_declare(request: Request, code: str, period: str = Form(...),
-                  establishment: str = Form(...), step: str = Form(...), undo: str = Form("")):
+def suivi_declare(request: Request, code: str, establishment: str = Form(...),
+                  step: str = Form(...), covered_to: str = Form(""), undo: str = Form("")):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
-    caisse_suivi.declare(company.id, establishment, period, step, undo=bool(undo))
-    return RedirectResponse(f"/c/{code}/suivi?period={period}", status_code=303)
+    from datetime import date as _date
+    cov = None
+    if covered_to:
+        try:
+            cov = _date.fromisoformat(covered_to)
+        except ValueError:
+            cov = None
+    caisse_suivi.declare(company.id, establishment, step, cov, undo=bool(undo))
+    return RedirectResponse(f"/c/{code}/suivi", status_code=303)
 
 
 @router.post("/c/{code}/suivi/verify")
-def suivi_verify(request: Request, code: str, period: str = Form(...), establishment: str = Form(...)):
+def suivi_verify(request: Request, code: str, establishment: str = Form(...)):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
-    label = f"Vérif Pennylane · {establishment} · {period}"
+    label = f"Vérif Pennylane (Tickets) · {establishment}"
     start_job("verify_pennylane",
-              lambda ctx: run_verify(ctx, company.code, establishment, period),
+              lambda ctx: run_verify(ctx, company.code, establishment),
               company_id=company.id, pack="sterna.caisse", label=label)
-    return RedirectResponse(f"/c/{code}/suivi?period={period}", status_code=303)
+    return RedirectResponse(f"/c/{code}/suivi", status_code=303)
 
 
 # ----------------------------- Clients (correspondance) -----------------------------

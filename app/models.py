@@ -123,10 +123,11 @@ class StepDeclaration(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     company_id: int = Field(foreign_key="companies.id", index=True)
     establishment: str = Field(index=True)        # SL / LP / SM
-    period: str = Field(index=True)               # mois « YYYY-MM »
-    step: str = Field(index=True)                  # import_pl / pj / lettrage …
+    period: str = Field(default="", index=True)   # (obsolète : suivi global, plus par mois)
+    step: str = Field(index=True)                  # import_tickets / verify_tickets / …
     state: str = "declared"                        # declared / verified
-    covered_to: Optional[date] = None              # fait jusqu'au (intra-mois)
+    covered_to: Optional[date] = None              # fait JUSQU'AU (date de couverture)
+    done_at: Optional[datetime] = None             # réalisé/déclaré le (heure Réunion)
     note: Optional[str] = None
     verified_at: Optional[datetime] = None         # dernière vérification Pennylane
     verify_ok: Optional[bool] = None               # cohérent (True) / écart (False)

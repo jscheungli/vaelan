@@ -16,7 +16,6 @@ from app.core.db import engine
 from app.core.connectors import pennylane
 from app.models import Company, ImportBatch, JobArtifact, StepDeclaration
 from . import config
-from .suivi import _period_nav
 
 TOL = 0.01
 _TZ = timedelta(hours=4)   # La Réunion
@@ -71,28 +70,34 @@ def _actual_by_account(pl, journal_id, start, end):
     return {a: round(v, 2) for a, v in net.items()}, len(entries)
 
 
-def run_verify(ctx, company_code, pfx, period):
+def run_verify(ctx, company_code, pfx):
     establishment = next((n for n, e in config.ESTABLISHMENTS.items() if e["pfx"] == pfx), pfx)
     journal_id = config.JOURNALS[pfx]["tickets"]
-    start, end, *_ , label = _period_nav(period)
     with Session(engine) as s:
         company = s.exec(select(Company).where(Company.code == company_code)).first()
-    if not company:
-        raise RuntimeError(f"société {company_code} introuvable")
+        if not company:
+            raise RuntimeError(f"société {company_code} introuvable")
+        batches = s.exec(select(ImportBatch).where(
+            ImportBatch.company_id == company.id, ImportBatch.kind == "toslt",
+            ImportBatch.establishment == pfx)).all()
     pl = pennylane.for_company(company_code)
     if not pl:
         raise RuntimeError("clé Pennylane absente")
+    if not batches:
+        ctx.log("Aucun lot caisse généré pour cet établissement → rien à vérifier.")
+        return "Rien à vérifier — aucun lot caisse"
 
+    start = min(b.date_from for b in batches)
+    end = max(b.date_to for b in batches)
+    label = f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
     ctx.log(f"Vérification Pennylane · {establishment} · {label} (journal {config.journal_code(pfx,'tickets')})")
     ctx.progress(0, 3, step="lecture de l'attendu (CSV générés)…")
     expected, used, missing = _expected_by_account(company.id, pfx, start, end)
     if missing:
         ctx.log(f"⚠️ lots sans CSV stocké (générés avant la conservation) ignorés : {', '.join(missing)}")
     if not expected:
-        now = datetime.utcnow() + _TZ
-        _record(company.id, pfx, period, None, now, ctx.run_id)
-        ctx.log("Aucun lot caisse généré/stocké pour ce mois → rien à vérifier.")
-        return f"Rien à vérifier ({label}) — aucun lot caisse stocké"
+        ctx.log("Aucun CSV stocké → rien à vérifier.")
+        return "Rien à vérifier — aucun CSV stocké"
     ctx.log(f"Attendu : {len(expected)} comptes (lots {', '.join(used)})")
 
     ctx.progress(1, 3, step="lecture des écritures Pennylane…")
@@ -118,7 +123,7 @@ def run_verify(ctx, company_code, pfx, period):
     ctx.set_report("\n".join(lines))
 
     now = datetime.utcnow() + _TZ
-    _record(company.id, pfx, period, coherent, now, ctx.run_id)
+    _record(company.id, pfx, coherent, end, now, ctx.run_id)
     stamp = now.strftime("%d/%m/%Y %H:%M")
     if coherent:
         ctx.log(f"✅ Cohérent — vérifié le {stamp}")
@@ -127,19 +132,18 @@ def run_verify(ctx, company_code, pfx, period):
     return f"❌ Écart ({label}) sur {len(diffs)} compte(s) — vérifié le {stamp}"
 
 
-def _record(company_id, pfx, period, ok, when, run_id):
+def _record(company_id, pfx, ok, covered_to, when, run_id):
     with Session(engine) as s:
         d = s.exec(select(StepDeclaration).where(
             StepDeclaration.company_id == company_id, StepDeclaration.establishment == pfx,
-            StepDeclaration.period == period, StepDeclaration.step == "import_pl")).first()
+            StepDeclaration.step == "verify_tickets")).first()
         if not d:
-            d = StepDeclaration(company_id=company_id, establishment=pfx,
-                                period=period, step="import_pl")
+            d = StepDeclaration(company_id=company_id, establishment=pfx, step="verify_tickets")
         d.verified_at = when
         d.verify_ok = ok
         d.verify_run_id = run_id
-        if ok:
-            d.state = "verified"
+        d.covered_to = covered_to
+        d.state = "verified" if ok else "declared"
         d.updated_at = datetime.utcnow()
         s.add(d)
         s.commit()
