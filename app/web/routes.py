@@ -16,8 +16,9 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 
 
 def _ctx(request: Request, **extra):
+    # NB: la signature moderne de TemplateResponse injecte `request` elle-même.
     base = {
-        "request": request, "app_name": "Vaelan", "user": current_user(request),
+        "app_name": "Vaelan", "user": current_user(request),
         "version": APP_VERSION, "commit": APP_COMMIT,
     }
     base.update(extra)
@@ -33,7 +34,7 @@ def home(request: Request):
 def login_form(request: Request, error: str = ""):
     if current_user(request):
         return RedirectResponse("/companies", status_code=303)
-    return templates.TemplateResponse("login.html", _ctx(request, error=error))
+    return templates.TemplateResponse(request, "login.html", _ctx(request, error=error))
 
 
 @router.post("/login")
@@ -56,7 +57,7 @@ def companies(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse("companies.html", _ctx(request, companies=user_companies(user)))
+    return templates.TemplateResponse(request, "companies.html", _ctx(request, companies=user_companies(user)))
 
 
 @router.get("/c/{code}", response_class=HTMLResponse)
@@ -67,7 +68,7 @@ def dashboard(request: Request, code: str):
     with Session(engine) as s:
         company = s.exec(select(Company).where(Company.code == code)).first()
     if not company or role_for(user, company) is None:
-        return templates.TemplateResponse("forbidden.html", _ctx(request), status_code=403)
+        return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
 
     packs = registry.packs_for(company.code)
     ctx = {"company": company, "session": None}
@@ -75,6 +76,6 @@ def dashboard(request: Request, code: str):
     pl = pennylane.for_company(company.code)
     health = pl.health() if pl else {"ok": False, "error": "clé API non configurée"}
     return templates.TemplateResponse(
-        "dashboard.html",
+        request, "dashboard.html",
         _ctx(request, company=company, cards=cards, role=role_for(user, company), health=health),
     )
