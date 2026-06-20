@@ -1,11 +1,12 @@
 """Synchronisation des comptes clients PRO (table de correspondance).
 
 3 portes (Vaelan ne fait que détecter/alerter ; on corrige dans TopOrder/Pennylane) :
-  1. chaque société TopOrder (contactType=0) a-t-elle un SIRET ?  -> sinon no_siret
-  2. ce SIRET a-t-il un jumeau Pennylane (reg_no) ?               -> sinon no_pennylane
-  3. feu vert quand tout est « ok ».
-On préserve les mappings historiques (account_411 déjà présent) ; on ne les
-écrase que si on détecte une incohérence.
+  1. chaque société TopOrder (contactType=0) a-t-elle un SIRET ?       -> sinon no_siret
+  2. ce SIRET est-il l'« Identifiant client » d'un client Pennylane ?  -> sinon no_pennylane
+  3. feu vert quand tout est « ok » (jumeau trouvé + compte 411).
+Clé de matching = **SIRET (14 chiffres) ↔ external_reference Pennylane** (le champ
+« Identifiant client », unique). PAS le SIREN : il est partagé entre établissements
+d'une même société, donc ambigu. On préserve les mappings 411 historiques.
 """
 import re
 from datetime import datetime
@@ -17,9 +18,8 @@ from app.models import ClientAccount, Company
 from . import config
 
 
-def _siren(s):
-    d = re.sub(r"\D", "", str(s or ""))
-    return d[:9] if len(d) >= 9 else ""
+def _digits(s):
+    return re.sub(r"\D", "", str(s or ""))
 
 
 def _seed_if_empty(company_id: int):
@@ -45,26 +45,26 @@ def sync_clients(ctx, company_code="STERNA"):
         raise RuntimeError(f"société {company_code} introuvable")
     _seed_if_empty(company.id)
 
-    # Pennylane : index SIREN -> customer_id
+    # Pennylane : index « Identifiant client » (external_reference = SIRET) -> client
     pl = pennylane.for_company(company_code)
     if not pl:
         raise RuntimeError("clé Pennylane absente (variable d'environnement)")
     ctx.log("Lecture des clients Pennylane…")
-    pl_by_siren = {}
+    pl_by_ref = {}
     cur = None
     while True:
         d = pl.get("/customers", **({"limit": 100, "cursor": cur} if cur else {"limit": 100}))
         for c in d.get("items", []):
-            sir = _siren(c.get("reg_no"))
-            if sir:
-                pl_by_siren[sir] = {"id": c["id"], "name": c.get("name"),
-                                    "reg_no": c.get("reg_no"),
-                                    "external_ref": c.get("external_reference"),
-                                    "acc_id": (c.get("ledger_account") or {}).get("id")}
+            ref = _digits(c.get("external_reference"))
+            if ref:
+                pl_by_ref[ref] = {"id": c["id"], "name": c.get("name"),
+                                  "reg_no": c.get("reg_no"),
+                                  "external_ref": c.get("external_reference"),
+                                  "acc_id": (c.get("ledger_account") or {}).get("id")}
         if not d.get("has_more"):
             break
         cur = d.get("next_cursor")
-    ctx.log(f"{len(pl_by_siren)} clients Pennylane avec SIREN")
+    ctx.log(f"{len(pl_by_ref)} clients Pennylane avec un Identifiant client (SIRET)")
 
     counts = {"ok": 0, "no_siret": 0, "no_pennylane": 0, "incoherent": 0}
     n = 0
@@ -91,15 +91,14 @@ def sync_clients(ctx, company_code="STERNA"):
                 row = existing.get(coid) or ClientAccount(
                     company_id=company.id, establishment=pfx, toporder_company_id=coid)
                 row.toporder_name = c.get("name")
-                siret = re.sub(r"\D", "", str(c.get("siret") or ""))
+                siret = _digits(c.get("siret"))
                 row.siret = siret or None
-                # Cascade STRICTE (pas de faux « ok » sur un simple mapping 411) :
+                # Cascade STRICTE — clé = SIRET TopOrder ↔ Identifiant client Pennylane :
                 #   pas de SIRET            -> no_siret
                 #   SIRET sans jumeau PL    -> no_pennylane
                 #   jumeau PL mais sans 411 -> incoherent
                 #   jumeau PL + compte 411  -> ok
-                sir = _siren(siret)
-                m = pl_by_siren.get(sir) if sir else None
+                m = pl_by_ref.get(siret) if siret else None
                 if m:  # on tient le lien Pennylane à jour même si le statut n'est pas ok
                     row.pennylane_customer_id = m["id"]
                     row.pennylane_name = m.get("name")
@@ -107,10 +106,11 @@ def sync_clients(ctx, company_code="STERNA"):
                     row.pennylane_external_ref = m.get("external_ref")
                     if not row.account_411 and m.get("acc_id"):
                         row.account_411 = _account_number(pl, m["acc_id"])
-                if not sir:
+                if not siret:
                     row.status, row.note = "no_siret", "SIRET manquant côté TopOrder"
                 elif not m:
-                    row.status, row.note = "no_pennylane", "aucun client Pennylane avec ce SIRET"
+                    row.status, row.note = "no_pennylane", \
+                        "aucun client Pennylane avec ce SIRET comme Identifiant client"
                 elif not row.account_411:
                     row.status, row.note = "incoherent", "client Pennylane trouvé mais sans compte 411"
                 else:
