@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Suivi · {{ company.name }}{% endblock %}
+{% macro cellview(company, board, est, key, cell) -%}
+  {% set st = cell.state %}
+  {% if st == 'done' %}
+    <span class="text-success"><i class="bi bi-check-circle-fill"></i> {{ cell.text }}</span>
+  {% elif st == 'partial' %}
+    <span class="text-primary"><i class="bi bi-hourglass-split"></i> {{ cell.text }}</span>
+  {% elif st == 'declared' %}
+    <span class="text-info-emphasis"><i class="bi bi-flag-fill"></i> {{ cell.text }}</span>
+    {% if cell.can_undo %}
+      <form method="post" action="/c/{{ company.code }}/suivi/declare" class="d-inline">
+        <input type="hidden" name="period" value="{{ board.period }}"><input type="hidden" name="establishment" value="{{ est }}">
+        <input type="hidden" name="step" value="{{ key }}"><input type="hidden" name="undo" value="1">
+        <button class="btn btn-link btn-sm p-0 ms-1 text-muted" title="Annuler la déclaration"><i class="bi bi-x"></i></button>
+      </form>
+    {% endif %}
+    <div><button class="btn btn-outline-secondary btn-sm py-0 mt-1" disabled title="Vaelan confirmera le cadrage">Vérifier · bientôt</button></div>
+  {% elif st == 'todo' %}
+    <span class="text-warning-emphasis"><i class="bi bi-circle"></i> {{ cell.text }}</span>
+    {% if cell.can_declare %}
+      <div><form method="post" action="/c/{{ company.code }}/suivi/declare" class="d-inline">
+        <input type="hidden" name="period" value="{{ board.period }}"><input type="hidden" name="establishment" value="{{ est }}">
+        <input type="hidden" name="step" value="{{ key }}">
+        <button class="btn btn-outline-dark btn-sm py-0 mt-1">Déclarer fait</button>
+      </form></div>
+    {% endif %}
+  {% else %}
+    <span class="text-muted"><i class="bi bi-clock"></i> {{ cell.text }}</span>
+  {% endif %}
+{%- endmacro %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Suivi</li>
+</ol></nav>
+
+<div class="d-flex align-items-center mb-3">
+  <h1 class="h4 mb-0">Suivi de clôture</h1>
+  <div class="ms-auto d-flex align-items-center gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="?period={{ board.prev }}"><i class="bi bi-chevron-left"></i></a>
+    <span class="fw-semibold text-capitalize" style="min-width:120px; text-align:center;">{{ board.label }}</span>
+    <a class="btn btn-sm btn-outline-secondary" href="?period={{ board.next }}"><i class="bi bi-chevron-right"></i></a>
+  </div>
+</div>
+<p class="text-muted small">Où en est chaque établissement, étape par étape, pour le mois. La caisse affiche la
+date <strong>jusqu'à laquelle</strong> elle est générée (utile si on avance à la semaine). Les étapes manuelles se
+<strong>déclarent</strong> ; Vaelan confirmera ensuite le cadrage (à venir).</p>
+
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead><tr class="small text-muted">
+    <th>Établissement</th>
+    {% for c in board.columns %}<th class="text-center">{{ c.label }}</th>{% endfor %}
+  </tr></thead>
+  <tbody>
+  {% for row in board.rows %}
+    <tr class="small">
+      <td><span class="fw-semibold">{{ row.establishment }}</span>
+          <div class="text-muted" style="font-size:.72rem;">{{ row.name }}</div></td>
+      {% for c in board.columns %}
+        <td class="text-center" style="font-size:.8rem;">{{ cellview(company, board, row.establishment, c.key, row.cells[c.key]) }}</td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<div class="d-flex gap-3 flex-wrap small text-muted mt-2">
+  <span class="text-success"><i class="bi bi-check-circle-fill"></i> fait</span>
+  <span class="text-warning-emphasis"><i class="bi bi-circle"></i> à faire</span>
+  <span class="text-primary"><i class="bi bi-hourglass-split"></i> partiel (date de couverture)</span>
+  <span class="text-info-emphasis"><i class="bi bi-flag-fill"></i> déclaré (à vérifier)</span>
+  <span class="text-muted"><i class="bi bi-clock"></i> à venir</span>
+</div>
+{% endblock %}

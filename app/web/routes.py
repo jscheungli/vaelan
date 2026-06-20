@@ -14,6 +14,7 @@ from app.models import Company, Run, ClientAccount, ImportBatch, JobArtifact
 from app.packs.sterna_caisse import config as caisse_config
 from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt
 from app.packs.sterna_caisse.clients_sync import sync_clients
+from app.packs.sterna_caisse import suivi as caisse_suivi
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -165,6 +166,30 @@ def import_run(request: Request, code: str,
     start_job("cadrage", lambda ctx: run_cadrage(ctx, establishment, date_from, date_to, data, fname),
               company_id=company.id, pack="sterna.caisse", label=label)
     return RedirectResponse("/jobs", status_code=303)
+
+
+# ----------------------------- Suivi de clôture (tableau de bord) -----------------------------
+@router.get("/c/{code}/suivi", response_class=HTMLResponse)
+def suivi_page(request: Request, code: str, period: str = ""):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    if not period or len(period) != 7:
+        from datetime import datetime, timedelta
+        period = (datetime.utcnow() + timedelta(hours=4)).strftime("%Y-%m")
+    board = caisse_suivi.build_board(company, period)
+    return templates.TemplateResponse(request, "suivi.html",
+                                      _ctx(request, company=company, board=board))
+
+
+@router.post("/c/{code}/suivi/declare")
+def suivi_declare(request: Request, code: str, period: str = Form(...),
+                  establishment: str = Form(...), step: str = Form(...), undo: str = Form("")):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    caisse_suivi.declare(company.id, establishment, period, step, undo=bool(undo))
+    return RedirectResponse(f"/c/{code}/suivi?period={period}", status_code=303)
 
 
 # ----------------------------- Clients (correspondance) -----------------------------

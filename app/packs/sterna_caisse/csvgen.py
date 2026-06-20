@@ -221,9 +221,10 @@ def build_toslt(establishment, date_from, date_to, company_id,
             tot["ecart"] += ec
 
     def piece_for(date, suffix=""):
-        # identifiant de lot en tête -> tout le lot est repérable/supprimable d'un bloc
-        # (séparateur ASCII '-' pour l'import Pennylane)
-        return f"{batch_code}-{pfx}{date[8:10]}{date[5:7]}{date[2:4]}{suffix}"
+        # pièce du jour en tête (lisible pour le rapprochement espèces/CB/…),
+        # identifiant de lot en queue avec « # » -> lot repérable/supprimable d'un bloc.
+        # ex. « SM280526 #SMT03 » ; créance « SM020626-F0000019 #SMT03 »
+        return f"{pfx}{date[8:10]}{date[5:7]}{date[2:4]}{suffix} #{batch_code}"
 
     for dt in sorted(agg):
         emit(dt, piece_for(dt), agg[dt]["vat"], agg[dt]["pay"])

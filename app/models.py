@@ -112,6 +112,25 @@ class JobArtifact(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class StepDeclaration(SQLModel, table=True):
+    """Suivi de clôture : état déclaré/vérifié d'une étape pour un (établissement, mois).
+
+    Pattern en deux temps : l'utilisateur DÉCLARE qu'il a fait l'étape (ex. import
+    manuel dans Pennylane), puis Vaelan VÉRIFIE (cadré / sans écart). `covered_to`
+    porte la date « fait jusqu'au » pour le travail intra-mois (ex. à la semaine).
+    """
+    __tablename__ = "step_declarations"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="companies.id", index=True)
+    establishment: str = Field(index=True)        # SL / LP / SM
+    period: str = Field(index=True)               # mois « YYYY-MM »
+    step: str = Field(index=True)                  # import_pl / pj / lettrage …
+    state: str = "declared"                        # declared / verified
+    covered_to: Optional[date] = None              # fait jusqu'au (intra-mois)
+    note: Optional[str] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ImportBatch(SQLModel, table=True):
     """Un lot d'import (= un CSV = un identifiant compact dans les libellés)."""
     __tablename__ = "imports"
