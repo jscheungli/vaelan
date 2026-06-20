@@ -27,12 +27,33 @@ class Action:
 
 
 @dataclass
+class Step:
+    """Une étape du déroulé (séquence d'actions d'une clôture)."""
+    n: str                         # numéro affiché ("1", "2"…)
+    title: str
+    desc: str = ""
+    state: str = "soon"            # available / soon / done / attention / manual
+    badge: str = ""                # statut court (ex. "3 à corriger")
+    href: str = ""                 # lien si cliquable
+    cta: str = ""                  # libellé du bouton d'action
+
+
+@dataclass
+class Phase:
+    """Un regroupement logique d'étapes (ex. « Génération des imports »)."""
+    title: str
+    subtitle: str = ""
+    steps: List[Step] = field(default_factory=list)
+
+
+@dataclass
 class Pack:
     company_code: str              # STERNA, KOOKABURA
     domain: str                    # caisse, paie, ...
     title: str
     # hooks (ctx = contexte d'exécution : société, session DB, paramètres)
     tiles_fn: Optional[Callable] = None
+    workflow_fn: Optional[Callable] = None
     actions: List[Action] = field(default_factory=list)
 
     @property
@@ -45,6 +66,14 @@ class Pack:
                 return self.tiles_fn(ctx)
             except Exception as e:  # un pack qui plante ne casse pas le dashboard
                 return [Tile(key="error", label=self.title, status="error", value=str(e)[:80])]
+        return []
+
+    def workflow(self, ctx) -> List[Phase]:
+        if self.workflow_fn:
+            try:
+                return self.workflow_fn(ctx)
+            except Exception:
+                return []
         return []
 
 

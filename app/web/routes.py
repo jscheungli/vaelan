@@ -76,7 +76,7 @@ def dashboard(request: Request, code: str):
 
     packs = registry.packs_for(company.code)
     ctx = {"company": company, "session": None}
-    cards = [{"pack": p, "tiles": p.tiles(ctx)} for p in packs]
+    cards = [{"pack": p, "phases": p.workflow(ctx)} for p in packs]
     pl = pennylane.for_company(company.code)
     health = pl.health() if pl else {"ok": False, "error": "clé API non configurée"}
     return templates.TemplateResponse(
