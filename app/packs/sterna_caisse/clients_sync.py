@@ -32,7 +32,7 @@ def _seed_if_empty(company_id: int):
             s.add(ClientAccount(
                 company_id=company_id, establishment=pfx, toporder_company_id=coid,
                 toporder_name=v.get("name"), account_411=v.get("account"),
-                status=("ok" if v.get("account") else "unknown"),
+                status="unknown",   # rien n'est « ok » tant qu'une synchro n'a pas vérifié
                 note="seed mapping historique",
             ))
         s.commit()
@@ -92,28 +92,27 @@ def sync_clients(ctx, company_code="STERNA"):
                 row.toporder_name = c.get("name")
                 siret = re.sub(r"\D", "", str(c.get("siret") or ""))
                 row.siret = siret or None
+                # Cascade STRICTE (pas de faux « ok » sur un simple mapping 411) :
+                #   pas de SIRET            -> no_siret
+                #   SIRET sans jumeau PL    -> no_pennylane
+                #   jumeau PL mais sans 411 -> incoherent
+                #   jumeau PL + compte 411  -> ok
                 sir = _siren(siret)
+                m = pl_by_siren.get(sir) if sir else None
+                if m:  # on tient le lien Pennylane à jour même si le statut n'est pas ok
+                    row.pennylane_customer_id = m["id"]
+                    row.pennylane_name = m.get("name")
+                    row.pennylane_reg_no = m.get("reg_no")
+                    if not row.account_411 and m.get("acc_id"):
+                        row.account_411 = _account_number(pl, m["acc_id"])
                 if not sir:
-                    row.status = "no_siret"
-                    row.note = "SIRET manquant côté TopOrder"
+                    row.status, row.note = "no_siret", "SIRET manquant côté TopOrder"
+                elif not m:
+                    row.status, row.note = "no_pennylane", "aucun client Pennylane avec ce SIRET"
+                elif not row.account_411:
+                    row.status, row.note = "incoherent", "client Pennylane trouvé mais sans compte 411"
                 else:
-                    m = pl_by_siren.get(sir)
-                    if m:
-                        row.pennylane_customer_id = m["id"]
-                        row.pennylane_name = m.get("name")
-                        row.pennylane_reg_no = m.get("reg_no")
-                        # résoudre le numéro de compte si pas déjà connu
-                        if not row.account_411 and m.get("acc_id"):
-                            num = _account_number(pl, m["acc_id"])
-                            row.account_411 = num
-                        row.status = "ok"
-                        row.note = None
-                    elif row.account_411:
-                        row.status = "ok"   # lien historique conservé
-                        row.note = "lien historique (non retrouvé par SIRET)"
-                    else:
-                        row.status = "no_pennylane"
-                        row.note = "aucun client Pennylane avec ce SIRET"
+                    row.status, row.note = "ok", None
                 row.last_synced = datetime.utcnow()
                 row.updated_at = datetime.utcnow()
                 counts[row.status if row.status in counts else "incoherent"] = \
@@ -123,8 +122,8 @@ def sync_clients(ctx, company_code="STERNA"):
             s.commit()
 
     ctx.log(f"Résultat : {counts['ok']} ok · {counts['no_siret']} sans SIRET · "
-            f"{counts['no_pennylane']} sans jumeau Pennylane")
-    anomalies = counts["no_siret"] + counts["no_pennylane"]
+            f"{counts['no_pennylane']} sans jumeau Pennylane · {counts['incoherent']} incohérents")
+    anomalies = counts["no_siret"] + counts["no_pennylane"] + counts["incoherent"]
     if anomalies:
         return f"{counts['ok']} ok, {anomalies} anomalie(s) à corriger"
     return f"Synchronisé — {counts['ok']} clients, tout est ok ✓"

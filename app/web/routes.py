@@ -155,7 +155,8 @@ def import_run(request: Request, code: str,
 
 # ----------------------------- Clients (correspondance) -----------------------------
 @router.get("/c/{code}/clients", response_class=HTMLResponse)
-def clients_page(request: Request, code: str, q: str = "", etab: str = "", page: int = 1):
+def clients_page(request: Request, code: str, q: str = "", etab: str = "",
+                 statut: str = "", page: int = 1):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
@@ -171,6 +172,8 @@ def clients_page(request: Request, code: str, q: str = "", etab: str = "", page:
     rows = allrows
     if etab:
         rows = [r for r in rows if r.establishment == etab]
+    if statut:
+        rows = [r for r in rows if r.status == statut]
     if q:
         ql = q.lower().strip()
         def _hit(r):
@@ -188,7 +191,7 @@ def clients_page(request: Request, code: str, q: str = "", etab: str = "", page:
     return templates.TemplateResponse(request, "clients.html",
                                       _ctx(request, company=company, rows=page_rows,
                                            counts=dict(counts), etablissements=etablissements,
-                                           q=q, etab=etab, page=page, pages=pages,
+                                           q=q, etab=etab, statut=statut, page=page, pages=pages,
                                            total=total, total_all=len(allrows),
                                            start=start, page_size=PAGE_SIZE))
 
