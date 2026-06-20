@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.core.db import engine
+from app.core.config import APP_VERSION, APP_COMMIT
 from app.core.security import authenticate, current_user, user_companies, role_for
 from app.core import registry
 from app.core.connectors import pennylane
@@ -15,7 +16,10 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 
 
 def _ctx(request: Request, **extra):
-    base = {"request": request, "app_name": "Vaelan", "user": current_user(request)}
+    base = {
+        "request": request, "app_name": "Vaelan", "user": current_user(request),
+        "version": APP_VERSION, "commit": APP_COMMIT,
+    }
     base.update(extra)
     return base
 

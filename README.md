@@ -37,3 +37,12 @@ app/models.py  socle DB (companies, users, runs, daily_states, imports)
 - **4** — alertes email (Postmark).
 
 Secrets : variables d'environnement Render uniquement, jamais dans le dépôt.
+
+## Règles de développement
+
+- **Version (RÈGLE) :** à **chaque déploiement** (chaque push qui part en prod),
+  **incrémenter le numéro dans le fichier `VERSION`**. Il s'affiche en **pied de
+  page** de Vaelan (`vX.Y.Z · <commit>`) : au rafraîchissement, on confirme ainsi
+  qu'une nouvelle version a bien été chargée. Convention : patch pour un correctif/
+  petit ajout, mineur pour une fonctionnalité, majeur pour un changement de cap.
+  Le commit déployé (`RENDER_GIT_COMMIT`) s'affiche automatiquement à côté.
