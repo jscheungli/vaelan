@@ -10,7 +10,7 @@ période) ; le CSV n'est écrit QUE si ça cadre ET que le pré-vol client passe
 """
 import csv as _csv
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -20,6 +20,15 @@ from app.models import Company, ImportBatch
 from . import engine, synthese, csvgen, config, report
 
 EXPORT_DIR = Path(__file__).resolve().parents[3] / "data" / "exports"
+_TZ = timedelta(hours=4)   # La Réunion : UTC+4, sans heure d'été
+
+
+def _now_local():
+    return datetime.utcnow() + _TZ
+
+
+def _pfx(dt):
+    return dt.strftime("%Y%m%d %H%M")          # préfixe de nom de fichier, ex. « 20260620 2045 »
 
 
 def _batch_code(company_id, pfx, kind):
@@ -65,9 +74,12 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
         raise RuntimeError(f"société {company_code} introuvable")
 
     code = _batch_code(company.id, pfx, "tickets")
+    now = _now_local()
+    fpfx = _pfx(now)                                  # ex. « 20260620 2045 »
+    executed_at = now.strftime("%d/%m/%Y %H:%M")
     ctx.log(f"Lot {code} · {establishment} · {date_from} → {date_to}")
     # on garde la synthèse d'entrée (re-téléchargeable depuis la tâche)
-    ctx.add_artifact("input", synthese_name, synthese_bytes, "application/pdf")
+    ctx.add_artifact("input", f"{fpfx} {synthese_name}", synthese_bytes, "application/pdf")
 
     # 1) Synthèse (son « nombre de clients » sert de total approx. pour la barre)
     ctx.progress(0, None, step="lecture du journal de synthèse…")
@@ -87,10 +99,11 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     # 3) VERROU cadrage : on ne génère QUE si ça cadre avec la synthèse
     ctx.progress(total or res["n_tickets"], total or res["n_tickets"], step="cadrage…")
     def _emit_report(csv_agg=None, batch_code=None, balanced=None):
-        args = dict(batch_code=batch_code, n_tickets=res["n_tickets"], balanced=balanced)
+        args = dict(batch_code=batch_code, n_tickets=res["n_tickets"], balanced=balanced,
+                    run_id=ctx.run_id, executed_at=executed_at)
         ctx.set_report(report.build("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args))
         ctx.add_artifact("report",
-                         f"compte_rendu_TOSLT_{code}_{date_from}_{date_to}.pdf",
+                         f"{fpfx} compte_rendu_TOSLT_{code}_{date_from}_{date_to}.pdf",
                          report.build_pdf("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args),
                          "application/pdf")
 
@@ -113,7 +126,7 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
 
     # 5) Écriture du CSV (sur disque pour debug local + EN BASE comme artefact durable)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    fname = f"import_TOSLT_{code}_{date_from}_{date_to}.csv"
+    fname = f"{fpfx} import_TOSLT_{code}_{date_from}_{date_to}.csv"
     path = EXPORT_DIR / fname
     buf = io.StringIO()
     w = _csv.writer(buf)
@@ -144,8 +157,11 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,
                 synthese_name="synthese.pdf"):
+    now = _now_local()
+    fpfx = _pfx(now)
+    executed_at = now.strftime("%d/%m/%Y %H:%M")
     ctx.log(f"Établissement : {establishment} | période {date_from} → {date_to}")
-    ctx.add_artifact("input", synthese_name, synthese_bytes, "application/pdf")
+    ctx.add_artifact("input", f"{fpfx} {synthese_name}", synthese_bytes, "application/pdf")
 
     # On parse la synthèse d'abord : son « nombre de clients » sert de total
     # approximatif pour une barre de progression en % pendant le pull.
@@ -167,10 +183,12 @@ def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,
     ctx.progress(total or ca["n_tickets"], total or ca["n_tickets"], step="cadrage…")
     issues = _cadrage_issues(ctx, ca["ca_ttc"], ca["payments"], syn, date_from, date_to)
     ctx.set_report(report.build("cadrage", establishment, date_from, date_to,
-                                syn, ca, csv=None, n_tickets=ca["n_tickets"]))
-    ctx.add_artifact("report", f"compte_rendu_cadrage_{date_from}_{date_to}.pdf",
+                                syn, ca, csv=None, n_tickets=ca["n_tickets"],
+                                run_id=ctx.run_id, executed_at=executed_at))
+    ctx.add_artifact("report", f"{fpfx} compte_rendu_cadrage_{date_from}_{date_to}.pdf",
                      report.build_pdf("cadrage", establishment, date_from, date_to,
-                                      syn, ca, csv=None, n_tickets=ca["n_tickets"]),
+                                      syn, ca, csv=None, n_tickets=ca["n_tickets"],
+                                      run_id=ctx.run_id, executed_at=executed_at),
                      "application/pdf")
 
     if not issues:

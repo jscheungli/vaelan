@@ -66,7 +66,7 @@ def _fmt(v):
 
 # ---------------------------------------------------------------- modèle de données
 def _compute(kind, establishment, date_from, date_to, syn, api, csv,
-             batch_code, n_tickets, balanced):
+             batch_code, n_tickets, balanced, run_id=None, executed_at=None):
     has_csv = csv is not None
     title = ("Compte rendu — Génération TOSLT (cadrage + CSV)"
              if kind == "generate" else "Compte rendu — Cadrage caisse")
@@ -78,6 +78,13 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
         bits.append(f"Tickets : {n_tickets}")
     if bits:
         meta.append("        ".join(bits))
+    trace = []
+    if run_id is not None:
+        trace.append(f"Tâche #{run_id}")
+    if executed_at:
+        trace.append(f"Exécutée le {executed_at}")
+    if trace:
+        meta.append("        ".join(trace))
 
     def row(label, sv, av, cv):
         return {"label": label, "syn": sv, "api": av, "csv": cv,
@@ -269,12 +276,12 @@ def to_pdf(data) -> bytes:
 
 # ---------------------------------------------------------------- API publique
 def build(kind, establishment, date_from, date_to, syn, api, csv=None, *,
-          batch_code=None, n_tickets=None, balanced=None) -> str:
+          batch_code=None, n_tickets=None, balanced=None, run_id=None, executed_at=None) -> str:
     return to_text(_compute(kind, establishment, date_from, date_to, syn, api, csv,
-                            batch_code, n_tickets, balanced))
+                            batch_code, n_tickets, balanced, run_id, executed_at))
 
 
 def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
-              batch_code=None, n_tickets=None, balanced=None) -> bytes:
+              batch_code=None, n_tickets=None, balanced=None, run_id=None, executed_at=None) -> bytes:
     return to_pdf(_compute(kind, establishment, date_from, date_to, syn, api, csv,
-                           batch_code, n_tickets, balanced))
+                           batch_code, n_tickets, balanced, run_id, executed_at))
