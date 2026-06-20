@@ -99,6 +99,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
     crean = []
     unresolved = []
     n_tickets = 0
+    tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
+    pay_total = defaultdict(float)   # encaissements par mode (pour le cadrage)
     frm, pages = 0, 0
     while True:
         b = _get(client, f"/ppe/ticket/shop/{shop_id}", To=to,
@@ -125,8 +127,11 @@ def build_toslt(establishment, date_from, date_to, company_id,
             paysum = 0.0
             for p in (w.get("ticketPaymentData") or []):
                 amt = float(p.get("paymentAmount") or 0)
-                pay[p.get("paymentType") or "?"] += amt
+                pt = p.get("paymentType") or "?"
+                pay[pt] += amt
+                pay_total[pt] += amt
                 paysum += amt
+            tot_ttc += ttc
             recv = round(ttc - paysum, 2)
             if recv > 0.01:   # facturé à crédit -> écriture autonome
                 coid, cid = tk.get("companyId"), tk.get("customerId")
@@ -155,9 +160,13 @@ def build_toslt(establishment, date_from, date_to, company_id,
         if pages > 600:
             break
 
+    ca_ttc_z = round(tot_ttc, 2)
+    payments = {k: round(v, 2) for k, v in sorted(pay_total.items())}
+
     # Pré-vol souple : on refuse de générer si une créance de la période ne se route pas.
     if unresolved:
-        return {"unresolved": unresolved, "rows": [], "n_tickets": n_tickets}
+        return {"unresolved": unresolved, "rows": [], "n_tickets": n_tickets,
+                "ca_ttc": ca_ttc_z, "payments": payments}
 
     rows = []
     tot = {"ca_ht": 0.0, "tva": 0.0, "enc": 0.0, "creance": 0.0, "ecart": 0.0}
@@ -219,7 +228,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
     return {
         "header": HEADER, "rows": rows, "unresolved": [],
         "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(crean),
-        "ca_ttc": round(tot["ca_ht"] + tot["tva"], 2),
+        "ca_ttc": ca_ttc_z, "payments": payments,
         "ca_ht": round(tot["ca_ht"], 2), "tva": round(tot["tva"], 2),
         "encaisse": round(tot["enc"], 2), "creances": round(tot["creance"], 2),
         "ecart": round(tot["ecart"], 2),

@@ -1,12 +1,12 @@
 """Jobs du pack Sterna — Caisse.
 
 run_cadrage : pull tickets -> calcul CA -> parse journal de synthèse ->
-comparaison (CA Total + modes de paiement + période). C'est le VERROU :
-tant que ça ne cadre pas, on ne génère pas l'import.
+comparaison (CA Total + modes de paiement + période). Vérification seule.
 
-run_generate_toslt : génère le CSV d'import Pennylane (journal TOSLT). Pré-vol
-souple : si une créance de la période ne se route vers aucun compte client, on
-refuse de générer et on liste les clients à corriger.
+run_generate_toslt : action UNIFIÉE (cadrage + génération). On parse la synthèse,
+on construit le TOSLT en un seul pull, on CADRE (CA Total + modes de paiement +
+période) ; le CSV n'est écrit QUE si ça cadre ET que le pré-vol client passe
+(chaque créance routée vers un compte 411). Sinon on s'arrête et on explique.
 """
 import csv as _csv
 import io
@@ -33,7 +33,29 @@ def _batch_code(company_id, pfx, kind):
     return f"{pfx}{letter}{n + 1:02d}"
 
 
-def run_generate_toslt(ctx, company_code, establishment, date_from, date_to):
+def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to):
+    """Compare le calcul tickets à la synthèse. Renvoie la liste des écarts (vide = cadré)."""
+    issues = []
+    if syn.get("ca_total") is None:
+        return ["synthèse illisible (CA Total introuvable)"]
+    p = syn.get("period")
+    if p and (p["date_from"] != date_from or p["date_to"] != date_to):
+        issues.append(f"période synthèse {p['date_from']}→{p['date_to']} ≠ demandée")
+    diff = round((ca_ttc or 0) - syn["ca_total"], 2)
+    ctx.log(f"Cadrage CA : tickets {ca_ttc:.2f} vs synthèse {syn['ca_total']:.2f} → écart {diff:+.2f}")
+    if abs(diff) >= 0.05:
+        issues.append(f"écart CA {diff:+.2f} €")
+    for mode, synv in (syn.get("payments") or {}).items():
+        ourv = (payments or {}).get(mode, 0.0)
+        d = round(ourv - synv, 2)
+        flag = "" if abs(d) < 0.05 else "  ⚠️"
+        ctx.log(f"  {mode} : tickets {ourv:.2f} vs synthèse {synv:.2f} → {d:+.2f}{flag}")
+        if abs(d) >= 0.05:
+            issues.append(f"écart {mode} {d:+.2f} €")
+    return issues
+
+
+def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, synthese_bytes):
     from datetime import date as _date
     pfx = config.ESTABLISHMENTS[establishment]["pfx"]
     with Session(_db_engine) as s:
@@ -43,21 +65,40 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to):
 
     code = _batch_code(company.id, pfx, "tickets")
     ctx.log(f"Lot {code} · {establishment} · {date_from} → {date_to}")
-    ctx.progress(0, None, step="génération TOSLT (pull tickets + pré-vol)…")
+
+    # 1) Synthèse (son « nombre de clients » sert de total approx. pour la barre)
+    ctx.progress(0, None, step="lecture du journal de synthèse…")
+    syn = synthese.parse(synthese_bytes)
+    total = int(syn["nb_clients"]) if syn.get("nb_clients") else None
+    ctx.log(f"Synthèse : CA Total {syn.get('ca_total')} € | ~{total or '?'} clients | période {syn.get('period')}")
 
     def _prog(n, step):
-        ctx.progress(n, None, step=step)
+        cur = min(n, total - 1) if total else n
+        ctx.progress(cur, total, step=step)
 
+    # 2) Construction TOSLT (un seul pull ; renvoie CA + paiements même si pré-vol bloque)
+    ctx.progress(0, total, step="calcul TOSLT depuis les tickets…")
     res = csvgen.build_toslt(establishment, date_from, date_to, company.id, code, on_progress=_prog)
+    ctx.log(f"Tickets : CA TTC {res['ca_ttc']:.2f} € ({res['n_tickets']} tickets)")
 
+    # 3) VERROU cadrage : on ne génère QUE si ça cadre avec la synthèse
+    ctx.progress(total or res["n_tickets"], total or res["n_tickets"], step="cadrage…")
+    issues = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to)
+    if issues:
+        ctx.log("❌ ÉCARTS — CSV NON généré : " + " ; ".join(issues))
+        return "Écart (CSV non généré) : " + " ; ".join(issues[:3])
+    ctx.log("✅ Cadrage parfait.")
+
+    # 4) Pré-vol client : chaque créance doit router vers un compte 411
     if res.get("unresolved"):
         ctx.log(f"⛔ Pré-vol : {len(res['unresolved'])} créance(s) sans compte client — "
                 "génération refusée. Corrige dans TopOrder/Pennylane puis resynchronise les clients.")
         for u in res["unresolved"][:15]:
             ctx.log(f"   • {u['date']} · facture {u['facture'] or '?'} · "
                     f"companyId {u['company_id']} · {u['amount']:.2f} €")
-        return f"Bloqué : {len(res['unresolved'])} créance(s) sans compte client à corriger"
+        return f"Cadré ✓ mais bloqué : {len(res['unresolved'])} créance(s) sans compte client à corriger"
 
+    # 5) Écriture du CSV
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = EXPORT_DIR / f"import_TOSLT_{code}_{date_from}_{date_to}.csv"
     buf = io.StringIO()
@@ -79,7 +120,7 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to):
             f"+ {res['n_creances']} créances · {bal}")
     ctx.log(f"CA TTC {res['ca_ttc']:.2f} € (HT {res['ca_ht']:.2f} + TVA {res['tva']:.2f}) · "
             f"encaissé {res['encaisse']:.2f} · créances 411 {res['creances']:.2f} · écart {res['ecart']:.2f}")
-    return f"Lot {code} généré — {res['ca_ttc']:.2f} € · {res['n_creances']} créances · {bal}"
+    return f"Cadré ✓ — lot {code} généré — {res['ca_ttc']:.2f} € · {res['n_creances']} créances · {bal}"
 
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes):
@@ -103,28 +144,7 @@ def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes):
             f"| HT {ca['ca_ht']:.2f} | TVA {ca['tva']:.2f} | créances {ca['creances_total']:.2f}")
 
     ctx.progress(total or ca["n_tickets"], total or ca["n_tickets"], step="cadrage…")
-    if syn.get("ca_total") is None:
-        ctx.log("⚠️ impossible de lire le CA Total dans la synthèse")
-        return "Synthèse illisible (CA Total introuvable)"
-    ctx.log(f"Synthèse : CA Total {syn['ca_total']:.2f} € | période {syn.get('period')}")
-
-    issues = []
-    p = syn.get("period")
-    if p and (p["date_from"] != date_from or p["date_to"] != date_to):
-        issues.append(f"période synthèse {p['date_from']}→{p['date_to']} ≠ demandée")
-
-    diff = round((ca["ca_ttc"] or 0) - syn["ca_total"], 2)
-    ctx.log(f"Cadrage CA : tickets {ca['ca_ttc']:.2f} vs synthèse {syn['ca_total']:.2f} → écart {diff:+.2f}")
-    if abs(diff) >= 0.05:
-        issues.append(f"écart CA {diff:+.2f} €")
-
-    for mode, synv in (syn.get("payments") or {}).items():
-        ourv = ca["payments"].get(mode, 0.0)
-        d = round(ourv - synv, 2)
-        flag = "" if abs(d) < 0.05 else "  ⚠️"
-        ctx.log(f"  {mode} : tickets {ourv:.2f} vs synthèse {synv:.2f} → {d:+.2f}{flag}")
-        if abs(d) >= 0.05:
-            issues.append(f"écart {mode} {d:+.2f} €")
+    issues = _cadrage_issues(ctx, ca["ca_ttc"], ca["payments"], syn, date_from, date_to)
 
     if not issues:
         ctx.log("✅ CADRAGE PARFAIT — l'import pourra être généré.")

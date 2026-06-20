@@ -114,14 +114,15 @@ def import_form(request: Request, code: str):
 @router.post("/c/{code}/generate")
 def generate_run(request: Request, code: str,
                  establishment: str = Form(...), date_from: str = Form(...),
-                 date_to: str = Form(...)):
+                 date_to: str = Form(...), synthese: UploadFile = File(...)):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
+    data = synthese.file.read()
     short = establishment.replace("OCOPAIN ", "")
-    label = f"Génération TOSLT · {short} · {date_from}→{date_to}"
+    label = f"Cadrage + génération TOSLT · {short} · {date_from}→{date_to}"
     start_job("generate_toslt",
-              lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to),
+              lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data),
               company_id=company.id, pack="sterna.caisse", label=label)
     return RedirectResponse("/jobs", status_code=303)
 
