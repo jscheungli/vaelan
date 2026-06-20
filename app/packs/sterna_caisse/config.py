@@ -40,11 +40,18 @@ def resolve_411(pfx: str, company_id, customer_id):
     return None, None
 
 # journaux Pennylane par établissement : (TOSLT tickets, TOSLF factures), cat analytique
+# Les ids numériques servent à l'API ; le CSV d'import manuel référence le journal
+# par son CODE (TOSLT/TOSLF) -> voir journal_code().
 JOURNALS = {
     "SL": {"tickets": 78512312320, "factures": 84363386880, "analytic": 10174227},
     "LP": {"tickets": 84391071744, "factures": 84391256064, "analytic": 10174226},
     "SM": {"tickets": 84392247296, "factures": 84392374272, "analytic": 10174225},
 }
+
+
+def journal_code(pfx: str, kind: str) -> str:
+    """Code journal Pennylane (pour le CSV) : tickets -> TO<PFX>T, factures -> TO<PFX>F."""
+    return f"TO{pfx}{'T' if kind == 'tickets' else 'F'}"
 
 
 def caisse_accounts(pfx: str) -> dict:

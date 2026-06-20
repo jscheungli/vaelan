@@ -9,3 +9,6 @@ __pycache__/
 /data/
 /samples/
 *.log
+
+# CSV d'import générés (éphémères)
+data/exports/

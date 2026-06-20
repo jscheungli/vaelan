@@ -1,6 +1,6 @@
 import os
 from fastapi import APIRouter, Request, Form, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
@@ -10,9 +10,9 @@ from app.core.security import authenticate, current_user, user_companies, role_f
 from app.core import registry
 from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
-from app.models import Company, Run, ClientAccount
+from app.models import Company, Run, ClientAccount, ImportBatch
 from app.packs.sterna_caisse import config as caisse_config
-from app.packs.sterna_caisse.jobs import run_cadrage
+from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt
 from app.packs.sterna_caisse.clients_sync import sync_clients
 
 router = APIRouter()
@@ -103,8 +103,39 @@ def import_form(request: Request, code: str):
     if redir:
         return redir
     establishments = list(caisse_config.ESTABLISHMENTS.keys())
+    with Session(engine) as s:
+        batches = s.exec(select(ImportBatch).where(ImportBatch.company_id == company.id)
+                         .order_by(ImportBatch.id.desc()).limit(20)).all()
     return templates.TemplateResponse(request, "import.html",
-                                      _ctx(request, company=company, establishments=establishments))
+                                      _ctx(request, company=company, establishments=establishments,
+                                           batches=batches))
+
+
+@router.post("/c/{code}/generate")
+def generate_run(request: Request, code: str,
+                 establishment: str = Form(...), date_from: str = Form(...),
+                 date_to: str = Form(...)):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    short = establishment.replace("OCOPAIN ", "")
+    label = f"Génération TOSLT · {short} · {date_from}→{date_to}"
+    start_job("generate_toslt",
+              lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to),
+              company_id=company.id, pack="sterna.caisse", label=label)
+    return RedirectResponse("/jobs", status_code=303)
+
+
+@router.get("/c/{code}/batch/{batch_id}/download")
+def batch_download(request: Request, code: str, batch_id: int):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        b = s.get(ImportBatch, batch_id)
+    if not b or b.company_id != company.id or not b.csv_path or not os.path.exists(b.csv_path):
+        return RedirectResponse(f"/c/{code}/import", status_code=303)
+    return FileResponse(b.csv_path, media_type="text/csv", filename=os.path.basename(b.csv_path))
 
 
 @router.post("/c/{code}/import")
