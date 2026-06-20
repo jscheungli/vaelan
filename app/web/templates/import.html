@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Import / cadrage · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Import / cadrage</li>
+</ol></nav>
+
+<h1 class="h4 mb-1">Import caisse — cadrage</h1>
+<p class="text-muted small">Le calcul se fait sur les tickets ; l'import ne sera autorisé que si tout
+cadre avec le <strong>journal de synthèse</strong> uploadé.</p>
+
+<div class="card shadow-sm" style="max-width:640px;">
+  <div class="card-body">
+    <form method="post" action="/c/{{ company.code }}/import" enctype="multipart/form-data">
+      <div class="mb-3">
+        <label class="form-label small">Établissement</label>
+        <select name="establishment" class="form-select" required>
+          {% for e in establishments %}<option value="{{ e }}">{{ e }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="row g-2 mb-3">
+        <div class="col">
+          <label class="form-label small">Date de début</label>
+          <input type="date" name="date_from" class="form-control" required>
+        </div>
+        <div class="col">
+          <label class="form-label small">Date de fin</label>
+          <input type="date" name="date_to" class="form-control" required>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label small">Journal de synthèse (PDF)</label>
+        <input type="file" name="synthese" accept="application/pdf" class="form-control" required>
+      </div>
+      <button class="btn btn-dark"><i class="bi bi-shield-check"></i> Lancer le cadrage</button>
+      <a href="/c/{{ company.code }}" class="btn btn-outline-secondary">Annuler</a>
+    </form>
+  </div>
+</div>
+<p class="text-muted small mt-2">Le cadrage tourne en tâche de fond — suis-le sur la page <a href="/jobs">Tâches</a>.</p>
+{% endblock %}

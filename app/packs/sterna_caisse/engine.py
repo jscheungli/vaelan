@@ -49,7 +49,8 @@ def _fac_ticketids(client, shop_id):
     return tk2fac
 
 
-def compute_ca(establishment: str, date_from: str, date_to: str) -> dict:
+def compute_ca(establishment: str, date_from: str, date_to: str, on_progress=None) -> dict:
+    """on_progress(n_tickets, step) est appelé pendant le pull pour le suivi live."""
     est = config.ESTABLISHMENTS[establishment]
     shop_id = est["shop_id"]
     client = toporder.for_establishment(establishment)
@@ -105,6 +106,8 @@ def compute_ca(establishment: str, date_from: str, date_to: str) -> dict:
                     "amount": recv,
                 })
                 by_day[dd]["creances"] += recv
+        if on_progress:
+            on_progress(n_tickets, f"pull tickets… {n_tickets} traités")
         if pmax < date_from:
             break
         frm += len(b)

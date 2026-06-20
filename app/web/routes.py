@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
@@ -11,6 +11,8 @@ from app.core import registry
 from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
 from app.models import Company, Run
+from app.packs.sterna_caisse import config as caisse_config
+from app.packs.sterna_caisse.jobs import run_cadrage
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -80,6 +82,43 @@ def dashboard(request: Request, code: str):
         request, "dashboard.html",
         _ctx(request, company=company, cards=cards, role=role_for(user, company), health=health),
     )
+
+
+# ----------------------------- Import / cadrage -----------------------------
+def _company_or_redirect(request: Request, code: str):
+    user = current_user(request)
+    if not user:
+        return None, RedirectResponse("/login", status_code=303)
+    with Session(engine) as s:
+        company = s.exec(select(Company).where(Company.code == code)).first()
+    if not company or role_for(user, company) is None:
+        return None, templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
+    return company, None
+
+
+@router.get("/c/{code}/import", response_class=HTMLResponse)
+def import_form(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    establishments = list(caisse_config.ESTABLISHMENTS.keys())
+    return templates.TemplateResponse(request, "import.html",
+                                      _ctx(request, company=company, establishments=establishments))
+
+
+@router.post("/c/{code}/import")
+def import_run(request: Request, code: str,
+               establishment: str = Form(...), date_from: str = Form(...),
+               date_to: str = Form(...), synthese: UploadFile = File(...)):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    data = synthese.file.read()
+    short = establishment.replace("OCOPAIN ", "")
+    label = f"Cadrage caisse · {short} · {date_from}→{date_to}"
+    start_job("cadrage", lambda ctx: run_cadrage(ctx, establishment, date_from, date_to, data),
+              company_id=company.id, pack="sterna.caisse", label=label)
+    return RedirectResponse("/jobs", status_code=303)
 
 
 # ----------------------------- Jobs (tâches) -----------------------------
