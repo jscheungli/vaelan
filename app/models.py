@@ -128,6 +128,9 @@ class StepDeclaration(SQLModel, table=True):
     state: str = "declared"                        # declared / verified
     covered_to: Optional[date] = None              # fait jusqu'au (intra-mois)
     note: Optional[str] = None
+    verified_at: Optional[datetime] = None         # dernière vérification Pennylane
+    verify_ok: Optional[bool] = None               # cohérent (True) / écart (False)
+    verify_run_id: Optional[int] = None            # tâche de vérification (compte rendu)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 

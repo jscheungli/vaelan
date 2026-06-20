@@ -4,6 +4,8 @@
   {% set st = cell.state %}
   {% if st == 'done' %}
     <span class="text-success"><i class="bi bi-check-circle-fill"></i> {{ cell.text }}</span>
+  {% elif st == 'error' %}
+    <span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> {{ cell.text }}</span>
   {% elif st == 'partial' %}
     <span class="text-primary"><i class="bi bi-hourglass-split"></i> {{ cell.text }}</span>
   {% elif st == 'declared' %}
@@ -15,18 +17,26 @@
         <button class="btn btn-link btn-sm p-0 ms-1 text-muted" title="Annuler la déclaration"><i class="bi bi-x"></i></button>
       </form>
     {% endif %}
-    <div><button class="btn btn-outline-secondary btn-sm py-0 mt-1" disabled title="Vaelan confirmera le cadrage">Vérifier · bientôt</button></div>
   {% elif st == 'todo' %}
     <span class="text-warning-emphasis"><i class="bi bi-circle"></i> {{ cell.text }}</span>
     {% if cell.can_declare %}
-      <div><form method="post" action="/c/{{ company.code }}/suivi/declare" class="d-inline">
+      <form method="post" action="/c/{{ company.code }}/suivi/declare" class="d-inline">
         <input type="hidden" name="period" value="{{ board.period }}"><input type="hidden" name="establishment" value="{{ est }}">
         <input type="hidden" name="step" value="{{ key }}">
-        <button class="btn btn-outline-dark btn-sm py-0 mt-1">Déclarer fait</button>
-      </form></div>
+        <button class="btn btn-link btn-sm p-0 ms-1" title="Marquer comme importé">déclarer</button>
+      </form>
     {% endif %}
   {% else %}
     <span class="text-muted"><i class="bi bi-clock"></i> {{ cell.text }}</span>
+  {% endif %}
+  {% if cell.can_verify %}
+    <div class="mt-1 d-flex align-items-center justify-content-center gap-1">
+      <form method="post" action="/c/{{ company.code }}/suivi/verify" class="d-inline">
+        <input type="hidden" name="period" value="{{ board.period }}"><input type="hidden" name="establishment" value="{{ est }}">
+        <button class="btn btn-outline-dark btn-sm py-0" title="Relire Pennylane et confirmer le cadrage"><i class="bi bi-shield-check"></i> Vérifier</button>
+      </form>
+      {% if cell.run_id %}<a href="/jobs/{{ cell.run_id }}/report" class="small" title="Compte rendu de vérification"><i class="bi bi-file-text"></i></a>{% endif %}
+    </div>
   {% endif %}
 {%- endmacro %}
 {% block content %}

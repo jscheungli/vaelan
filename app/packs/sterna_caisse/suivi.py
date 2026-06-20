@@ -45,6 +45,10 @@ def _fr(d):
     return d.strftime("%d/%m") if d else None
 
 
+def _fr_dt(dt):
+    return dt.strftime("%d/%m %H:%M") if dt else None
+
+
 def build_board(company, period):
     start, end, prev, nxt, label = _period_nav(period)
     with Session(engine) as s:
@@ -103,15 +107,18 @@ def build_board(company, period):
                                   "can_verify": True}
                 else:
                     cells[key] = {"state": "soon", "text": "à venir"}
-            else:  # import_pl : déclaratif actif
-                if d and d.state == "verified":
-                    cells[key] = {"state": "done", "text": f"vérifié → {_fr(d.covered_to or end)}"}
-                elif d:
-                    cells[key] = {"state": "declared",
-                                  "text": f"déclaré → {_fr(d.covered_to or end)}",
-                                  "can_undo": True}
+            else:  # import_pl : déclaratif + VÉRIFICATION Pennylane (re-jouable)
+                cell = {"can_verify": True, "run_id": (d.verify_run_id if d else None)}
+                if d and d.verified_at is not None:
+                    if d.verify_ok:
+                        cell.update(state="done", text=f"cohérent · {_fr_dt(d.verified_at)}")
+                    else:
+                        cell.update(state="error", text=f"écart · {_fr_dt(d.verified_at)}")
+                elif d and d.state == "declared":
+                    cell.update(state="declared", text="déclaré (à vérifier)", can_undo=True)
                 else:
-                    cells[key] = {"state": "todo", "text": "à déclarer", "can_declare": True}
+                    cell.update(state="todo", text="à vérifier", can_declare=True)
+                cells[key] = cell
 
         rows.append({"establishment": pfx, "name": est_name, "cells": cells})
 

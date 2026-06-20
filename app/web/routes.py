@@ -15,6 +15,7 @@ from app.packs.sterna_caisse import config as caisse_config
 from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt
 from app.packs.sterna_caisse.clients_sync import sync_clients
 from app.packs.sterna_caisse import suivi as caisse_suivi
+from app.packs.sterna_caisse.verify import run_verify
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -189,6 +190,18 @@ def suivi_declare(request: Request, code: str, period: str = Form(...),
     if redir:
         return redir
     caisse_suivi.declare(company.id, establishment, period, step, undo=bool(undo))
+    return RedirectResponse(f"/c/{code}/suivi?period={period}", status_code=303)
+
+
+@router.post("/c/{code}/suivi/verify")
+def suivi_verify(request: Request, code: str, period: str = Form(...), establishment: str = Form(...)):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    label = f"Vérif Pennylane · {establishment} · {period}"
+    start_job("verify_pennylane",
+              lambda ctx: run_verify(ctx, company.code, establishment, period),
+              company_id=company.id, pack="sterna.caisse", label=label)
     return RedirectResponse(f"/c/{code}/suivi?period={period}", status_code=303)
 
 

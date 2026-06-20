@@ -17,6 +17,30 @@ class PennylaneClient:
             r.raise_for_status()
             return r.json()
 
+    def ledger_entries(self, journal_id, date_from, date_to):
+        """Liste les écritures d'un journal sur une période (sans les lignes)."""
+        import json
+        flt = json.dumps([
+            {"field": "journal_id", "operator": "eq", "value": journal_id},
+            {"field": "date", "operator": "gteq", "value": date_from},
+            {"field": "date", "operator": "lteq", "value": date_to},
+        ])
+        out, cur = [], None
+        while True:
+            params = {"filter": flt, "limit": 100}
+            if cur:
+                params["cursor"] = cur
+            d = self.get("/ledger_entries", **params)
+            out += d.get("items") or []
+            if not d.get("has_more"):
+                break
+            cur = d.get("next_cursor")
+        return out
+
+    def entry_lines(self, entry_id):
+        """Lignes détaillées d'une écriture (debit/credit + ledger_account.number)."""
+        return self.get(f"/ledger_entries/{entry_id}").get("ledger_entry_lines") or []
+
     def health(self) -> dict:
         """Vérifie que le token répond (lecture d'une ressource légère)."""
         try:
