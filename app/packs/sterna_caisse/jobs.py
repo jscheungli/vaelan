@@ -9,17 +9,25 @@ from . import engine, synthese
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes):
     ctx.log(f"Établissement : {establishment} | période {date_from} → {date_to}")
-    ctx.progress(0, None, step="calcul du CA depuis les tickets…")
 
-    ca = engine.compute_ca(
-        establishment, date_from, date_to,
-        on_progress=lambda n, step: ctx.progress(n, None, step),
-    )
+    # On parse la synthèse d'abord : son « nombre de clients » sert de total
+    # approximatif pour une barre de progression en % pendant le pull.
+    ctx.progress(0, None, step="lecture du journal de synthèse…")
+    syn = synthese.parse(synthese_bytes)
+    total = int(syn["nb_clients"]) if syn.get("nb_clients") else None
+    ctx.log(f"Synthèse : CA Total {syn.get('ca_total')} € | ~{total or '?'} clients | période {syn.get('period')}")
+
+    def _prog(n, step):
+        # plafonné à total-1 tant que ça tourne (le total est approximatif)
+        cur = min(n, total - 1) if total else n
+        ctx.progress(cur, total, step=step)
+
+    ctx.progress(0, total, step="calcul du CA depuis les tickets…")
+    ca = engine.compute_ca(establishment, date_from, date_to, on_progress=_prog)
     ctx.log(f"CA tickets : {ca['ca_ttc']:.2f} € TTC ({ca['n_tickets']} tickets) "
             f"| HT {ca['ca_ht']:.2f} | TVA {ca['tva']:.2f} | créances {ca['creances_total']:.2f}")
 
-    ctx.progress(ca["n_tickets"], ca["n_tickets"], step="lecture du journal de synthèse…")
-    syn = synthese.parse(synthese_bytes)
+    ctx.progress(total or ca["n_tickets"], total or ca["n_tickets"], step="cadrage…")
     if syn.get("ca_total") is None:
         ctx.log("⚠️ impossible de lire le CA Total dans la synthèse")
         return "Synthèse illisible (CA Total introuvable)"
