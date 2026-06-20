@@ -58,6 +58,7 @@ def sync_clients(ctx, company_code="STERNA"):
             sir = _siren(c.get("reg_no"))
             if sir:
                 pl_by_siren[sir] = {"id": c["id"], "name": c.get("name"),
+                                    "reg_no": c.get("reg_no"),
                                     "acc_id": (c.get("ledger_account") or {}).get("id")}
         if not d.get("has_more"):
             break
@@ -69,7 +70,14 @@ def sync_clients(ctx, company_code="STERNA"):
     for est_name, est in config.ESTABLISHMENTS.items():
         pfx = est["pfx"]
         ctx.progress(n, None, step=f"sync {pfx}…")
-        comps = _pull_companies(est_name)
+        try:
+            comps = _pull_companies(est_name)
+        except Exception as e:
+            ctx.log(f"⚠️ {pfx} : lecture TopOrder impossible ({e}) — établissement ignoré")
+            continue
+        if not comps:
+            ctx.log(f"⚠️ {pfx} : aucune société TopOrder remontée "
+                    f"(clé absente ? voir {toporder.env_var_for(est_name)})")
         with Session(engine) as s:
             existing = {r.toporder_company_id: r
                         for r in s.exec(select(ClientAccount).where(
@@ -93,6 +101,7 @@ def sync_clients(ctx, company_code="STERNA"):
                     if m:
                         row.pennylane_customer_id = m["id"]
                         row.pennylane_name = m.get("name")
+                        row.pennylane_reg_no = m.get("reg_no")
                         # résoudre le numéro de compte si pas déjà connu
                         if not row.account_411 and m.get("acc_id"):
                             num = _account_number(pl, m["acc_id"])

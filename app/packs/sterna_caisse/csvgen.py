@@ -27,12 +27,13 @@ from app.models import ClientAccount
 from . import config
 from .engine import _get, _day, _fac_ticketids, ZERO
 
-# Format validé pour l'import manuel Pennylane : 11 colonnes, PAS de « Référence
-# lettrage ». Taux de TVA en virgule décimale (« 2,1% »). Catégories analytiques
-# dans les 2 dernières colonnes (Famille « Etablissement » / nom court établi).
+# Format d'import manuel Pennylane. Taux de TVA en virgule décimale (« 2,1% »).
+# Catégories analytiques dans les colonnes 10-11 (Famille « Etablissement » / nom
+# court établi). 12e colonne « Référence lettrage » : pré-lettrage des créances
+# par n° de facture (token F<n°>) → la créance 411 se solde au règlement.
 HEADER = ["Date", "Code journal", "Numéro de compte", "Libellé de compte",
           "Libellé de ligne", "Taux de TVA du compte", "Libellé de pièce",
-          "Débit", "Crédit", "Famille de catégories", "Catégorie"]
+          "Débit", "Crédit", "Famille de catégories", "Catégorie", "Référence lettrage"]
 
 
 def _rate_label(r: str) -> str:
@@ -168,11 +169,11 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 continue
             rl = _rate_label(r)
             rows.append([date, journal, ca_acc, "Vente Caisse Magasin (Tickets)",
-                         f"CA HT {rl}", rl, piece, "", f"{ht:.2f}", cat_family, cat_label])
+                         f"CA HT {rl}", rl, piece, "", f"{ht:.2f}", cat_family, cat_label, ""])
             tot["ca_ht"] += ht
             if r in tva_acc and ttc_ - ht > 0.005:
                 rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
-                             f"TVA {rl}", "", piece, "", f"{ttc_ - ht:.2f}", "", ""])
+                             f"TVA {rl}", "", piece, "", f"{ttc_ - ht:.2f}", "", "", ""])
                 tot["tva"] += ttc_ - ht
         enc = 0.0
         for pt, amt in sorted(pay.items()):
@@ -180,15 +181,17 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 continue
             pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
             if amt > 0:
-                rows.append([date, journal, pacc, pt, pt, "", piece, f"{amt:.2f}", "", "", ""])
+                rows.append([date, journal, pacc, pt, pt, "", piece, f"{amt:.2f}", "", "", "", ""])
             else:
-                rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", "", ""])
+                rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", "", "", ""])
             enc += amt
         tot["enc"] += enc
         if cre_acc is not None:
+            # lettrage F<n°> sur la créance 411 -> solde au règlement du client
+            lettr = f"F{cre_fnum}" if cre_fnum else ""
             rows.append([date, journal, str(cre_acc), "Créance client",
                          f"Créance {cre_fnum:07d} · {cre_nm}", "", piece,
-                         f"{cre_amt:.2f}", "", "", ""])
+                         f"{cre_amt:.2f}", "", "", "", lettr])
             tot["creance"] += cre_amt
             ec = round(ttcsum - enc - cre_amt, 2)
         else:
@@ -197,7 +200,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
             rows.append([date, journal, ecart_acc, "Écart de caisse / avance",
                          ("Avance/dépôt" if ec < 0 else "Écart de caisse"), "", piece,
                          (f"{ec:.2f}" if ec > 0 else ""), (f"{-ec:.2f}" if ec < 0 else ""),
-                         "", ""])
+                         "", "", ""])
             tot["ecart"] += ec
 
     def piece_for(date, suffix=""):

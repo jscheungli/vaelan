@@ -86,6 +86,7 @@ class ClientAccount(SQLModel, table=True):
     siret: Optional[str] = None
     pennylane_customer_id: Optional[int] = None
     pennylane_name: Optional[str] = None              # nom côté Pennylane (pour voir la correspondance)
+    pennylane_reg_no: Optional[str] = None            # SIRET/SIREN tel qu'enregistré dans Pennylane
     account_411: Optional[str] = None                 # numéro de compte Pennylane
     status: str = "unknown"                            # ok / no_siret / no_pennylane / incoherent
     note: Optional[str] = None

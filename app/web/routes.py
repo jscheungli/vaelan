@@ -155,17 +155,42 @@ def import_run(request: Request, code: str,
 
 # ----------------------------- Clients (correspondance) -----------------------------
 @router.get("/c/{code}/clients", response_class=HTMLResponse)
-def clients_page(request: Request, code: str):
+def clients_page(request: Request, code: str, q: str = "", etab: str = "", page: int = 1):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
     from collections import Counter
+    PAGE_SIZE = 25
     with Session(engine) as s:
-        rows = s.exec(select(ClientAccount).where(ClientAccount.company_id == company.id)
-                      .order_by(ClientAccount.establishment, ClientAccount.toporder_name)).all()
-    counts = Counter(r.status for r in rows)
+        allrows = s.exec(select(ClientAccount).where(ClientAccount.company_id == company.id)
+                         .order_by(ClientAccount.establishment, ClientAccount.toporder_name)).all()
+    counts = Counter(r.status for r in allrows)
+    etablissements = sorted({r.establishment for r in allrows})
+
+    # filtres
+    rows = allrows
+    if etab:
+        rows = [r for r in rows if r.establishment == etab]
+    if q:
+        ql = q.lower().strip()
+        def _hit(r):
+            return any(ql in (v or "").lower() for v in (
+                r.toporder_name, r.pennylane_name, r.siret, r.pennylane_reg_no,
+                r.account_411, str(r.pennylane_customer_id or "")))
+        rows = [r for r in rows if _hit(r)]
+
+    total = len(rows)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(1, min(page, pages))
+    start = (page - 1) * PAGE_SIZE
+    page_rows = rows[start:start + PAGE_SIZE]
+
     return templates.TemplateResponse(request, "clients.html",
-                                      _ctx(request, company=company, rows=rows, counts=dict(counts)))
+                                      _ctx(request, company=company, rows=page_rows,
+                                           counts=dict(counts), etablissements=etablissements,
+                                           q=q, etab=etab, page=page, pages=pages,
+                                           total=total, total_all=len(allrows),
+                                           start=start, page_size=PAGE_SIZE))
 
 
 @router.post("/c/{code}/clients/sync")
