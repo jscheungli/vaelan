@@ -18,8 +18,11 @@ from app.models import ClientAccount, Company
 from . import config
 
 
-def _digits(s):
-    return re.sub(r"\D", "", str(s or ""))
+def _key(s):
+    """Normalise un identifiant de matching : SIRET (chiffres) OU code assigné
+    (ex. asso « ASDR »). On garde l'alphanumérique en majuscules, on retire
+    espaces/ponctuation (« 818 173 … » == « 81817359300018 »)."""
+    return re.sub(r"[^0-9A-Za-z]", "", str(s or "")).upper()
 
 
 def _seed_if_empty(company_id: int):
@@ -55,7 +58,7 @@ def sync_clients(ctx, company_code="STERNA"):
     while True:
         d = pl.get("/customers", **({"limit": 100, "cursor": cur} if cur else {"limit": 100}))
         for c in d.get("items", []):
-            ref = _digits(c.get("external_reference"))
+            ref = _key(c.get("external_reference"))
             if ref:
                 pl_by_ref[ref] = {"id": c["id"], "name": c.get("name"),
                                   "reg_no": c.get("reg_no"),
@@ -68,6 +71,8 @@ def sync_clients(ctx, company_code="STERNA"):
 
     counts = {"ok": 0, "no_siret": 0, "no_pennylane": 0, "incoherent": 0}
     n = 0
+    seen = set()       # (pfx, company_id) traités lors de cette synchro
+    pulled = set()     # établissements réellement lus (pour réconcilier sans risque)
     for est_name, est in config.ESTABLISHMENTS.items():
         pfx = est["pfx"]
         ctx.progress(n, None, step=f"sync {pfx}…")
@@ -78,7 +83,9 @@ def sync_clients(ctx, company_code="STERNA"):
             continue
         if not comps:
             ctx.log(f"⚠️ {pfx} : aucune société TopOrder remontée "
-                    f"(clé absente ? voir {toporder.env_var_for(est_name)})")
+                    f"(clé absente ? voir {toporder.env_var_for(est_name)}) — non réconcilié")
+            continue   # pull vide = probable erreur -> ne pas toucher aux statuts existants
+        pulled.add(pfx)
         with Session(engine) as s:
             existing = {r.toporder_company_id: r
                         for r in s.exec(select(ClientAccount).where(
@@ -88,16 +95,17 @@ def sync_clients(ctx, company_code="STERNA"):
                 if c.get("contactType") not in (0, "0"):
                     continue  # particuliers ignorés (compte commun)
                 coid = c["id"]
+                seen.add((pfx, coid))
                 row = existing.get(coid) or ClientAccount(
                     company_id=company.id, establishment=pfx, toporder_company_id=coid)
                 row.toporder_name = c.get("name")
-                siret = _digits(c.get("siret"))
+                siret = _key(c.get("siret"))
                 row.siret = siret or None
-                # Cascade STRICTE — clé = SIRET TopOrder ↔ Identifiant client Pennylane :
-                #   pas de SIRET            -> no_siret
-                #   SIRET sans jumeau PL    -> no_pennylane
-                #   jumeau PL mais sans 411 -> incoherent
-                #   jumeau PL + compte 411  -> ok
+                # Cascade STRICTE — clé = SIRET/identifiant TopOrder ↔ Identifiant client Pennylane :
+                #   pas d'identifiant            -> no_siret
+                #   identifiant sans jumeau PL   -> no_pennylane
+                #   jumeau PL mais sans 411      -> incoherent
+                #   jumeau PL + compte 411       -> ok
                 m = pl_by_ref.get(siret) if siret else None
                 if m:  # on tient le lien Pennylane à jour même si le statut n'est pas ok
                     row.pennylane_customer_id = m["id"]
@@ -122,6 +130,24 @@ def sync_clients(ctx, company_code="STERNA"):
                 s.add(row)
                 n += 1
             s.commit()
+
+    # Réconciliation : une ligne d'un établissement BIEN lu mais jamais revue dans
+    # TopOrder ne doit pas garder un statut périmé (ex. seed « ok »). On la marque
+    # honnêtement « absent_toporder » sans toucher au mapping 411.
+    reconciled = 0
+    with Session(engine) as s:
+        for r in s.exec(select(ClientAccount).where(
+                ClientAccount.company_id == company.id)).all():
+            if r.establishment in pulled and (r.establishment, r.toporder_company_id) not in seen:
+                if r.status != "absent_toporder":
+                    r.status = "absent_toporder"
+                    r.note = "présent dans le mapping mais introuvable dans TopOrder"
+                    r.updated_at = datetime.utcnow()
+                    s.add(r)
+                    reconciled += 1
+        s.commit()
+    if reconciled:
+        ctx.log(f"{reconciled} client(s) du mapping introuvable(s) dans TopOrder → « absent TopOrder »")
 
     ctx.log(f"Résultat : {counts['ok']} ok · {counts['no_siret']} sans SIRET · "
             f"{counts['no_pennylane']} sans jumeau Pennylane · {counts['incoherent']} incohérents")

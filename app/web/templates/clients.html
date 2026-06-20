@@ -5,6 +5,7 @@
   {% elif s == 'no_siret' %}<span class="badge text-bg-danger">SIRET manquant</span>
   {% elif s == 'no_pennylane' %}<span class="badge text-bg-warning">absent de Pennylane</span>
   {% elif s == 'incoherent' %}<span class="badge text-bg-danger">incohérent</span>
+  {% elif s == 'absent_toporder' %}<span class="badge text-bg-dark">absent TopOrder</span>
   {% else %}<span class="badge text-bg-secondary">{{ s }}</span>{% endif %}
 {%- endmacro %}
 {% set ETAB_COLORS = {
@@ -39,6 +40,7 @@ la correction se fait dans TopOrder / Pennylane, puis on resynchronise.</p>
   <a class="text-decoration-none me-3" href="{{ base }}?statut=no_siret"><span class="badge text-bg-danger">{{ counts.get('no_siret', 0) }}</span> sans SIRET</a>
   <a class="text-decoration-none me-3" href="{{ base }}?statut=no_pennylane"><span class="badge text-bg-warning">{{ counts.get('no_pennylane', 0) }}</span> absents de Pennylane</a>
   {% if counts.get('incoherent') %}<a class="text-decoration-none me-3" href="{{ base }}?statut=incoherent"><span class="badge text-bg-danger">{{ counts.get('incoherent') }}</span> incohérents</a>{% endif %}
+  {% if counts.get('absent_toporder') %}<a class="text-decoration-none me-3" href="{{ base }}?statut=absent_toporder"><span class="badge text-bg-dark">{{ counts.get('absent_toporder') }}</span> absents TopOrder</a>{% endif %}
   {% if counts.get('unknown') %}<a class="text-decoration-none me-3" href="{{ base }}?statut=unknown"><span class="badge text-bg-secondary">{{ counts.get('unknown') }}</span> non synchronisés</a>{% endif %}
 </div>
 
@@ -63,6 +65,7 @@ la correction se fait dans TopOrder / Pennylane, puis on resynchronise.</p>
       <option value="no_siret" {{ 'selected' if statut == 'no_siret' }}>SIRET manquant</option>
       <option value="no_pennylane" {{ 'selected' if statut == 'no_pennylane' }}>absent de Pennylane</option>
       <option value="incoherent" {{ 'selected' if statut == 'incoherent' }}>incohérent</option>
+      <option value="absent_toporder" {{ 'selected' if statut == 'absent_toporder' }}>absent TopOrder</option>
       <option value="unknown" {{ 'selected' if statut == 'unknown' }}>non synchronisé</option>
     </select>
   </div>
