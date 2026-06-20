@@ -13,6 +13,27 @@ engine = create_engine(_url, connect_args=connect_args, pool_pre_ping=True)
 def init_db() -> None:
     import app.models  # noqa: F401 — enregistre les tables
     SQLModel.metadata.create_all(engine)
+    _ensure_columns()
+
+
+# Mini-migration : ajouts de colonnes idempotents en attendant Alembic.
+# (create_all ne modifie pas une table existante ; on ajoute les colonnes manquantes.)
+_COLUMN_ADDS = [
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS step VARCHAR",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS progress_current INTEGER",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS progress_total INTEGER",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
+]
+
+
+def _ensure_columns() -> None:
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        for stmt in _COLUMN_ADDS:
+            try:
+                conn.execute(text(stmt))
+            except Exception:
+                pass  # SQLite (dev, base fraîche) ou colonne déjà présente
 
 
 def get_session():

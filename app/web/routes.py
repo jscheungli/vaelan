@@ -9,7 +9,8 @@ from app.core.config import APP_VERSION, APP_COMMIT
 from app.core.security import authenticate, current_user, user_companies, role_for
 from app.core import registry
 from app.core.connectors import pennylane
-from app.models import Company
+from app.core.jobs import start_job, demo_job
+from app.models import Company, Run
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -79,3 +80,29 @@ def dashboard(request: Request, code: str):
         request, "dashboard.html",
         _ctx(request, company=company, cards=cards, role=role_for(user, company), health=health),
     )
+
+
+# ----------------------------- Jobs (tâches) -----------------------------
+@router.get("/jobs", response_class=HTMLResponse)
+def jobs_page(request: Request):
+    if not current_user(request):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "jobs.html", _ctx(request))
+
+
+@router.get("/jobs/feed", response_class=HTMLResponse)
+def jobs_feed(request: Request):
+    if not current_user(request):
+        return RedirectResponse("/login", status_code=303)
+    with Session(engine) as s:
+        running = s.exec(select(Run).where(Run.status == "running").order_by(Run.id.desc())).all()
+        recent = s.exec(select(Run).where(Run.status != "running").order_by(Run.id.desc()).limit(30)).all()
+    return templates.TemplateResponse(request, "_jobs_feed.html", _ctx(request, running=running, recent=recent))
+
+
+@router.post("/jobs/demo")
+def jobs_demo(request: Request):
+    if not current_user(request):
+        return RedirectResponse("/login", status_code=303)
+    start_job("demo", demo_job)
+    return RedirectResponse("/jobs", status_code=303)

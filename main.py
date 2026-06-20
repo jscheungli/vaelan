@@ -13,15 +13,17 @@ import os
 from app.core.config import settings
 from app.core.db import init_db
 from app.core import packs_loader
+from app.core.jobs import mark_interrupted_on_startup
 from app.seed import seed_if_empty
 from app.web.routes import router as web_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()              # crée les tables si besoin
-    packs_loader.load()    # découvre et enregistre les packs de contrôle
-    seed_if_empty()        # admin + sociétés initiales si base vide
+    init_db()                       # crée les tables / colonnes si besoin
+    packs_loader.load()             # découvre et enregistre les packs de contrôle
+    seed_if_empty()                 # admin + sociétés initiales si base vide
+    mark_interrupted_on_startup()   # assainit les jobs restés « running »
     yield
 
 

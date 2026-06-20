@@ -42,11 +42,16 @@ class Run(SQLModel, table=True):
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id")
     pack: Optional[str] = None
     kind: str
-    status: str = "running"   # running / ok / error
+    status: str = "running"   # running / ok / error / interrupted
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
     summary: Optional[str] = None
     log: Optional[str] = None  # journal détaillé (texte/JSON), pensé pour être relu
+    # progression (pour l'affichage live de la page Jobs)
+    step: Optional[str] = None
+    progress_current: Optional[int] = None
+    progress_total: Optional[int] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class DailyState(SQLModel, table=True):
