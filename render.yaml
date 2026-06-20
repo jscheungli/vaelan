@@ -22,7 +22,14 @@ services:
         sync: false
       - key: PENNYLANE_KOOKABURA_TOKEN
         sync: false
-      - key: TOPORDER_KEYS
+      # TopOrder — une clé par établissement
+      - key: TOPORDER_OCOPAIN_SAINT_LEU_KEY
+        sync: false
+      - key: TOPORDER_OCOPAIN_LA_POSSESSION_KEY
+        sync: false
+      - key: TOPORDER_OCOPAIN_SAINTE_MARIE_KEY
+        sync: false
+      - key: TOPORDER_KOOKABURA_KEY
         sync: false
 
 databases:

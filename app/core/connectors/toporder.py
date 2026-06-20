@@ -1,23 +1,25 @@
 """Connecteur TopOrder (une clé par établissement).
 
-Les clés viennent de la variable TOPORDER_KEYS au format
-"NOM_ETAB=cle,NOM_ETAB2=cle2". Auth = header Authorization brut (sans Bearer).
+Une variable d'environnement par établissement, dérivée de son nom :
+  "OCOPAIN SAINT-LEU"  -> TOPORDER_OCOPAIN_SAINT_LEU_KEY
+  "KOOKABURA"          -> TOPORDER_KOOKABURA_KEY
+Auth = header Authorization brut (sans Bearer).
 """
 import os
-from typing import Dict, Optional
+import re
+import unicodedata
+from typing import Optional
 import httpx
 
 DEFAULT_BASEURL = "https://publicproxy.toporder.fr"
 
 
-def _parse_keys() -> Dict[str, str]:
-    raw = os.getenv("TOPORDER_KEYS", "")
-    out: Dict[str, str] = {}
-    for part in raw.split(","):
-        if "=" in part:
-            name, key = part.split("=", 1)
-            out[name.strip()] = key.strip()
-    return out
+def env_var_for(name: str) -> str:
+    """Nom de la variable d'environnement portant la clé de cet établissement."""
+    slug = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", slug).strip("_").upper()
+    slug = re.sub(r"_+", "_", slug)
+    return f"TOPORDER_{slug}_KEY"
 
 
 class TopOrderClient:
@@ -33,7 +35,7 @@ class TopOrderClient:
 
 
 def for_establishment(name: str) -> Optional[TopOrderClient]:
-    key = _parse_keys().get(name)
+    key = os.getenv(env_var_for(name))
     if not key:
         return None
     return TopOrderClient(key, os.getenv("TOPORDER_BASEURL", DEFAULT_BASEURL))
