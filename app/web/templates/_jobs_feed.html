@@ -32,7 +32,7 @@
 <div class="table-responsive">
 <table class="table table-sm align-middle">
   <thead><tr class="small text-muted">
-    <th>#</th><th>Société</th><th>Tâche</th><th>Statut</th><th>Résumé</th><th>Démarré</th><th>Durée</th>
+    <th>#</th><th>Société</th><th>Tâche</th><th>Statut</th><th>Résumé</th><th>Démarré</th><th>Durée</th><th>Compte rendu</th>
   </tr></thead>
   <tbody>
   {% for r in recent %}
@@ -44,9 +44,10 @@
       <td>{{ r.summary or '' }}</td>
       <td class="text-muted">{{ r.started_at.strftime('%d/%m %H:%M') if r.started_at else '' }}</td>
       <td class="text-muted">{% if r.finished_at and r.started_at %}{{ '%.0fs' % (r.finished_at - r.started_at).total_seconds() }}{% endif %}</td>
+      <td>{% if r.report %}<a class="btn btn-sm btn-outline-dark py-0" href="/jobs/{{ r.id }}/report"><i class="bi bi-download"></i> .txt</a>{% endif %}</td>
     </tr>
   {% else %}
-    <tr><td colspan="7" class="text-muted small">Aucune tâche pour l'instant.</td></tr>
+    <tr><td colspan="8" class="text-muted small">Aucune tâche pour l'instant.</td></tr>
   {% endfor %}
   </tbody>
 </table>

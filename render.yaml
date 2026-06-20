@@ -5,6 +5,7 @@ services:
     runtime: python
     plan: starter
     region: frankfurt          # Europe (même région que la base pour la connexion interne)
+    autoDeploy: true           # redéploie à chaque push sur la branche suivie
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:

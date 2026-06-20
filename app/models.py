@@ -49,6 +49,7 @@ class Run(SQLModel, table=True):
     finished_at: Optional[datetime] = None
     summary: Optional[str] = None
     log: Optional[str] = None  # journal détaillé (texte/JSON), pensé pour être relu
+    report: Optional[str] = None  # compte rendu téléchargeable (rapprochement détaillé)
     # progression (pour l'affichage live de la page Jobs)
     step: Optional[str] = None
     progress_current: Optional[int] = None

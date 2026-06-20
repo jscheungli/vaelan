@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 
 from app.core.db import engine as _db_engine
 from app.models import Company, ImportBatch
-from . import engine, synthese, csvgen, config
+from . import engine, synthese, csvgen, config, report
 
 EXPORT_DIR = Path(__file__).resolve().parents[3] / "data" / "exports"
 
@@ -86,6 +86,8 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, syn
     issues = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to)
     if issues:
         ctx.log("❌ ÉCARTS — CSV NON généré : " + " ; ".join(issues))
+        ctx.set_report(report.build("generate", establishment, date_from, date_to,
+                                    syn, res, csv=None, n_tickets=res["n_tickets"]))
         return "Écart (CSV non généré) : " + " ; ".join(issues[:3])
     ctx.log("✅ Cadrage parfait.")
 
@@ -96,6 +98,8 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, syn
         for u in res["unresolved"][:15]:
             ctx.log(f"   • {u['date']} · facture {u['facture'] or '?'} · "
                     f"companyId {u['company_id']} · {u['amount']:.2f} €")
+        ctx.set_report(report.build("generate", establishment, date_from, date_to,
+                                    syn, res, csv=None, n_tickets=res["n_tickets"]))
         return f"Cadré ✓ mais bloqué : {len(res['unresolved'])} créance(s) sans compte client à corriger"
 
     # 5) Écriture du CSV
@@ -115,12 +119,17 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to, syn
             amount=res["ca_ttc"], csv_path=str(path)))
         s.commit()
 
+    csv_agg = report.aggregate_rows(res["rows"])
+    ctx.set_report(report.build("generate", establishment, date_from, date_to,
+                                syn, res, csv=csv_agg, batch_code=code,
+                                n_tickets=res["n_tickets"], balanced=res["balanced"]))
+
     bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"
     ctx.log(f"CSV généré : {len(res['rows'])} lignes · {res['n_agg']} écritures jour "
             f"+ {res['n_creances']} créances · {bal}")
     ctx.log(f"CA TTC {res['ca_ttc']:.2f} € (HT {res['ca_ht']:.2f} + TVA {res['tva']:.2f}) · "
             f"encaissé {res['encaisse']:.2f} · créances 411 {res['creances']:.2f} · écart {res['ecart']:.2f}")
-    return f"Cadré ✓ — lot {code} généré — {res['ca_ttc']:.2f} € · {res['n_creances']} créances · {bal}"
+    return f"Cadré ✓ — lot {code} généré — CA TTC {res['ca_ttc']:.2f} € · {res['n_creances']} créances · {bal}"
 
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes):
@@ -145,9 +154,11 @@ def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes):
 
     ctx.progress(total or ca["n_tickets"], total or ca["n_tickets"], step="cadrage…")
     issues = _cadrage_issues(ctx, ca["ca_ttc"], ca["payments"], syn, date_from, date_to)
+    ctx.set_report(report.build("cadrage", establishment, date_from, date_to,
+                                syn, ca, csv=None, n_tickets=ca["n_tickets"]))
 
     if not issues:
         ctx.log("✅ CADRAGE PARFAIT — l'import pourra être généré.")
-        return f"Cadré ✓ — CA {ca['ca_ttc']:.2f} € = synthèse ({ca['n_tickets']} tickets)"
+        return f"Cadré ✓ — CA TTC {ca['ca_ttc']:.2f} € = synthèse ({ca['n_tickets']} tickets)"
     ctx.log("❌ ÉCARTS détectés : " + " ; ".join(issues))
     return "Écart : " + " ; ".join(issues[:3])

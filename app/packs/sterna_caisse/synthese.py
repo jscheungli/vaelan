@@ -45,11 +45,45 @@ def parse(pdf_bytes: bytes) -> dict:
         if v is not None:
             payments[mode] = v
 
+    families, ca_ht = _families(lines)
+
     return {
         "establishment": establishment,
         "period": period,
-        "ca_total": value_after("CA Total"),
+        "ca_total": value_after("CA Total"),      # CA TTC
+        "ca_ht": ca_ht,                            # somme du CA HT des familles
+        "families": families,                      # [{name, ht, ttc}]
         "total_paiements": value_after("TOTAL"),  # total net encaissé (modes de paiement)
         "payments": payments,
         "nb_clients": value_after("Nombre de"),
     }
+
+
+def _families(lines):
+    """Table « Familles » : chaque famille = nom, CA HT (€), CA TTC (€), %.
+    Renvoie ([{name, ht, ttc}], total_ht) ; (None, None) si table absente."""
+    try:
+        i = lines.index("Familles")
+    except ValueError:
+        return None, None
+    euro = re.compile(r"^([\d\s.,\xa0]+)\s*€$")
+    fams, pending, name = [], [], None
+    for l in lines[i + 1:]:
+        if l in ("Famille", "CA HT", "CA TTC", "%"):
+            continue
+        if l.endswith("%"):           # fin d'une ligne famille (nom, HT, TTC, %)
+            if name and len(pending) >= 2:
+                fams.append({"name": name, "ht": pending[0], "ttc": pending[1]})
+            name, pending = None, []
+            continue
+        m = euro.match(l)
+        if m:
+            try:
+                pending.append(_num(m.group(1)))
+            except ValueError:
+                pass
+        elif not re.search(r"\d", l):   # ligne texte = nom de famille
+            name = l
+    if not fams:
+        return None, None
+    return fams, round(sum(f["ht"] for f in fams), 2)

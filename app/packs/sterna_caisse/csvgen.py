@@ -101,6 +101,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
     n_tickets = 0
     tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
     pay_total = defaultdict(float)   # encaissements par mode (pour le cadrage)
+    vat_total = defaultdict(lambda: [0.0, 0.0])  # taux -> [HT, TTC] (pull brut, pour le compte rendu)
     frm, pages = 0, 0
     while True:
         b = _get(client, f"/ppe/ticket/shop/{shop_id}", To=to,
@@ -121,9 +122,13 @@ def build_toslt(establishment, date_from, date_to, company_id,
             ttc = 0.0
             for l in (w.get("ticketSalesLines") or []):
                 r = f"{float(l.get('vatRate') or 0):g}"
-                vat[r][0] += float(l.get("totalPriceHT") or 0)
-                vat[r][1] += float(l.get("totalPriceTTC") or 0)
-                ttc += float(l.get("totalPriceTTC") or 0)
+                ht_l = float(l.get("totalPriceHT") or 0)
+                ttc_l = float(l.get("totalPriceTTC") or 0)
+                vat[r][0] += ht_l
+                vat[r][1] += ttc_l
+                ttc += ttc_l
+                vat_total[r][0] += ht_l
+                vat_total[r][1] += ttc_l
             paysum = 0.0
             for p in (w.get("ticketPaymentData") or []):
                 amt = float(p.get("paymentAmount") or 0)
@@ -162,11 +167,14 @@ def build_toslt(establishment, date_from, date_to, company_id,
 
     ca_ttc_z = round(tot_ttc, 2)
     payments = {k: round(v, 2) for k, v in sorted(pay_total.items())}
+    ht_by_rate = {r: round(v[0], 2) for r, v in sorted(vat_total.items())}
+    tva_by_rate = {r: round(v[1] - v[0], 2) for r, v in sorted(vat_total.items())}
 
     # Pré-vol souple : on refuse de générer si une créance de la période ne se route pas.
     if unresolved:
         return {"unresolved": unresolved, "rows": [], "n_tickets": n_tickets,
-                "ca_ttc": ca_ttc_z, "payments": payments}
+                "ca_ttc": ca_ttc_z, "payments": payments,
+                "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate}
 
     rows = []
     tot = {"ca_ht": 0.0, "tva": 0.0, "enc": 0.0, "creance": 0.0, "ecart": 0.0}
@@ -229,6 +237,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
         "header": HEADER, "rows": rows, "unresolved": [],
         "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(crean),
         "ca_ttc": ca_ttc_z, "payments": payments,
+        "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate,
         "ca_ht": round(tot["ca_ht"], 2), "tva": round(tot["tva"], 2),
         "encaisse": round(tot["enc"], 2), "creances": round(tot["creance"], 2),
         "ecart": round(tot["ecart"], 2),

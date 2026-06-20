@@ -121,6 +121,8 @@ def compute_ca(establishment: str, date_from: str, date_to: str, on_progress=Non
         "n_tickets": n_tickets,
         "ca_ht": ca_ht, "ca_ttc": ca_ttc, "tva": round(ca_ttc - ca_ht, 2),
         "ca_ht_by_rate": {r: round(v[0], 2) for r, v in sorted(vat.items())},
+        "ht_by_rate": {r: round(v[0], 2) for r, v in sorted(vat.items())},
+        "tva_by_rate": {r: round(v[1] - v[0], 2) for r, v in sorted(vat.items())},
         "payments": {k: round(v, 2) for k, v in sorted(pay.items())},
         "n_creances": len(creances), "creances_total": round(sum(c["amount"] for c in creances), 2),
         "creances": creances,

@@ -227,6 +227,20 @@ def jobs_feed(request: Request):
                                       _ctx(request, running=running, recent=recent, cmap=cmap))
 
 
+@router.get("/jobs/{run_id}/report")
+def job_report(request: Request, run_id: int):
+    if not current_user(request):
+        return RedirectResponse("/login", status_code=303)
+    with Session(engine) as s:
+        run = s.get(Run, run_id)
+    if not run or not run.report:
+        return RedirectResponse("/jobs", status_code=303)
+    from fastapi.responses import PlainTextResponse
+    fname = f"compte_rendu_{run.kind}_{run_id}.txt"
+    return PlainTextResponse(run.report, headers={
+        "Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @router.post("/jobs/demo")
 def jobs_demo(request: Request):
     if not current_user(request):

@@ -45,6 +45,10 @@ class JobContext:
         self._log.append(f"{datetime.utcnow():%H:%M:%S} · {msg}")
         self._update(log="\n".join(self._log[-1000:]))
 
+    def set_report(self, text: str):
+        """Attache un compte rendu téléchargeable à la tâche."""
+        self._update(report=text)
+
 
 def start_job(kind: str, fn: Callable[[JobContext], Optional[str]],
               company_id: Optional[int] = None, pack: Optional[str] = None,
