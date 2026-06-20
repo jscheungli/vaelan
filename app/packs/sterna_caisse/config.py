@@ -23,6 +23,11 @@ CA_B2C = "70102"          # particuliers (différé)
 CA_B2B = "7012"           # B2B (compte unique ; le taux est porté par la colonne TVA)
 TVA_ACCOUNT = {"2.1": "44571005", "8.5": "44571007", "5.5": "44571006", "20": "44571009"}
 
+# Analytique Pennylane (catégories par établissement) : matching par NOM dans le CSV.
+# Groupe « Etablissement » (id 819366) ; catégories SAINT-LEU/LA POSSESSION/SAINTE-MARIE.
+ANALYTIC_FAMILY = "Etablissement"
+ANALYTIC_CATEGORY = {"SL": "SAINT-LEU", "LP": "LA POSSESSION", "SM": "SAINTE-MARIE"}
+
 # Mapping client (companyId/customerId -> compte 411), migré et validé (overrides inclus).
 # TODO : à terme, remplacer par un module « résolution client » (job + table DB).
 with open(os.path.join(os.path.dirname(__file__), "data", "clients.json"), encoding="utf-8") as _f:

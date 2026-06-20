@@ -27,20 +27,23 @@ from app.models import ClientAccount
 from . import config
 from .engine import _get, _day, _fac_ticketids, ZERO
 
+# Format validé pour l'import manuel Pennylane : 11 colonnes, PAS de « Référence
+# lettrage ». Taux de TVA en virgule décimale (« 2,1% »). Catégories analytiques
+# dans les 2 dernières colonnes (Famille « Etablissement » / nom court établi).
 HEADER = ["Date", "Code journal", "Numéro de compte", "Libellé de compte",
           "Libellé de ligne", "Taux de TVA du compte", "Libellé de pièce",
-          "Débit", "Crédit", "Famille de catégories", "Catégorie", "Référence lettrage"]
+          "Débit", "Crédit", "Famille de catégories", "Catégorie"]
+
+
+def _rate_label(r: str) -> str:
+    """'2.1' -> '2,1%' ; '0' -> '0%' ; '20' -> '20%' (format Pennylane FR)."""
+    f = float(r)
+    s = str(int(f)) if f == int(f) else f"{f:g}".replace(".", ",")
+    return s + "%"
 
 # moyen de paiement TopOrder -> clé de compte d'encaissement
 _PAYKEY = {"CB": "cb", "Carte": "cb", "Espèce": "especes", "Espece": "especes",
            "Ticket restaurant": "ticket_resto", "Titre restaurant": "ticket_resto"}
-
-
-def _full_name(pfx: str) -> str:
-    for name, est in config.ESTABLISHMENTS.items():
-        if est["pfx"] == pfx:
-            return name
-    return pfx
 
 
 def _resolver(company_id: int):
@@ -72,7 +75,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
     est = config.ESTABLISHMENTS[establishment]
     pfx = est["pfx"]
     shop_id = est["shop_id"]
-    full = _full_name(pfx)
+    cat_family = config.ANALYTIC_FAMILY
+    cat_label = config.ANALYTIC_CATEGORY[pfx]
     client = toporder.for_establishment(establishment)
     if client is None:
         raise RuntimeError(f"Clé TopOrder absente pour {establishment} "
@@ -156,20 +160,19 @@ def build_toslt(establishment, date_from, date_to, company_id,
 
     rows = []
     tot = {"ca_ht": 0.0, "tva": 0.0, "enc": 0.0, "creance": 0.0, "ecart": 0.0}
-    vlbl = lambda r: f"{r}%"
 
     def emit(date, piece, vat, pay, cre_acc=None, cre_amt=0.0, cre_nm=None, cre_fnum=None):
         ttcsum = sum(v[1] for v in vat.values())
         for r, (ht, ttc_) in sorted(vat.items()):
             if ttc_ == 0:
                 continue
+            rl = _rate_label(r)
             rows.append([date, journal, ca_acc, "Vente Caisse Magasin (Tickets)",
-                         f"CA HT {vlbl(r)}", vlbl(r), piece, "", f"{ht:.2f}",
-                         "Etablissement", full, ""])
+                         f"CA HT {rl}", rl, piece, "", f"{ht:.2f}", cat_family, cat_label])
             tot["ca_ht"] += ht
             if r in tva_acc and ttc_ - ht > 0.005:
-                rows.append([date, journal, tva_acc[r], f"TVA collectée {vlbl(r)}",
-                             f"TVA {vlbl(r)}", "", piece, "", f"{ttc_ - ht:.2f}", "", "", ""])
+                rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
+                             f"TVA {rl}", "", piece, "", f"{ttc_ - ht:.2f}", "", ""])
                 tot["tva"] += ttc_ - ht
         enc = 0.0
         for pt, amt in sorted(pay.items()):
@@ -177,15 +180,15 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 continue
             pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
             if amt > 0:
-                rows.append([date, journal, pacc, pt, pt, "", piece, f"{amt:.2f}", "", "", "", ""])
+                rows.append([date, journal, pacc, pt, pt, "", piece, f"{amt:.2f}", "", "", ""])
             else:
-                rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", "", "", ""])
+                rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", "", ""])
             enc += amt
         tot["enc"] += enc
         if cre_acc is not None:
             rows.append([date, journal, str(cre_acc), "Créance client",
                          f"Créance {cre_fnum:07d} · {cre_nm}", "", piece,
-                         f"{cre_amt:.2f}", "", "", "", ""])
+                         f"{cre_amt:.2f}", "", "", ""])
             tot["creance"] += cre_amt
             ec = round(ttcsum - enc - cre_amt, 2)
         else:
@@ -194,12 +197,13 @@ def build_toslt(establishment, date_from, date_to, company_id,
             rows.append([date, journal, ecart_acc, "Écart de caisse / avance",
                          ("Avance/dépôt" if ec < 0 else "Écart de caisse"), "", piece,
                          (f"{ec:.2f}" if ec > 0 else ""), (f"{-ec:.2f}" if ec < 0 else ""),
-                         "", "", ""])
+                         "", ""])
             tot["ecart"] += ec
 
     def piece_for(date, suffix=""):
         # identifiant de lot en tête -> tout le lot est repérable/supprimable d'un bloc
-        return f"{batch_code}·{pfx}{date[8:10]}{date[5:7]}{date[2:4]}{suffix}"
+        # (séparateur ASCII '-' pour l'import Pennylane)
+        return f"{batch_code}-{pfx}{date[8:10]}{date[5:7]}{date[2:4]}{suffix}"
 
     for dt in sorted(agg):
         emit(dt, piece_for(dt), agg[dt]["vat"], agg[dt]["pay"])
