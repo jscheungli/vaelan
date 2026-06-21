@@ -13,7 +13,7 @@ from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
 from app.models import Company, Run, ClientAccount, ImportBatch, JobArtifact, ClientPayment, PaymentReport
 from app.packs.sterna_caisse import config as caisse_config
-from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt
+from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt, run_generate_kk
 from app.packs.sterna_caisse.clients_sync import sync_clients
 from app.packs.sterna_caisse import suivi as caisse_suivi
 from app.packs.sterna_caisse.verify import run_verify
@@ -240,14 +240,16 @@ def import_form(request: Request, code: str, est: str = ""):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
-    establishments = list(caisse_config.ESTABLISHMENTS.keys())
+    ests = caisse_config.establishments(company.code)
+    establishments = list(ests.keys())
+    facture_model = caisse_config.is_facture_model(company.code)   # KK = facture (pas de synthèse)
     # pfx (ex. ?est=SM venant du tableau de suivi) -> nom complet à pré-sélectionner
-    pfx2name = {e["pfx"]: name for name, e in caisse_config.ESTABLISHMENTS.items()}
+    pfx2name = {e["pfx"]: name for name, e in ests.items()}
     selected = pfx2name.get(est.upper(), "")
     with Session(engine) as s:
         batches = s.exec(select(ImportBatch).where(ImportBatch.company_id == company.id)
                          .order_by(ImportBatch.id.desc()).limit(20)).all()
-    # date de début par défaut = lendemain du dernier import (toslt) de l'établissement choisi
+    # date de début par défaut = lendemain du dernier import de l'établissement choisi
     default_from = ""
     if est:
         prev = [b.date_to for b in batches if b.establishment == est.upper() and b.kind == "toslt"]
@@ -256,19 +258,27 @@ def import_form(request: Request, code: str, est: str = ""):
     return templates.TemplateResponse(request, "import.html",
                                       _ctx(request, company=company, establishments=establishments,
                                            batches=batches, selected_est=selected,
-                                           default_from=default_from))
+                                           default_from=default_from, facture_model=facture_model))
 
 
 @router.post("/c/{code}/generate")
 def generate_run(request: Request, code: str,
                  establishment: str = Form(...), date_from: str = Form(...),
-                 date_to: str = Form(...), synthese: UploadFile = File(...)):
+                 date_to: str = Form(...), synthese: UploadFile = File(None)):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
+    short = establishment.replace("OCOPAIN ", "")
+    if caisse_config.is_facture_model(company.code):     # KOOKABURA : modèle facture, pas de synthèse
+        label = f"Génération KK · {short} · {date_from}→{date_to}"
+        start_job("generate_kk",
+                  lambda ctx: run_generate_kk(ctx, company.code, establishment, date_from, date_to),
+                  company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
+        return RedirectResponse("/jobs", status_code=303)
+    if synthese is None:
+        return RedirectResponse(f"/c/{code}/import?est={establishment}", status_code=303)
     data = synthese.file.read()
     fname = synthese.filename or "synthese.pdf"
-    short = establishment.replace("OCOPAIN ", "")
     label = f"Cadrage + génération TOSLT · {short} · {date_from}→{date_to}"
     start_job("generate_toslt",
               lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data, fname),

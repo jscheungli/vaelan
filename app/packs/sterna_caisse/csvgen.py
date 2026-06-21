@@ -90,7 +90,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 batch_code, company_code, toslf_batch_code=None, on_progress=None) -> dict:
     """Construit les lignes des CSV TOSLT (caisse) ET TOSLF (reclassement factures),
     en un seul pull. Ne touche à rien si `unresolved` non vide."""
-    est = config.ESTABLISHMENTS[establishment]
+    est = config.establishments(company_code)[establishment]
     pfx = est["pfx"]
     shop_id = est["shop_id"]
     cfg = config.resolve(company_code)                 # comptes/journaux éditables (DB + défauts)
@@ -413,5 +413,142 @@ def build_toslt(establishment, date_from, date_to, company_id,
         "ca_ht": round(tot["ca_ht"], 2), "tva": round(tot["tva"], 2),
         "encaisse": round(tot["enc"], 2), "creances": round(tot["creance"], 2),
         "ecart": round(tot["ecart"], 2),
+        "balanced": abs(deb - cred) < 0.05, "debit": round(deb, 2), "credit": round(cred, 2),
+    }
+
+
+def build_kk(establishment, date_from, date_to, company_id, batch_code, company_code, on_progress=None):
+    """Génération KOOKABURA (labo interne, 100 % B2B, modèle FACTURE — pas de caisse).
+    Une seule passe : on lit les FACTURES (totalPriceHTByVATRate fiable) dont le ticket
+    est dans la période, et par facture on book TOKKT (CA + TVA crédit + débit 411
+    boulangerie, créance TTC, lettré F<n°>) et TOKKF (reclassement HT 70101 -> 7012).
+    Pas d'analytique, pas d'encaissement. Même forme de `res` que build_toslt."""
+    import time
+    est = config.establishments(company_code)[establishment]
+    pfx, shop_id = est["pfx"], est["shop_id"]
+    cfg = config.resolve(company_code)
+    ecfg = cfg["est"][pfx]
+    ca_acc, b2b_acc, tva_acc = cfg["ca_anonyme"], cfg["ca_b2b"], cfg["tva"]
+    jt, jf = ecfg["journal_tickets"], ecfg["journal_factures"]   # TOKKT, TOKKF
+    b2b = config.clients(company_code)["b2b"]
+    client = toporder.for_establishment(establishment)
+    if client is None:
+        raise RuntimeError(f"Clé TopOrder absente pour {establishment} ({toporder.env_var_for(establishment)})")
+
+    to = int(time.mktime(time.strptime(date_to, "%Y-%m-%d"))) + 4 * 3600 + 24 * 3600
+    # tickets -> (companyId, date) fiables, par ticketId/rootTicketId
+    tinfo, frm, n_tickets = {}, 0, 0
+    while True:
+        b = _get(client, f"/ppe/ticket/shop/{shop_id}", To=to, PaginationFrom=frm, PaginationTo=frm + 99)
+        if not b:
+            break
+        pmax = "0"
+        for w in b:
+            tk = w.get("ticket") or {}
+            dd = _day(tk.get("timestamp"))
+            pmax = max(pmax, dd or "0")
+            if dd and date_from <= dd <= date_to:
+                n_tickets += 1
+                if tk.get("id"):
+                    tinfo[tk["id"]] = (tk.get("companyId"), dd)
+                if tk.get("rootTicketId"):
+                    tinfo.setdefault(tk["rootTicketId"], (tk.get("companyId"), dd))
+        if on_progress:
+            on_progress(n_tickets, f"pull tickets KK… {n_tickets}")
+        if pmax < date_from:
+            break
+        frm += len(b)
+        if frm > 6000:
+            break
+    # factures -> celles dont le ticket est dans la période
+    facs, frm = [], 0
+    while True:
+        b = _get(client, f"/ppe/invoice/shop/{shop_id}", PaginationFrom=frm, PaginationTo=frm + 99)
+        if not b:
+            break
+        facs += b
+        frm += len(b)
+        if frm > 4000:
+            break
+    inperiod = [f for f in facs if (f.get("ticketId") in tinfo or f.get("rootTicketId") in tinfo)]
+
+    rows, unresolved = [], []
+    ht_by_rate, tva_by_rate = defaultdict(float), defaultdict(float)
+    n_fac = 0
+    ca_ht_tot = tva_tot = ttc_tot = 0.0
+    for f in sorted(inperiod, key=lambda x: x.get("continousSequence") or 0):
+        num = int(f.get("continousSequence") or 0)
+        coid, date = tinfo.get(f.get("ticketId")) or tinfo.get(f.get("rootTicketId"))
+        perrate = {}
+        for part in (f.get("totalPriceHTByVATRate") or "").split("|"):
+            if ":" not in part:
+                continue
+            pct = int(part.split(":")[0]) / 100.0
+            ht = int(part.split(":")[1]) / 100.0
+            if abs(ht) >= 0.005:
+                perrate[pct] = perrate.get(pct, 0.0) + ht
+        if not perrate or abs(round(sum(perrate.values()), 2)) < 0.005:
+            continue
+        info = b2b.get(f"{pfx}:{coid}")
+        if not info or not info.get("account"):
+            unresolved.append({"date": date, "company_id": coid, "customer_id": None,
+                               "facture": f"{num:07d}", "amount": round(sum(perrate.values()), 2),
+                               "name": (info or {}).get("name"), "siret": None, "pennylane_name": None,
+                               "reason": "boulangerie cliente non mappée (companyId KK inconnu) — vérifier le mapping KK"})
+            continue
+        acc411, nm = info["account"], info["name"]
+        n_fac += 1
+        lettr = f"F{num}"
+        pieceT = f"KK{date[8:10]}{date[5:7]}{date[2:4]}-F{num:07d} #{batch_code}"
+        pieceF = f"F{num:07d} #{batch_code}"
+        # --- TOKKT : CA HT/taux + TVA (crédit) puis 411 boulangerie (débit TTC, lettré) ---
+        ent_ht = ent_tva = 0.0
+        for p, h in sorted(perrate.items()):
+            rl = _rate_label(f"{p:g}")
+            h2 = round(h, 2)
+            if h2 >= 0:
+                rows.append([date, jt, ca_acc, "Vente KK", f"CA HT {rl} · {nm}", rl, pieceT, "", f"{h2:.2f}", "", "", ""])
+            else:
+                rows.append([date, jt, ca_acc, "Avoir KK", f"Avoir CA HT {rl} · {nm}", rl, pieceT, f"{-h2:.2f}", "", "", "", ""])
+            ht_by_rate[f"{p:g}"] += h2
+            tva = round(h2 * p / 100, 2)
+            tacc = tva_acc.get(f"{p:g}")
+            if abs(tva) >= 0.005 and tacc:
+                if tva >= 0:
+                    rows.append([date, jt, tacc, "TVA collectée", f"TVA {rl} · {nm}", rl, pieceT, "", f"{tva:.2f}", "", "", ""])
+                else:
+                    rows.append([date, jt, tacc, "TVA collectée", f"Avoir TVA {rl} · {nm}", rl, pieceT, f"{-tva:.2f}", "", "", "", ""])
+                tva_by_rate[f"{p:g}"] += tva
+            ent_ht += h2
+            ent_tva += tva
+        ttc = round(ent_ht + ent_tva, 2)
+        if ttc >= 0:
+            rows.append([date, jt, acc411, "Client KK - facture", f"Facture {num:07d} · {nm}", "", pieceT, f"{ttc:.2f}", "", "", "", lettr])
+        else:
+            rows.append([date, jt, acc411, "Client KK - avoir", f"Avoir {num:07d} · {nm}", "", pieceT, "", f"{-ttc:.2f}", "", "", "", lettr])
+        # --- TOKKF : reclassement HT 70101 -> 7012 ---
+        if ent_ht >= 0:
+            rows.append([date, jf, ca_acc, "Reclassement", f"Reclassement {num:07d} · {nm}", "", pieceF, f"{ent_ht:.2f}", "", "", "", ""])
+            rows.append([date, jf, b2b_acc, "CA B2B", f"CA B2B {num:07d}", "", pieceF, "", f"{ent_ht:.2f}", "", "", "", ""])
+        else:
+            rows.append([date, jf, ca_acc, "Reclassement avoir", f"Reclassement avoir {num:07d} · {nm}", "", pieceF, "", f"{-ent_ht:.2f}", "", "", "", ""])
+            rows.append([date, jf, b2b_acc, "CA B2B avoir", f"CA B2B avoir {num:07d}", "", pieceF, f"{-ent_ht:.2f}", "", "", "", ""])
+        ca_ht_tot += ent_ht
+        tva_tot += ent_tva
+        ttc_tot += ttc
+
+    deb = sum(float(r[7]) for r in rows if r[7])
+    cred = sum(float(r[8]) for r in rows if r[8])
+    ca_ht, tva, ca_ttc = round(ca_ht_tot, 2), round(tva_tot, 2), round(ttc_tot, 2)
+    n_toslf = sum(1 for r in rows if r[1] == jf)
+    return {
+        "header": HEADER, "rows": ([] if unresolved else rows), "unresolved": unresolved,
+        "n_tickets": n_tickets, "n_factures": n_fac, "n_b2b": n_fac, "n_b2c": 0, "n_reglements": 0,
+        "n_agg": 0, "n_toslf": n_toslf, "n_creances": n_fac,
+        "ca_ttc": ca_ttc, "ca_ht": ca_ht, "tva": tva,
+        "payments": {}, "fac_payments": {}, "fac_payment_detail": [],
+        "ht_by_rate": {k: round(v, 2) for k, v in ht_by_rate.items()},
+        "tva_by_rate": {k: round(v, 2) for k, v in tva_by_rate.items()},
+        "encaisse": 0.0, "creances": ca_ttc, "ecart": 0.0,
         "balanced": abs(deb - cred) < 0.05, "debit": round(deb, 2), "credit": round(cred, 2),
     }

@@ -66,9 +66,9 @@ def _aggregates(net, cfg, pfx):
     ca_accs = {cfg["ca_anonyme"], cfg["ca_b2c"], cfg["ca_b2b"]}
     tva_accs = set(cfg["tva"].values())
     ecfg = cfg["est"][pfx]
-    pay_lbl = {ecfg["cb"]: "CB", ecfg["especes"]: "Espèce",
-               ecfg["ticket_resto"]: "Ticket restaurant", ecfg["autres"]: "Autres"}
-    ecart = ecfg["ecart"]
+    pay_lbl = {ecfg[k]: lbl for k, lbl in (("cb", "CB"), ("especes", "Espèce"),
+               ("ticket_resto", "Ticket restaurant"), ("autres", "Autres")) if ecfg.get(k)}
+    ecart = ecfg.get("ecart")
     ca_ht = round(sum(net.get(a, 0.0) for a in ca_accs), 2)
     tva = round(sum(net.get(a, 0.0) for a in tva_accs), 2)
     # TVA par taux : net du compte de TVA de ce taux
@@ -109,7 +109,7 @@ def _actual_by_account(pl, journal_ids, start, end):
 
 
 def run_verify(ctx, company_code, pfx):
-    establishment = next((n for n, e in config.ESTABLISHMENTS.items() if e["pfx"] == pfx), pfx)
+    establishment = next((n for n, e in config.establishments(company_code).items() if e["pfx"] == pfx), pfx)
     cfg = config.resolve(company_code)
     ecfg = cfg["est"][pfx]
     journal_ids = [int(ecfg["journal_tickets_id"]), int(ecfg["journal_factures_id"])]

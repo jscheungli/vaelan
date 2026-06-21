@@ -34,6 +34,42 @@ ANALYTIC_CATEGORY = {"SL": "SAINT-LEU", "LP": "LA POSSESSION", "SM": "SAINTE-MAR
 with open(os.path.join(os.path.dirname(__file__), "data", "clients.json"), encoding="utf-8") as _f:
     CLIENTS = json.load(_f)
 
+# ============================ KOOKABURA (société Pennylane SÉPARÉE) ============================
+# Labo interne 100% B2B : KK facture les 3 boulangeries STERNA. Modèle FACTURE (pas de caisse) :
+# CA depuis les factures (totalPriceHTByVATRate), pas les tickets. Pas d'analytique.
+ESTABLISHMENTS_KK = {
+    "KOOKABURA": {"pfx": "KK", "shop_id": "08de7f5f-18c7-4c5c-8547-3102b7617acd"},
+}
+JOURNALS_KK = {"KK": {"tickets": 84717481984, "factures": 84717486080}}  # TOKKT, TOKKF
+# Clients B2B = les 3 boulangeries (companyId KK -> compte 411 dans la société KOOKABURA)
+CLIENTS_KK = {"b2b": {
+    "KK:08dea426-2813-448b-8590-949870c0adae": {"account": "411100022", "name": "OCOPAIN LA POSSESSION"},
+    "KK:08dea426-64ac-4f40-8d30-fe5cc51fec58": {"account": "411100019", "name": "OCOPAIN SAINTE-MARIE"},
+    "KK:08dea425-1895-4263-8703-45073e145fd2": {"account": "411100021", "name": "OCOPAIN SAINT-LEU"},
+}, "b2c_commun": {}}
+
+_FACTURE_COMPANIES = {"KOOKABURA"}   # sociétés au modèle « facture » (pas de caisse)
+
+
+def is_facture_model(company_code: str) -> bool:
+    return company_code in _FACTURE_COMPANIES
+
+
+def establishments(company_code: str) -> dict:
+    return ESTABLISHMENTS_KK if company_code == "KOOKABURA" else ESTABLISHMENTS
+
+
+def clients(company_code: str) -> dict:
+    return CLIENTS_KK if company_code == "KOOKABURA" else CLIENTS
+
+
+def _kk_defaults() -> dict:
+    est = {"KK": {"category": None,
+                  "journal_tickets": "TOKKT", "journal_tickets_id": "84717481984",
+                  "journal_factures": "TOKKF", "journal_factures_id": "84717486080"}}
+    return {"ca_anonyme": "70101", "ca_b2c": None, "ca_b2b": "7012",
+            "analytic_family": None, "tva": dict(TVA_ACCOUNT), "est": est}
+
 
 def resolve_411(pfx: str, company_id, customer_id):
     """Renvoie (numéro de compte 411, libellé client) pour router une créance."""
@@ -116,7 +152,7 @@ def resolve(company_code: str) -> dict:
     from sqlmodel import Session, select
     from app.core.db import engine
     from app.models import Setting
-    cfg = _defaults()
+    cfg = _kk_defaults() if company_code == "KOOKABURA" else _defaults()
     with Session(engine) as s:
         for st in s.exec(select(Setting).where(Setting.company_code == company_code)).all():
             _set_path(cfg, st.key, st.value)

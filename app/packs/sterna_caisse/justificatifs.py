@@ -37,9 +37,9 @@ def _fac_num(piece_number):
     return int(m.group(1)) if m else None
 
 
-def _num2guid(establishment):
+def _num2guid(establishment, company_code):
     """Pull TopOrder des factures -> {continousSequence: invoiceId (GUID PDF)}."""
-    shop_id = config.ESTABLISHMENTS[establishment]["shop_id"]
+    shop_id = config.establishments(company_code)[establishment]["shop_id"]
     client = toporder.for_establishment(establishment)
     if client is None:
         raise RuntimeError(f"clé TopOrder absente pour {establishment}")
@@ -77,7 +77,7 @@ def _download_pdf(gid):
 
 
 def run_justificatifs(ctx, company_code, pfx):
-    establishment = next((n for n, e in config.ESTABLISHMENTS.items() if e["pfx"] == pfx), pfx)
+    establishment = next((n for n, e in config.establishments(company_code).items() if e["pfx"] == pfx), pfx)
     cfg = config.resolve(company_code)
     ecfg = cfg["est"][pfx]
     journals = [(int(ecfg["journal_tickets_id"]), ecfg["journal_tickets"]),
@@ -124,7 +124,7 @@ def run_justificatifs(ctx, company_code, pfx):
 
     # 2) GUID PDF par n° de facture (TopOrder)
     ctx.progress(1, 3, step="récupération des factures TopOrder…")
-    num2guid = _num2guid(establishment)
+    num2guid = _num2guid(establishment, company_code)
     ctx.log(f"TopOrder : {len(num2guid)} factures connues")
 
     # 3) attache (téléchargement PDF -> upload -> PUT sur l'écriture existante)

@@ -7,6 +7,13 @@
   <li class="breadcrumb-item active">Import / cadrage</li>
 </ol></nav>
 
+{% if facture_model %}
+<h1 class="h4 mb-1">Génération Kookabura (factures B2B)</h1>
+<p class="text-muted small">Kookabura (labo interne) facture les 3 boulangeries — modèle <strong>facture</strong>, pas de
+caisse, <strong>pas de synthèse</strong>. Vaelan lit les <strong>factures</strong> dont le ticket est dans la période et génère un
+seul CSV : <strong>TOKKT</strong> (CA 70101/TVA + créance 411 boulangerie) et <strong>TOKKF</strong> (reclassement HT 70101 → 7012).
+Pré-vol : si une boulangerie cliente n'est pas mappée, on bloque et on liste.</p>
+{% else %}
 <h1 class="h4 mb-1">Génération caisse (CSV unique)</h1>
 <p class="text-muted small">Une seule action : Vaelan recalcule le CA sur les tickets, le
 <strong>cadre</strong> avec le journal de synthèse, et ne produit le CSV <strong>que si le CA cadre</strong>.
@@ -17,6 +24,7 @@ Pennylane les sépare par la colonne « Code journal ».</p>
 + une écriture autonome par facture à crédit (créance 411, PJ = facture ; pré-vol : si une créance
 n'a pas de compte client, on bloque et on liste les clients à corriger). Chaque lot porte un
 identifiant (ex. <code>SMT01</code>) en tête de pièce → supprimable d'un bloc dans Pennylane.</p>
+{% endif %}
 
 <div class="card shadow-sm" style="max-width:640px;">
   <div class="card-body">
@@ -38,11 +46,14 @@ identifiant (ex. <code>SMT01</code>) en tête de pièce → supprimable d'un blo
           <input type="date" name="date_to" class="form-control" required>
         </div>
       </div>
+      {% if not facture_model %}
       <div class="mb-3">
         <label class="form-label small">Journal de synthèse (PDF)</label>
         <input type="file" name="synthese" accept="application/pdf" class="form-control" required>
       </div>
-      <button class="btn btn-dark"><i class="bi bi-shield-check"></i> Cadrer puis générer le CSV TOSLT</button>
+      {% endif %}
+      <button class="btn btn-dark"><i class="bi bi-shield-check"></i>
+        {% if facture_model %}Générer le CSV Kookabura{% else %}Cadrer puis générer le CSV TOSLT{% endif %}</button>
       <a href="/c/{{ company.code }}" class="btn btn-outline-secondary">Annuler</a>
     </form>
   </div>

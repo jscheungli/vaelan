@@ -77,7 +77,7 @@ def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to, fac_payments
 def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
                        synthese_bytes, synthese_name="synthese.pdf"):
     from datetime import date as _date
-    pfx = config.ESTABLISHMENTS[establishment]["pfx"]
+    pfx = config.establishments(company_code)[establishment]["pfx"]
     with Session(_db_engine) as s:
         company = s.exec(select(Company).where(Company.code == company_code)).first()
     if not company:
@@ -186,6 +186,71 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     warn = f" · ⚠ {len(warnings)} écart mode paiement (voir CR)" if warnings else ""
     return (f"Cadré ✓ — lot {code} généré (1 CSV : caisse + factures) — CA TTC {res['ca_ttc']:.2f} € · "
             f"{res['n_factures']} factures{warn}")
+
+
+def run_generate_kk(ctx, company_code, establishment, date_from, date_to):
+    """Génération KOOKABURA (modèle FACTURE B2B, pas de caisse, pas de synthèse) :
+    pull des factures dont le ticket est dans la période -> TOKKT (CA + 411 créance) +
+    TOKKF (reclass HT 70101->7012), dans un seul CSV. Pré-vol : boulangeries clientes mappées."""
+    from datetime import date as _date
+    pfx = config.establishments(company_code)[establishment]["pfx"]
+    with Session(_db_engine) as s:
+        company = s.exec(select(Company).where(Company.code == company_code)).first()
+    if not company:
+        raise RuntimeError(f"société {company_code} introuvable")
+    code = _batch_code(company.id, pfx, "tickets")
+    now = _now_local()
+    fpfx = _pfx(now)
+    executed_at = now.strftime("%d/%m/%Y %H:%M")
+    ctx.log(f"Génération KOOKABURA · lot {code} · {establishment} · {date_from} → {date_to}")
+    ctx.progress(0, None, step="lecture des factures KK…")
+    res = csvgen.build_kk(establishment, date_from, date_to, company.id, code, company_code,
+                          on_progress=lambda n, st: ctx.progress(n, None, step=st))
+    ctx.log(f"Factures KK : {res['n_factures']} en période · CA TTC {res['ca_ttc']:.2f} € "
+            f"(HT {res['ca_ht']:.2f} + TVA {res['tva']:.2f})")
+
+    syn = {"ca_total": res["ca_ttc"], "ca_ht": res["ca_ht"], "payments": {},
+           "period": {"date_from": date_from, "date_to": date_to}}
+
+    def _emit(csv_agg=None, balanced=None):
+        args = dict(batch_code=code, n_tickets=res["n_tickets"], balanced=balanced,
+                    run_id=ctx.run_id, executed_at=executed_at)
+        ctx.set_report(report.build("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args))
+        ctx.add_artifact("report", f"{fpfx} compte_rendu_KK_{code}_{date_from}_{date_to}.pdf",
+                         report.build_pdf("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args),
+                         "application/pdf")
+
+    if res.get("unresolved"):
+        ctx.log(f"⛔ {len(res['unresolved'])} facture(s) sans boulangerie cliente mappée :")
+        for u in res["unresolved"][:15]:
+            ctx.log(f"   • facture F{u['facture']} · companyId {u['company_id']} · {u['reason']}")
+        _emit()
+        return f"Bloqué : {len(res['unresolved'])} facture(s) sans boulangerie cliente mappée (voir compte rendu)"
+
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    fname = f"{fpfx} import_KK_{code}_{date_from}_{date_to}.csv"
+    path = EXPORT_DIR / fname
+    buf = io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(res["header"])
+    w.writerows(res["rows"])
+    csv_text = "﻿" + buf.getvalue()
+    path.write_text(csv_text, encoding="utf-8")
+    ctx.add_artifact("csv", fname, csv_text.encode("utf-8"), "text/csv")
+    with Session(_db_engine) as s:
+        s.add(ImportBatch(
+            company_id=company.id, run_id=ctx.run_id, establishment=pfx, code=code, kind="toslt",
+            date_from=_date.fromisoformat(date_from), date_to=_date.fromisoformat(date_to),
+            status="generated", n_entries=res["n_factures"], amount=res["ca_ttc"], csv_path=str(path)))
+        s.commit()
+    _rcfg = config.resolve(company_code)
+    csv_agg = report.aggregate_rows(res["rows"], _rcfg, journal=_rcfg["est"][pfx]["journal_tickets"])
+    _emit(csv_agg=csv_agg, balanced=res["balanced"])
+    bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"
+    ctx.log(f"CSV KK : {len(res['rows'])} lignes (TOKKT + TOKKF) · {bal} · CA TTC {res['ca_ttc']:.2f} € · "
+            f"411 créances {res['creances']:.2f} €")
+    return (f"Lot KK {code} généré — CA TTC {res['ca_ttc']:.2f} € · {res['n_factures']} factures "
+            f"(70101 → 7012, créances 411 boulangeries)")
 
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,

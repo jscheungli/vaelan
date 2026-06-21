@@ -29,11 +29,11 @@ def aggregate_rows(rows, cfg, journal=None) -> dict:
     ht_by_rate, tva_by_rate, pay = defaultdict(float), defaultdict(float), defaultdict(float)
     deb = cred = 0.0
     pay_lbl = {}
-    for a in cfg["est"].values():
-        pay_lbl[a["cb"]] = "CB"
-        pay_lbl[a["especes"]] = "Espèce"
-        pay_lbl[a["ticket_resto"]] = "Ticket restaurant"
-        pay_lbl[a["autres"]] = "Autres"
+    for a in cfg["est"].values():       # comptes de caisse absents (ex. KK facture) -> ignorés
+        for k, lbl in (("cb", "CB"), ("especes", "Espèce"),
+                       ("ticket_resto", "Ticket restaurant"), ("autres", "Autres")):
+            if a.get(k):
+                pay_lbl[a[k]] = lbl
     for r in rows:
         if journal and r[1] != journal:
             continue
@@ -75,7 +75,8 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
              batch_code, n_tickets, balanced, run_id=None, executed_at=None, fac_payments=None,
              fac_detail=None):
     has_csv = csv is not None
-    title = ("Compte rendu — Génération TOSLT (cadrage + CSV)"
+    jcode = "TOKKT" if establishment in config.ESTABLISHMENTS_KK else "TOSLT"
+    title = (f"Compte rendu — Génération {jcode} (cadrage + CSV)"
              if kind == "generate" else "Compte rendu — Cadrage caisse")
     meta = [f"Établissement : {establishment}        Période : {date_from} → {date_to}"]
     bits = []

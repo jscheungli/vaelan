@@ -25,12 +25,12 @@ def _key(s):
     return re.sub(r"[^0-9A-Za-z]", "", str(s or "")).upper()
 
 
-def _seed_if_empty(company_id: int):
+def _seed_if_empty(company_id: int, company_code: str):
     """Première fois : on charge le mapping validé existant (clients.json)."""
     with Session(engine) as s:
         if s.exec(select(ClientAccount).where(ClientAccount.company_id == company_id)).first():
             return
-        for key, v in config.CLIENTS["b2b"].items():
+        for key, v in config.clients(company_code).get("b2b", {}).items():
             pfx, coid = key.split(":", 1)
             s.add(ClientAccount(
                 company_id=company_id, establishment=pfx, toporder_company_id=coid,
@@ -46,7 +46,7 @@ def sync_clients(ctx, company_code="STERNA"):
         company = s.exec(select(Company).where(Company.code == company_code)).first()
     if not company:
         raise RuntimeError(f"société {company_code} introuvable")
-    _seed_if_empty(company.id)
+    _seed_if_empty(company.id, company_code)
 
     # Pennylane : index « Identifiant client » (external_reference = SIRET) -> client
     pl = pennylane.for_company(company_code)
@@ -73,11 +73,11 @@ def sync_clients(ctx, company_code="STERNA"):
     n = 0
     seen = set()       # (pfx, company_id) traités lors de cette synchro
     pulled = set()     # établissements réellement lus (pour réconcilier sans risque)
-    for est_name, est in config.ESTABLISHMENTS.items():
+    for est_name, est in config.establishments(company_code).items():
         pfx = est["pfx"]
         ctx.progress(n, None, step=f"sync {pfx}…")
         try:
-            comps = _pull_companies(est_name)
+            comps = _pull_companies(est_name, company_code)
         except Exception as e:
             ctx.log(f"⚠️ {pfx} : lecture TopOrder impossible ({e}) — établissement ignoré")
             continue
@@ -157,13 +157,13 @@ def sync_clients(ctx, company_code="STERNA"):
     return f"Synchronisé — {counts['ok']} clients, tout est ok ✓"
 
 
-def _pull_companies(est_name):
+def _pull_companies(est_name, company_code="STERNA"):
     client = toporder.for_establishment(est_name)
     if client is None:
         return []
     out, frm = [], 0
     while True:
-        b = client.get(f"/ppe/contactcompany/shop/{config.ESTABLISHMENTS[est_name]['shop_id']}",
+        b = client.get(f"/ppe/contactcompany/shop/{config.establishments(company_code)[est_name]['shop_id']}",
                        PaginationFrom=frm, PaginationTo=frm + 99)
         if not b:
             break

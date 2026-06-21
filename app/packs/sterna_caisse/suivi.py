@@ -60,7 +60,7 @@ def build_board(company):
 
     target = _target_date()
     # colonnes : SM, LP, SL (de gauche à droite) — ordre de la config
-    ests = [e["pfx"] for e in config.ESTABLISHMENTS.values()]
+    ests = [e["pfx"] for e in config.establishments(company.code).values()]
     today = (datetime.utcnow() + _TZ).date()
     rows = []
     for stp in STEPS:

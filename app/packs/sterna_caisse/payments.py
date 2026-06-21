@@ -38,7 +38,7 @@ def _norm(v, table):
 def _company2account(company_code):
     """companyId TopOrder -> compte 411 (depuis le mapping client, clé « PFX:companyId »)."""
     out = {}
-    for key, v in config.CLIENTS.get("b2b", {}).items():
+    for key, v in config.clients(company_code).get("b2b", {}).items():
         cid = key.split(":", 1)[1] if ":" in key else key
         if v.get("account"):
             out[cid] = v["account"]
@@ -234,7 +234,7 @@ def _toporder_pending(company_code, on_log=None):
     floor = (datetime.utcnow() + _TZ).date() - timedelta(days=180)
     cur_month = (datetime.utcnow() + _TZ).date().replace(day=1)
     agg = defaultdict(lambda: {"cur": 0.0, "ant": 0.0, "enc": 0.0})
-    for est_name, e in config.ESTABLISHMENTS.items():
+    for est_name, e in config.establishments(company_code).items():
         client = toporder.for_establishment(est_name)
         if client is None:
             continue

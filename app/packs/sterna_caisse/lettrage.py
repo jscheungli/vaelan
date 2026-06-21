@@ -46,7 +46,7 @@ def _client_accounts(company_code):
     for pfx, e in cfg["est"].items():
         if e.get("b2c_commun"):
             out[e["b2c_commun"]] = f"Particuliers {pfx}"
-    for v in config.CLIENTS.get("b2b", {}).values():
+    for v in config.clients(company_code).get("b2b", {}).values():
         if v.get("account"):
             out[v["account"]] = v.get("name") or "client B2B"
     return out
