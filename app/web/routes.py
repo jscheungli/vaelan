@@ -421,8 +421,12 @@ def jobs_feed(request: Request):
                     select(JobArtifact.run_id, JobArtifact.kind)
                     .where(JobArtifact.run_id.in_(ids))).all():
                 arts.setdefault(run_id, set()).add(kind)
+    # 286 = HTMX arrête le polling quand aucune tâche ne tourne (sinon le rafraîchissement
+    # 2s empêche de scroller, ex. jusqu'au pied de page). Reprend au prochain chargement.
+    status = 200 if running else 286
     return templates.TemplateResponse(request, "_jobs_feed.html",
-                                      _ctx(request, running=running, recent=recent, cmap=cmap, arts=arts))
+                                      _ctx(request, running=running, recent=recent, cmap=cmap, arts=arts),
+                                      status_code=status)
 
 
 @router.get("/jobs/{run_id}/report")

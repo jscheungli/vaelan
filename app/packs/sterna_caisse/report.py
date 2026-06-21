@@ -72,7 +72,8 @@ def _fmt(v):
 
 # ---------------------------------------------------------------- modèle de données
 def _compute(kind, establishment, date_from, date_to, syn, api, csv,
-             batch_code, n_tickets, balanced, run_id=None, executed_at=None, fac_payments=None):
+             batch_code, n_tickets, balanced, run_id=None, executed_at=None, fac_payments=None,
+             fac_detail=None):
     has_csv = csv is not None
     title = ("Compte rendu — Génération TOSLT (cadrage + CSV)"
              if kind == "generate" else "Compte rendu — Cadrage caisse")
@@ -88,7 +89,7 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     if run_id is not None:
         trace.append(f"Tâche #{run_id}")
     if executed_at:
-        trace.append(f"Exécutée le {executed_at}")
+        trace.append(f"Exécutée le {executed_at} (heure de La Réunion)")
     if trace:
         meta.append("        ".join(trace))
 
@@ -147,7 +148,7 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
         if rw["match"] == "ecart" and ecart is not None and abs((av or 0) - (cv or 0)) < TOL \
                 and abs(ecart) <= abs(facv) + TOL:
             rw["match"] = "reconciled"
-            recon.append({"mode": m, "ecart": ecart, "facture": facv})
+            recon.append({"mode": m, "syn": sv, "api": av, "ecart": ecart, "facture": facv})
         prows.append(rw)
     sv, av, cv = others(syn.get("payments")), others(api.get("payments")), others((csv or {}).get("payments"))
     if sv is not None or av is not None or cv is not None:
@@ -158,8 +159,12 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     if has_csv and balanced is not None:
         balance = {"debit": csv.get("debit"), "credit": csv.get("credit"), "ok": bool(balanced)}
 
+    # détail des paiements de factures, limité aux modes qui ont un écart réconcilié
+    recon_modes = {x["mode"] for x in recon}
+    fac_detail = [d for d in (fac_detail or []) if d.get("mode") in recon_modes] if recon else []
+    fac_detail = sorted(fac_detail, key=lambda d: (d.get("mode", ""), d.get("date", ""), d.get("fnum", 0)))
     return {"title": title, "meta": meta, "sections": sections, "reconciliation": recon,
-            "has_csv": has_csv, "balance": balance}
+            "fac_detail": fac_detail, "has_csv": has_csv, "balance": balance}
 
 
 # ---------------------------------------------------------------- rendu TEXTE
@@ -181,12 +186,19 @@ def to_text(data) -> str:
         L.append("")
     if data.get("reconciliation"):
         L.append("== RÉCONCILIATION DES ÉCARTS DE PAIEMENT ==")
-        L.append("  (la synthèse TopOrder classe certains paiements de factures hors « caisse » ;")
-        L.append("   Vaelan les a bookés au crédit du 411, lettrés F<n°> -> l'écart est expliqué)")
-        L.append(f"  {'Mode':<10}{'Écart (tickets-synth)':>24}{'Paiements factures encaissés':>32}    Contrôle")
         for x in data["reconciliation"]:
-            L.append(f"  {x['mode']:<10}{_fmt(x['ecart']):>24}{_fmt(x['facture']):>32}    "
-                     f"✓ écart couvert par les paiements de factures")
+            L.append(f"  {x['mode']} : tickets {_fmt(x['api'])} − synthèse {_fmt(x['syn'])} = écart {_fmt(x['ecart'])} €")
+            L.append(f"     → cet écart vient de paiements de factures que la synthèse classe hors « caisse ».")
+            L.append(f"     Total {x['mode']} de factures retraité (crédit 411, lettré F<n°>) : {_fmt(x['facture'])} €")
+            L.append(f"     Contrôle : écart {_fmt(x['ecart'])} ≤ {_fmt(x['facture'])} → entièrement constitué de "
+                     f"paiements de factures → COUVERT ✓")
+        if data.get("fac_detail"):
+            L.append("")
+            L.append("  Détail des paiements de factures encaissés en caisse (bookés au 411) :")
+            L.append(f"    {'Date':<12}{'Facture':<10}{'Client':<24}{'Mode':<12}{'Montant':>12}")
+            for d in data["fac_detail"]:
+                L.append(f"    {d['date']:<12}{('F' + str(d['fnum'])):<10}{(d['nm'] or '')[:22]:<24}"
+                         f"{d['mode']:<12}{_fmt(d['amount']):>12}")
         L.append("")
     if data["balance"]:
         b = data["balance"]
@@ -285,28 +297,42 @@ def to_pdf(data) -> bytes:
         nl(6)
 
     if data.get("reconciliation"):
-        ensure(40)
+        ensure(50)
         page.draw_rect(fitz.Rect(x0, y - 9, W - 40, y + 4), fill=_BAR, color=_BAR)
         left(x0 + 3, "Réconciliation des écarts de paiement", size=10, font="hebo", color=(0.15, 0.15, 0.22))
-        nl(15)
-        left(x0, "La synthèse classe certains paiements de factures hors « caisse » ; Vaelan les a bookés au", 8, "helv", _GREY)
-        nl(11)
-        left(x0, "crédit du 411 (lettrés F<n°>). On vérifie que l'écart est entièrement couvert par ces paiements.", 8, "helv", _GREY)
-        nl(15)
-        right(COL["api"], "Écart (tickets-synth)", 8, "helv", _GREY)
-        right(COL["csv"], "Paiements factures", 8, "helv", _GREY)
-        left(BADGE_X, "Contrôle", 8, "helv", _GREY)
-        nl(13)
+        nl(16)
         for x in data["reconciliation"]:
-            ensure(16)
-            left(x0 + 4, x["mode"], 9)
-            right(COL["api"], _fmt(x["ecart"]))
-            right(COL["csv"], _fmt(x["facture"]))
-            lbl = "COUVERT"
-            w = fitz.get_text_length(lbl, fontname="hebo", fontsize=8) + 8
+            ensure(46)
+            left(x0, f"{x['mode']} : tickets {_fmt(x['api'])}  −  synthèse {_fmt(x['syn'])}  =  écart {_fmt(x['ecart'])} EUR",
+                 9, "cour", _DARK)
+            # badge COUVERT à droite
+            w = fitz.get_text_length("COUVERT", fontname="hebo", fontsize=8) + 8
             page.draw_rect(fitz.Rect(BADGE_X, y - 8, BADGE_X + w, y + 2.5), fill=_GREEN, color=_GREEN)
-            page.insert_text((BADGE_X + 4, y), lbl, fontsize=8, fontname="hebo", color=(1, 1, 1))
-            nl(14)
+            page.insert_text((BADGE_X + 4, y), "COUVERT", fontsize=8, fontname="hebo", color=(1, 1, 1))
+            nl(13)
+            left(x0 + 6, "Cet écart vient de paiements de factures que la synthèse classe hors « caisse ».", 8, "helv", _GREY)
+            nl(11)
+            left(x0 + 6, f"Total {x['mode']} de factures retraité (crédit 411, lettré F<n°>) : {_fmt(x['facture'])} EUR.", 8, "helv", _GREY)
+            nl(11)
+            left(x0 + 6, f"Contrôle : écart {_fmt(x['ecart'])} <= {_fmt(x['facture'])} -> entièrement constitué de paiements de factures.", 8, "helv", _GREY)
+            nl(15)
+        if data.get("fac_detail"):
+            left(x0, "Détail des paiements de factures encaissés en caisse :", 9, "hebo", (0.2, 0.2, 0.25))
+            nl(13)
+            left(x0 + 4, "Date", 8, "helv", _GREY)
+            left(x0 + 70, "Facture", 8, "helv", _GREY)
+            left(x0 + 140, "Client", 8, "helv", _GREY)
+            left(x0 + 330, "Mode", 8, "helv", _GREY)
+            right(BADGE_X + 40, "Montant", 8, "helv", _GREY)
+            nl(12)
+            for d in data["fac_detail"]:
+                ensure(14)
+                left(x0 + 4, d["date"], 8, "cour")
+                left(x0 + 70, "F" + str(d["fnum"]), 8, "cour")
+                left(x0 + 140, (d["nm"] or "")[:30], 8, "helv")
+                left(x0 + 330, d["mode"], 8, "helv")
+                right(BADGE_X + 40, _fmt(d["amount"]), 8, "cour")
+                nl(12)
         nl(6)
 
     if data["balance"]:
@@ -331,16 +357,16 @@ def to_pdf(data) -> bytes:
 # ---------------------------------------------------------------- API publique
 def build(kind, establishment, date_from, date_to, syn, api, csv=None, *,
           batch_code=None, n_tickets=None, balanced=None, run_id=None, executed_at=None,
-          fac_payments=None) -> str:
+          fac_payments=None, fac_detail=None) -> str:
     return to_text(_compute(kind, establishment, date_from, date_to, syn, api, csv,
-                            batch_code, n_tickets, balanced, run_id, executed_at, fac_payments))
+                            batch_code, n_tickets, balanced, run_id, executed_at, fac_payments, fac_detail))
 
 
 def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
               batch_code=None, n_tickets=None, balanced=None, run_id=None, executed_at=None,
-              fac_payments=None) -> bytes:
+              fac_payments=None, fac_detail=None) -> bytes:
     return to_pdf(_compute(kind, establishment, date_from, date_to, syn, api, csv,
-                           batch_code, n_tickets, balanced, run_id, executed_at, fac_payments))
+                           batch_code, n_tickets, balanced, run_id, executed_at, fac_payments, fac_detail))
 
 
 def verify_pdf(establishment, journal, period_label, n_entries, used, summary, pay_rows,

@@ -120,7 +120,8 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     ctx.progress(total or res["n_tickets"], total or res["n_tickets"], step="cadrage…")
     def _emit_report(csv_agg=None, batch_code=None, balanced=None):
         args = dict(batch_code=batch_code, n_tickets=res["n_tickets"], balanced=balanced,
-                    run_id=ctx.run_id, executed_at=executed_at, fac_payments=res.get("fac_payments"))
+                    run_id=ctx.run_id, executed_at=executed_at, fac_payments=res.get("fac_payments"),
+                    fac_detail=res.get("fac_payment_detail"))
         ctx.set_report(report.build("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args))
         ctx.add_artifact("report",
                          f"{fpfx} compte_rendu_TOSLT_{code}_{date_from}_{date_to}.pdf",

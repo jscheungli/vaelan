@@ -106,6 +106,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
     tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
     pay_total = defaultdict(float)   # encaissements par mode (pour le cadrage)
     fac_pay = defaultdict(float)     # encaissements SUR FACTURES par mode (réconciliation de l'écart)
+    fac_pay_detail = []              # liste des paiements de factures (date, facture, client, mode, montant)
     vat_total = defaultdict(lambda: [0.0, 0.0])  # taux -> [HT, TTC] (pull brut, pour le compte rendu)
     frm, pages = 0, 0
     while True:
@@ -152,7 +153,11 @@ def build_toslt(establishment, date_from, date_to, company_id,
                                  "vat": dict(vat), "pay": dict(pay), "ttc": round(ttc, 2),
                                  "b2b": bool(coid and coid != ZERO)})
                 for _pt, _amt in pay.items():           # paiements comptant sur facture
+                    if abs(_amt) < 0.005:
+                        continue
                     fac_pay[_pt] += _amt
+                    fac_pay_detail.append({"date": dd, "fnum": int(fnum), "nm": nm,
+                                           "mode": _pt, "amount": round(_amt, 2)})
             else:             # NON facturé : CA anonyme -> agrégat ; paiements -> règlement OU agrégat
                 d = agg[dd]
                 for r, (ht, t) in vat.items():
@@ -175,6 +180,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
                         reglements.append({"date": pdate, "fnum": int(rfnum), "acc": a,
                                            "nm": nm, "mode": pt, "amount": amt})
                         fac_pay[pt] += amt              # règlement de facture encaissé en caisse
+                        fac_pay_detail.append({"date": pdate, "fnum": int(rfnum), "nm": nm,
+                                               "mode": pt, "amount": round(amt, 2)})
                     else:       # encaissement anonyme
                         d["pay"][pt] += amt
         if on_progress:
@@ -195,6 +202,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
     if unresolved:
         return {"unresolved": unresolved, "rows": [], "n_tickets": n_tickets,
                 "ca_ttc": ca_ttc_z, "payments": payments, "fac_payments": fac_payments,
+                "fac_payment_detail": fac_pay_detail,
                 "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate}
 
     rows = []
@@ -365,6 +373,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
         "n_factures": len(factures), "n_b2b": n_b2b, "n_b2c": len(factures) - n_b2b,
         "n_reglements": len(reglements),
         "ca_ttc": ca_ttc_z, "payments": payments, "fac_payments": fac_payments,
+        "fac_payment_detail": fac_pay_detail,
         "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate,
         "ca_ht": round(tot["ca_ht"], 2), "tva": round(tot["tva"], 2),
         "encaisse": round(tot["enc"], 2), "creances": round(tot["creance"], 2),
