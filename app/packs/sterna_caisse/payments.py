@@ -213,6 +213,7 @@ def account_ledger(company_code, account, ex=None, pl=None):
     return {"lines": lines, "total_debit": round(tot_d, 2), "total_credit": round(tot_c, 2),
             "solde": round(tot_d - tot_c, 2), "name": acc.get("label"), "number": account,
             "letterable": bool(acc.get("letterable")),
+            "journals": sorted({x["journal"] for x in lines if x["journal"]}),   # pour le filtre Journaux
             "exercise": selected, "exercise_label": f"{selected}-{selected + 1}",
             "exercises": years, "prev": selected - 1, "next": selected + 1}
 

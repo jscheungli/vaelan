@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Request, Form, UploadFile, File
+from fastapi import APIRouter, Request, Form, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
@@ -448,7 +448,8 @@ def paiements_sync(request: Request, code: str):
 
 @router.get("/c/{code}/paiements/{account}", response_class=HTMLResponse)
 def paiements_client(request: Request, code: str, account: str, ex: str = "",
-                     show: str = "all", lett: str = "all"):
+                     q: str = "", show: str = "all",
+                     lett: list = Query(default=[]), jr: list = Query(default=[])):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
@@ -464,7 +465,8 @@ def paiements_client(request: Request, code: str, account: str, ex: str = "",
         err = str(e)[:200]
     return templates.TemplateResponse(request, "paiements_client.html",
                                       _ctx(request, company=company, account=account, cp=cp,
-                                           ledger=ledger, tags=tags, err=err, show=show, lett=lett))
+                                           ledger=ledger, tags=tags, err=err,
+                                           q=q, show=show, lett=lett, jr=jr))
 
 
 @router.post("/c/{code}/paiements/{account}/reset-tags")

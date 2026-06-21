@@ -52,17 +52,43 @@
   <span class="badge text-bg-success">Saisi</span> = reportée/rapprochée dans TopOrder ·
   <span class="badge text-bg-secondary">Ignoré</span> = non pertinente / déjà traitée (qui &amp; quand gardés).</p>
 
-{# barre de filtres : validation + lettrage (l'exercice est conservé) #}
-{% set q = base + '?ex=' + ledger.exercise|string %}
-<div class="d-flex flex-wrap align-items-center gap-3 mb-2 small">
-  <div class="btn-group btn-group-sm" role="group" aria-label="Validation">
-    <a href="{{ q }}&show=all&lett={{ lett }}" class="btn {{ 'btn-dark' if show != 'todo' else 'btn-outline-dark' }}">Toutes</a>
-    <a href="{{ q }}&show=todo&lett={{ lett }}" class="btn {{ 'btn-dark' if show == 'todo' else 'btn-outline-dark' }}">À traiter (non validées)</a>
-  </div>
-  <div class="btn-group btn-group-sm" role="group" aria-label="Lettrage">
-    <a href="{{ q }}&show={{ show }}&lett=all" class="btn {{ 'btn-dark' if lett != 'open' else 'btn-outline-dark' }}">Tout lettrage</a>
-    <a href="{{ q }}&show={{ show }}&lett=open" class="btn {{ 'btn-dark' if lett == 'open' else 'btn-outline-dark' }}">Non / partiellement lettrées</a>
-  </div>
+{# barre de filtres façon Pennylane : recherche · Lettrage (3 statuts) · Journaux · À traiter #}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2 small">
+  <form method="get" class="d-flex flex-wrap align-items-center gap-2">
+    <input type="hidden" name="ex" value="{{ ledger.exercise }}">
+    <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Libellé, nº pièce…" style="width:210px;">
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-dark dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        <i class="bi bi-link-45deg"></i> Lettrage{% if lett %} <span class="badge text-bg-secondary">{{ lett|length }}</span>{% endif %}</button>
+      <div class="dropdown-menu p-2" style="min-width:200px;">
+        <div class="text-muted text-uppercase mb-1" style="font-size:.62rem;">Statuts</div>
+        {% for v, lbl in [('lettre','Lettré'), ('non','Non lettré'), ('partiel','Partiellement lettré')] %}
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="lett" value="{{ v }}" id="lett-{{ v }}" {{ 'checked' if v in lett }}>
+          <label class="form-check-label" for="lett-{{ v }}">{{ lbl }}</label></div>
+        {% endfor %}
+        <button type="submit" class="btn btn-sm btn-dark w-100 mt-2">Appliquer</button>
+      </div>
+    </div>
+    {% if ledger.journals %}
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-dark dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        Journaux{% if jr %} <span class="badge text-bg-secondary">{{ jr|length }}</span>{% endif %}</button>
+      <div class="dropdown-menu p-2" style="min-width:150px;">
+        {% for j in ledger.journals %}
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="jr" value="{{ j }}" id="jr-{{ j }}" {{ 'checked' if j in jr }}>
+          <label class="form-check-label" for="jr-{{ j }}">{{ j }}</label></div>
+        {% endfor %}
+        <button type="submit" class="btn btn-sm btn-dark w-100 mt-2">Appliquer</button>
+      </div>
+    </div>
+    {% endif %}
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" name="show" value="todo" id="show-todo" {{ 'checked' if show == 'todo' }} onchange="this.form.submit()">
+      <label class="form-check-label" for="show-todo">À traiter seulement</label>
+    </div>
+    <button type="submit" class="btn btn-sm btn-dark">Appliquer</button>
+    {% if q or lett or jr or show == 'todo' %}<a href="{{ base }}?ex={{ ledger.exercise }}" class="btn btn-sm btn-link text-muted">effacer les filtres</a>{% endif %}
+  </form>
   {% if tags %}
   <form method="post" action="{{ base }}/reset-tags" class="ms-auto"
         onsubmit="return confirm('Réinitialiser le rail de validation (retirer tous les tags Saisi/Ignoré de ce compte) ?');">
@@ -79,11 +105,15 @@
     <th class="text-end">Débit</th><th class="text-end">Crédit</th><th class="text-end">Solde</th><th class="text-center">Tag</th>
   </tr></thead>
   <tbody>
-  {% set ns = namespace(shown=0) %}
+  {% set ns = namespace(shown=0, deb=0.0, cred=0.0) %}
   {% for l in ledger.lines %}
     {% set tag = tags.get(l.id) %}
-    {% set vis = (show != 'todo' or not tag) and (lett != 'open' or not l.letter_full) %}
-    {% if vis %}{% set ns.shown = ns.shown + 1 %}
+    {% set status = 'non' if not l.letter else ('lettre' if l.letter_full else 'partiel') %}
+    {% set vis = (not q or q|lower in (l.label ~ ' ' ~ l.piece)|lower)
+                 and (not lett or status in lett)
+                 and (not jr or l.journal in jr)
+                 and (show != 'todo' or not tag) %}
+    {% if vis %}{% set ns.shown = ns.shown + 1 %}{% set ns.deb = ns.deb + l.debit %}{% set ns.cred = ns.cred + l.credit %}
     <tr {% if tag and tag.status=='saisi' %}class="table-success"{% elif tag and tag.status=='ignore' %}class="text-muted"{% endif %}>
       <td class="text-nowrap">{{ l.date }}</td>
       <td><span class="text-muted">{{ l.journal }}</span></td>
@@ -111,12 +141,23 @@
     <tr><td colspan="9" class="text-muted small">{% if ledger.lines %}Aucune écriture ne correspond aux filtres (tout est validé / lettré).{% else %}Aucune écriture sur cet exercice.{% endif %}</td></tr>
   {% endif %}
   </tbody>
-  <tfoot class="table-light"><tr class="fw-semibold">
-    <td colspan="5" class="text-end">TOTAL {{ account }} {{ ledger.name or '' }}</td>
-    <td class="text-end">{{ '%.2f'|format(ledger.total_debit) }}</td>
-    <td class="text-end">{{ '%.2f'|format(ledger.total_credit) }}</td>
-    <td class="text-end">{{ '%.2f'|format(ledger.solde) }}</td><td></td>
-  </tr></tfoot>
+  <tfoot class="table-light">
+    {% set filtered = q or lett or jr or show == 'todo' %}
+    {% if filtered %}
+    <tr class="fw-semibold table-warning">
+      <td colspan="5" class="text-end">Résultat du filtre · {{ ns.shown }} ligne(s)</td>
+      <td class="text-end">{{ '%.2f'|format(ns.deb) }}</td>
+      <td class="text-end">{{ '%.2f'|format(ns.cred) }}</td>
+      <td class="text-end">{{ '%.2f'|format(ns.deb - ns.cred) }}</td><td></td>
+    </tr>
+    {% endif %}
+    <tr class="fw-semibold">
+      <td colspan="5" class="text-end">TOTAL {{ account }} {{ ledger.name or '' }} (exercice {{ ledger.exercise_label }})</td>
+      <td class="text-end">{{ '%.2f'|format(ledger.total_debit) }}</td>
+      <td class="text-end">{{ '%.2f'|format(ledger.total_credit) }}</td>
+      <td class="text-end">{{ '%.2f'|format(ledger.solde) }}</td><td></td>
+    </tr>
+  </tfoot>
 </table>
 </div>
 
