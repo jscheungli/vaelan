@@ -11,7 +11,7 @@ détail client est relu en live (un seul compte).
 """
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 
 from sqlmodel import Session, select
 
@@ -23,16 +23,6 @@ from .lettrage import _client_accounts, _fac_from_label
 
 _TZ = timedelta(hours=4)
 TOL = 0.01
-_ZERO = "00000000-0000-0000-0000-000000000000"
-_PENDING = {0, 1, 3}        # DRAFT / WAITING_FOR_BILLING / PURCHASE_ORDER -> en attente de facturation
-_BILLED_UNPAID = {4, 5}     # BILLED / PARTIALLY_PAID -> facturé non soldé (encours TopOrder)
-_STATUS = {"DRAFT": 0, "WAITING_FOR_BILLING": 1, "QUOTE": 2, "PURCHASE_ORDER": 3,
-           "BILLED": 4, "PARTIALLY_PAID": 5, "PAID": 6, "CREDIT_GENERATED": 7, "CANCELLED": 8}
-_TYPE = {"CASH_REGISTER": 0, "ORDER": 1, "PORTAGE": 2, "PRODUCT_RETURN": 3}
-
-
-def _norm(v, table):
-    return v if isinstance(v, int) else table.get(str(v).upper(), -1)
 
 
 def _company2account(company_code):
@@ -228,66 +218,45 @@ def _pdate(d):
 
 
 # ----------------------------------------------------------------- côté TopOrder
-def _toporder_pending(company_code, on_log=None):
-    """Par companyId : (attente_courant, attente_anterieur, encours_toporder) en TTC.
-    Pull borné (≈180 j, plafond de pages) des commandes différées, tous établissements."""
-    floor = (datetime.utcnow() + _TZ).date() - timedelta(days=180)
-    cur_month = (datetime.utcnow() + _TZ).date().replace(day=1)
-    agg = defaultdict(lambda: {"cur": 0.0, "ant": 0.0, "enc": 0.0})
+def _toporder_waiting(company_code, on_log=None):
+    """Par companyId : montant « en attente de facturation » (TTC).
+
+    Source = champ `amountWaitingForBilling` de la fiche société TopOrder
+    (`/ppe/contactcompany/shop`). C'est EXACTEMENT le chiffre que TopOrder affiche,
+    lu en une page par établissement — fini le scan des milliers de commandes caisse
+    (l'endpoint /ppe/order/full ne filtre pas et renvoie surtout du B2C, illisible)."""
+    out = {}
     for est_name, e in config.establishments(company_code).items():
         client = toporder.for_establishment(est_name)
         if client is None:
             continue
         shop = e["shop_id"]
-        frm, pages = 0, 0
-        stop = False
-        while not stop and pages < 250:
+        frm, n = 0, 0
+        while True:
             b = None
             for _ in range(5):
                 try:
-                    b = client.get(f"/ppe/order/full/shop/{shop}",
-                                   PaginationFrom=frm, PaginationTo=frm + 9)
+                    b = client.get(f"/ppe/contactcompany/shop/{shop}",
+                                   PaginationFrom=frm, PaginationTo=frm + 99)
                     break
                 except Exception:
                     time.sleep(2)
             if not b:
                 break
-            pages += 1
-            for o in b:
-                if _norm(o.get("type"), _TYPE) != 1:
-                    continue                       # on ne garde que les commandes différées
-                st = _norm(o.get("status"), _STATUS)
-                cid = o.get("companyReferentId")
-                if not cid or cid == _ZERO:
-                    continue                       # B2C / anonyme : pas de suivi individuel ici
-                amt = float(o.get("roundedBasketPrice") or o.get("basketPrice") or 0)
-                od = _order_date(o)
-                if od and od < floor:
-                    stop = True                    # commandes triées récentes->anciennes
-                    continue
-                if st in _PENDING:
-                    if od and od >= cur_month:
-                        agg[cid]["cur"] += amt
-                    else:
-                        agg[cid]["ant"] += amt
-                elif st in _BILLED_UNPAID:
-                    agg[cid]["enc"] += amt
+            for co in b:
+                if co.get("contactType") not in (0, "0"):
+                    continue                       # particuliers : pas de suivi individuel
+                amt = float(co.get("amountWaitingForBilling") or 0)
+                cid = co.get("id")
+                if cid and abs(amt) > 0.005:
+                    out[cid] = round(out.get(cid, 0.0) + amt, 2)
+                    n += 1
             frm += len(b)
-            if len(b) < 10:
+            if len(b) < 100:
                 break
         if on_log:
-            on_log(f"TopOrder {e['pfx']} : {pages} pages lues")
-    return agg
-
-
-def _order_date(o):
-    c = o.get("create")
-    if isinstance(c, (int, float)) and c > 0:
-        return datetime.utcfromtimestamp(c + 4 * 3600).date()
-    d = str(o.get("date") or "")
-    if len(d) >= 8 and d[:8].isdigit():
-        return date(int(d[:4]), int(d[4:6]), int(d[6:8]))
-    return None
+            on_log(f"TopOrder {e['pfx']} : {n} société(s) avec un montant en attente de facturation")
+    return out
 
 
 # ----------------------------------------------------------------- job de synchro
@@ -308,9 +277,9 @@ def run_payments_sync(ctx, company_code):
     for cid, acc in c2a.items():
         a2c[acc].append(cid)
 
-    ctx.progress(0, 2, step="TopOrder : commandes en attente de facturation…")
-    ctx.log("Lecture des commandes TopOrder (peut être long, 10/page)…")
-    topo = _toporder_pending(company_code, on_log=ctx.log)
+    ctx.progress(0, 2, step="TopOrder : montants en attente de facturation…")
+    ctx.log("Lecture des fiches sociétés TopOrder (amountWaitingForBilling)…")
+    topo = _toporder_waiting(company_code, on_log=ctx.log)
 
     ctx.progress(1, 2, step="Pennylane : encours par compte client…")
     now = datetime.utcnow() + _TZ
@@ -328,29 +297,24 @@ def run_payments_sync(ctx, company_code):
         if det is None:
             continue
         kind = "b2c" if acc in b2c_accounts else "b2b"
-        # agrégat TopOrder pour ce compte (somme des companyId qui pointent dessus)
-        t = {"cur": 0.0, "ant": 0.0, "enc": 0.0}
-        for cid in a2c.get(acc, []):
-            ti = topo.get(cid)
-            if ti:
-                t["cur"] += ti["cur"]; t["ant"] += ti["ant"]; t["enc"] += ti["enc"]
+        # « en attente de facturation » TopOrder = somme des companyId qui pointent sur ce compte
+        attente = round(sum(topo.get(cid, 0.0) for cid in a2c.get(acc, [])), 2)
         # client jamais passé sur TopOrder (aucune facture TopOrder ET rien en attente)
         # = pur legacy Kimayo -> hors périmètre de cette page.
-        if det.get("cutover") is None and abs(t["cur"]) + abs(t["ant"]) + abs(t["enc"]) < TOL:
+        if det.get("cutover") is None and abs(attente) < TOL:
             continue
         vir = [p for p in det["payments"] if p["is_virement"]]
         vir_a_reporter = [p for p in vir if p["id"] not in reported]
-        attente = round(t["cur"] + t["ant"], 2)
         rows.append({
             "account": acc, "name": nm, "kind": kind,
             "encours_pennylane": det["net"], "nb_open": len(det["open_creances"]),
             "oldest_age": det["oldest_age"],
             "virements_a_reporter": round(sum(p["amount"] for p in vir_a_reporter), 2),
             "nb_virements_a_reporter": len(vir_a_reporter),
-            "encours_toporder": round(t["enc"], 2),
-            "attente_fact_courant": round(t["cur"], 2),
-            "attente_fact_anterieur": round(t["ant"], 2),
-            "ecart": round(t["enc"] - det["net"], 2),
+            "encours_toporder": 0.0,                 # non exposé proprement par l'API TopOrder
+            "attente_fact_courant": attente,         # = amountWaitingForBilling (total)
+            "attente_fact_anterieur": 0.0,           # déprécié (TopOrder ne ventile pas par mois)
+            "ecart": 0.0,                            # déprécié (cf. encours_toporder)
             "exposition": round(det["net"] + attente, 2),
         })
 
@@ -389,14 +353,14 @@ def board(company_id, q="", flt="", sort="exposition", page=1, per_page=15):
     if q:
         ql = q.lower()
         rows = [r for r in rows if ql in (r.name or "").lower() or ql in r.account]
-    if flt == "ecart":
-        rows = [r for r in rows if abs(r.ecart) > TOL]
+    if flt == "attente":
+        rows = [r for r in rows if r.attente_fact_courant > TOL]
     elif flt == "virements":
         rows = [r for r in rows if r.nb_virements_a_reporter > 0]
     elif flt == "encours":
         rows = [r for r in rows if r.encours_pennylane > TOL]
     keyf = {"exposition": lambda r: -r.exposition, "encours": lambda r: -r.encours_pennylane,
-            "ecart": lambda r: -abs(r.ecart), "age": lambda r: -r.oldest_age,
+            "attente": lambda r: -r.attente_fact_courant, "age": lambda r: -r.oldest_age,
             "name": lambda r: (r.name or "").lower()}.get(sort, lambda r: -r.exposition)
     rows.sort(key=keyf)
     total = len(rows)
@@ -406,8 +370,7 @@ def board(company_id, q="", flt="", sort="exposition", page=1, per_page=15):
     totals = {
         "clients": total,
         "encours": round(sum(r.encours_pennylane for r in rows), 2),
-        "attente": round(sum(r.attente_fact_courant + r.attente_fact_anterieur for r in rows), 2),
-        "ecart_n": sum(1 for r in rows if abs(r.ecart) > TOL),
+        "attente": round(sum(r.attente_fact_courant for r in rows), 2),
         "vir_n": sum(r.nb_virements_a_reporter for r in rows),
         "vir_montant": round(sum(r.virements_a_reporter for r in rows), 2),
     }

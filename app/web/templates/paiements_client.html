@@ -52,43 +52,37 @@
   <span class="badge text-bg-success">Saisi</span> = reportée/rapprochée dans TopOrder ·
   <span class="badge text-bg-secondary">Ignoré</span> = non pertinente / déjà traitée (qui &amp; quand gardés).</p>
 
-{# barre de filtres façon Pennylane : recherche · Lettrage (3 statuts) · Journaux · À traiter #}
+{# barre de filtres façon Pennylane — filtrage 100 % CÔTÉ CLIENT (instantané, aucune relecture API) #}
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2 small">
-  <form method="get" class="d-flex flex-wrap align-items-center gap-2">
-    <input type="hidden" name="ex" value="{{ ledger.exercise }}">
-    <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Libellé, nº pièce…" style="width:210px;">
-    <div class="dropdown">
-      <button class="btn btn-sm btn-outline-dark dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
-        <i class="bi bi-link-45deg"></i> Lettrage{% if lett %} <span class="badge text-bg-secondary">{{ lett|length }}</span>{% endif %}</button>
-      <div class="dropdown-menu p-2" style="min-width:200px;">
-        <div class="text-muted text-uppercase mb-1" style="font-size:.62rem;">Statuts</div>
-        {% for v, lbl in [('lettre','Lettré'), ('non','Non lettré'), ('partiel','Partiellement lettré')] %}
-        <div class="form-check"><input class="form-check-input" type="checkbox" name="lett" value="{{ v }}" id="lett-{{ v }}" {{ 'checked' if v in lett }}>
-          <label class="form-check-label" for="lett-{{ v }}">{{ lbl }}</label></div>
-        {% endfor %}
-        <button type="submit" class="btn btn-sm btn-dark w-100 mt-2">Appliquer</button>
-      </div>
+  <input type="search" id="f-q" class="form-control form-control-sm" placeholder="Libellé, nº pièce…" style="width:210px;" oninput="applyFilters()">
+  <div class="dropdown">
+    <button class="btn btn-sm btn-outline-dark dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+      <i class="bi bi-link-45deg"></i> Lettrage <span id="f-lett-n" class="badge text-bg-secondary d-none"></span></button>
+    <div class="dropdown-menu p-2" style="min-width:200px;">
+      <div class="text-muted text-uppercase mb-1" style="font-size:.62rem;">Statuts</div>
+      {% for v, lbl in [('lettre','Lettré'), ('non','Non lettré'), ('partiel','Partiellement lettré')] %}
+      <div class="form-check"><input class="form-check-input f-lett" type="checkbox" value="{{ v }}" id="lett-{{ v }}" onchange="applyFilters()">
+        <label class="form-check-label" for="lett-{{ v }}">{{ lbl }}</label></div>
+      {% endfor %}
     </div>
-    {% if ledger.journals %}
-    <div class="dropdown">
-      <button class="btn btn-sm btn-outline-dark dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
-        Journaux{% if jr %} <span class="badge text-bg-secondary">{{ jr|length }}</span>{% endif %}</button>
-      <div class="dropdown-menu p-2" style="min-width:150px;">
-        {% for j in ledger.journals %}
-        <div class="form-check"><input class="form-check-input" type="checkbox" name="jr" value="{{ j }}" id="jr-{{ j }}" {{ 'checked' if j in jr }}>
-          <label class="form-check-label" for="jr-{{ j }}">{{ j }}</label></div>
-        {% endfor %}
-        <button type="submit" class="btn btn-sm btn-dark w-100 mt-2">Appliquer</button>
-      </div>
+  </div>
+  {% if ledger.journals %}
+  <div class="dropdown">
+    <button class="btn btn-sm btn-outline-dark dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+      Journaux <span id="f-jr-n" class="badge text-bg-secondary d-none"></span></button>
+    <div class="dropdown-menu p-2" style="min-width:150px;">
+      {% for j in ledger.journals %}
+      <div class="form-check"><input class="form-check-input f-jr" type="checkbox" value="{{ j }}" id="jr-{{ j }}" onchange="applyFilters()">
+        <label class="form-check-label" for="jr-{{ j }}">{{ j }}</label></div>
+      {% endfor %}
     </div>
-    {% endif %}
-    <div class="form-check form-switch mb-0">
-      <input class="form-check-input" type="checkbox" name="show" value="todo" id="show-todo" {{ 'checked' if show == 'todo' }} onchange="this.form.submit()">
-      <label class="form-check-label" for="show-todo">À traiter seulement</label>
-    </div>
-    <button type="submit" class="btn btn-sm btn-dark">Appliquer</button>
-    {% if q or lett or jr or show == 'todo' %}<a href="{{ base }}?ex={{ ledger.exercise }}" class="btn btn-sm btn-link text-muted">effacer les filtres</a>{% endif %}
-  </form>
+  </div>
+  {% endif %}
+  <div class="form-check form-switch mb-0">
+    <input class="form-check-input" type="checkbox" id="f-todo" onchange="applyFilters()">
+    <label class="form-check-label" for="f-todo">À traiter seulement</label>
+  </div>
+  <a href="#" id="f-clear" class="btn btn-sm btn-link text-muted d-none" onclick="clearFilters();return false;">effacer les filtres</a>
   {% if tags %}
   <form method="post" action="{{ base }}/reset-tags" class="ms-auto"
         onsubmit="return confirm('Réinitialiser le rail de validation (retirer tous les tags Saisi/Ignoré de ce compte) ?');">
@@ -104,17 +98,14 @@
     <th>Date</th><th>Jour.</th><th>Libellé</th><th>Nº pièce</th><th class="text-center">Lett.</th>
     <th class="text-end">Débit</th><th class="text-end">Crédit</th><th class="text-end">Solde</th><th class="text-center">Tag</th>
   </tr></thead>
-  <tbody>
-  {% set ns = namespace(shown=0, deb=0.0, cred=0.0) %}
+  <tbody id="ledger-body">
   {% for l in ledger.lines %}
     {% set tag = tags.get(l.id) %}
     {% set status = 'non' if not l.letter else ('lettre' if l.letter_full else 'partiel') %}
-    {% set vis = (not q or q|lower in (l.label ~ ' ' ~ l.piece)|lower)
-                 and (not lett or status in lett)
-                 and (not jr or l.journal in jr)
-                 and (show != 'todo' or not tag) %}
-    {% if vis %}{% set ns.shown = ns.shown + 1 %}{% set ns.deb = ns.deb + l.debit %}{% set ns.cred = ns.cred + l.credit %}
-    <tr {% if tag and tag.status=='saisi' %}class="table-success"{% elif tag and tag.status=='ignore' %}class="text-muted"{% endif %}>
+    <tr class="ledger-row{% if tag and tag.status=='saisi' %} table-success{% elif tag and tag.status=='ignore' %} text-muted{% endif %}"
+        data-text="{{ (l.label ~ ' ' ~ l.piece)|lower }}" data-status="{{ status }}"
+        data-journal="{{ l.journal }}" data-tagged="{{ '1' if tag else '0' }}"
+        data-debit="{{ '%.2f'|format(l.debit) }}" data-credit="{{ '%.2f'|format(l.credit) }}">
       <td class="text-nowrap">{{ l.date }}</td>
       <td><span class="text-muted">{{ l.journal }}</span></td>
       <td>{{ l.label[:52] }}</td>
@@ -135,22 +126,16 @@
         {% if tag %}<div class="text-muted" style="font-size:.62rem;">{{ (tag.reported_by or '').split('@')[0] }} · {{ tag.reported_at.strftime('%d/%m %H:%M') }}</div>{% endif %}
       </td>
     </tr>
-    {% endif %}
   {% endfor %}
-  {% if ns.shown == 0 %}
-    <tr><td colspan="9" class="text-muted small">{% if ledger.lines %}Aucune écriture ne correspond aux filtres (tout est validé / lettré).{% else %}Aucune écriture sur cet exercice.{% endif %}</td></tr>
-  {% endif %}
+  <tr id="ledger-empty"{% if ledger.lines %} class="d-none"{% endif %}><td colspan="9" class="text-muted small">{% if ledger.lines %}Aucune écriture ne correspond aux filtres.{% else %}Aucune écriture sur cet exercice.{% endif %}</td></tr>
   </tbody>
   <tfoot class="table-light">
-    {% set filtered = q or lett or jr or show == 'todo' %}
-    {% if filtered %}
-    <tr class="fw-semibold table-warning">
-      <td colspan="5" class="text-end">Résultat du filtre · {{ ns.shown }} ligne(s)</td>
-      <td class="text-end">{{ '%.2f'|format(ns.deb) }}</td>
-      <td class="text-end">{{ '%.2f'|format(ns.cred) }}</td>
-      <td class="text-end">{{ '%.2f'|format(ns.deb - ns.cred) }}</td><td></td>
+    <tr id="filter-foot" class="fw-semibold table-warning d-none">
+      <td colspan="5" class="text-end">Résultat du filtre · <span id="fr-n">0</span> ligne(s)</td>
+      <td class="text-end" id="fr-deb">0.00</td>
+      <td class="text-end" id="fr-cred">0.00</td>
+      <td class="text-end" id="fr-sol">0.00</td><td></td>
     </tr>
-    {% endif %}
     <tr class="fw-semibold">
       <td colspan="5" class="text-end">TOTAL {{ account }} {{ ledger.name or '' }} (exercice {{ ledger.exercise_label }})</td>
       <td class="text-end">{{ '%.2f'|format(ledger.total_debit) }}</td>
@@ -160,5 +145,36 @@
   </tfoot>
 </table>
 </div>
+
+<script>
+function applyFilters(){
+  var q=(document.getElementById('f-q').value||'').toLowerCase().trim();
+  var lett=Array.prototype.map.call(document.querySelectorAll('.f-lett:checked'),function(c){return c.value;});
+  var jr=Array.prototype.map.call(document.querySelectorAll('.f-jr:checked'),function(c){return c.value;});
+  var todo=document.getElementById('f-todo').checked;
+  var shown=0,deb=0,cred=0;
+  document.querySelectorAll('#ledger-body tr.ledger-row').forEach(function(tr){
+    var d=tr.dataset;
+    var vis=(!q||d.text.indexOf(q)>=0)&&(!lett.length||lett.indexOf(d.status)>=0)
+            &&(!jr.length||jr.indexOf(d.journal)>=0)&&(!todo||d.tagged!=='1');
+    tr.classList.toggle('d-none',!vis);
+    if(vis){shown++;deb+=parseFloat(d.debit||0);cred+=parseFloat(d.credit||0);}
+  });
+  var filtered=!!(q||lett.length||jr.length||todo);
+  document.getElementById('ledger-empty').classList.toggle('d-none',shown>0);
+  var ff=document.getElementById('filter-foot');
+  ff.classList.toggle('d-none',!filtered);
+  if(filtered){document.getElementById('fr-n').textContent=shown;
+    document.getElementById('fr-deb').textContent=deb.toFixed(2);
+    document.getElementById('fr-cred').textContent=cred.toFixed(2);
+    document.getElementById('fr-sol').textContent=(deb-cred).toFixed(2);}
+  badge('f-lett-n',lett.length);badge('f-jr-n',jr.length);
+  document.getElementById('f-clear').classList.toggle('d-none',!filtered);
+}
+function badge(id,n){var b=document.getElementById(id);if(!b)return;if(n){b.textContent=n;b.classList.remove('d-none');}else{b.classList.add('d-none');}}
+function clearFilters(){document.getElementById('f-q').value='';
+  document.querySelectorAll('.f-lett,.f-jr').forEach(function(c){c.checked=false;});
+  document.getElementById('f-todo').checked=false;applyFilters();}
+</script>
 {% endif %}
 {% endblock %}

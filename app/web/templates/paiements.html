@@ -32,7 +32,7 @@ les règlements reçus : les <strong>virements à reporter</strong> doivent êtr
       ('Clients', t.clients, 'text-bg-light'),
       ('Encours facturé impayé', money(t.encours), 'text-bg-light'),
       ('En attente de facturation', money(t.attente), 'text-bg-light'),
-      ('Clients avec écart', t.ecart_n, 'text-bg-warning' if t.ecart_n else 'text-bg-light'),
+      ('Exposition totale', money(t.encours + t.attente), 'text-bg-light'),
       ('Virements à reporter', t.vir_n ~ ' · ' ~ money(t.vir_montant), 'text-bg-danger' if t.vir_n else 'text-bg-success') ] %}
   <div class="col"><div class="card shadow-sm h-100"><div class="card-body py-2">
     <div class="small text-muted">{{ lbl }}</div><div class="fw-bold">{{ val }}</div>
@@ -46,7 +46,7 @@ les règlements reçus : les <strong>virements à reporter</strong> doivent êtr
   <div class="col-auto">
     <select name="flt" class="form-select form-select-sm" onchange="this.form.submit()">
       <option value="" {{ 'selected' if not flt }}>Tous les clients</option>
-      <option value="ecart" {{ 'selected' if flt == 'ecart' }}>Seulement avec écart</option>
+      <option value="attente" {{ 'selected' if flt == 'attente' }}>En attente de facturation &gt; 0</option>
       <option value="virements" {{ 'selected' if flt == 'virements' }}>À reporter dans TopOrder</option>
       <option value="encours" {{ 'selected' if flt == 'encours' }}>Encours &gt; 0</option>
     </select>
@@ -65,9 +65,8 @@ les règlements reçus : les <strong>virements à reporter</strong> doivent êtr
   <thead><tr class="small text-muted">
     <th>{{ sorthead('name', 'Client') }}</th>
     <th class="text-end">{{ sorthead('encours', 'Encours facturé') }}</th>
-    <th class="text-end">En attente fact.<br><span style="font-size:.7rem;">courant / antérieur</span></th>
+    <th class="text-end">{{ sorthead('attente', 'En attente de facturation') }}</th>
     <th class="text-end">{{ sorthead('exposition', 'Exposition') }}</th>
-    <th class="text-end">{{ sorthead('ecart', 'Écart TO↔PL') }}</th>
     <th class="text-end">Virements à reporter</th>
     <th class="text-end">{{ sorthead('age', 'Ancienneté') }}</th>
     <th></th>
@@ -78,15 +77,14 @@ les règlements reçus : les <strong>virements à reporter</strong> doivent êtr
       <td><a href="/c/{{ company.code }}/paiements/{{ r.account }}" class="text-decoration-none fw-semibold">{{ r.name or r.account }}</a>
         <div class="text-muted" style="font-size:.7rem;"><code>{{ r.account }}</code> · {{ r.kind|upper }}</div></td>
       <td class="text-end">{{ money(r.encours_pennylane) }}<div class="text-muted" style="font-size:.7rem;">{{ r.nb_open }} facture(s)</div></td>
-      <td class="text-end">{{ money(r.attente_fact_courant) }} <span class="text-muted">/ {{ money(r.attente_fact_anterieur) }}</span></td>
+      <td class="text-end">{% if r.attente_fact_courant > 0.01 %}{{ money(r.attente_fact_courant) }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td class="text-end fw-semibold">{{ money(r.exposition) }}</td>
-      <td class="text-end">{% if r.ecart|abs > 0.01 %}<span class="badge text-bg-warning">{{ money(r.ecart) }}</span>{% else %}<span class="text-success"><i class="bi bi-check"></i></span>{% endif %}</td>
-      <td class="text-end">{% if r.nb_virements_a_reporter %}<span class="badge text-bg-danger">{{ r.nb_virements_a_reporter }} · {{ money(r.virements_a_reporter) }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td class="text-end">{% if r.nb_virements_a_reporter %}<span class="badge text-bg-danger">{{ r.nb_virements_a_reporter }} · {{ money(r.virements_a_reporter) }}</span>{% else %}<span class="badge text-bg-success"><i class="bi bi-check2-circle"></i> à jour</span>{% endif %}</td>
       <td class="text-end">{% if r.oldest_age %}<span class="{{ 'text-danger fw-semibold' if r.oldest_age > 60 else 'text-muted' }}">{{ r.oldest_age }} j</span>{% else %}—{% endif %}</td>
       <td class="text-end"><a href="/c/{{ company.code }}/paiements/{{ r.account }}" class="btn btn-sm btn-outline-dark py-0"><i class="bi bi-eye"></i></a></td>
     </tr>
   {% else %}
-    <tr><td colspan="8" class="text-muted small">Aucun client.</td></tr>
+    <tr><td colspan="7" class="text-muted small">Aucun client.</td></tr>
   {% endfor %}
   </tbody>
 </table>

@@ -8,9 +8,10 @@
 {# badge couleur établissement (même convention que le tableau de suivi) déduit du libellé #}
 {% macro etab_badge(label) -%}
   {% set lbl = (label or '')|upper %}
+  {% set pad = ' ' ~ lbl ~ ' ' %}
   {% set ec = [('SAINTE-MARIE','SM','#fff3cd','#664d03'), ('POSSESSION','LP','#d1e7dd','#0a3622'),
                ('SAINT-LEU','SL','#e2d9f3','#341a66'), ('KOOKABURA','KK','#ffe5d0','#6b3410')] %}
-  {% for key, pfx, bg, fg in ec %}{% if key in lbl %}<span class="badge rounded-pill me-1" style="background:{{ bg }};color:{{ fg }};font-weight:600;">{{ pfx }}</span>{% endif %}{% endfor %}
+  {% for key, pfx, bg, fg in ec %}{% if key in lbl or (' ' ~ pfx ~ ' ') in pad %}<span class="badge rounded-pill me-1" style="background:{{ bg }};color:{{ fg }};font-weight:600;">{{ pfx }}</span>{% endif %}{% endfor %}
 {%- endmacro %}
 
 {% if running %}
