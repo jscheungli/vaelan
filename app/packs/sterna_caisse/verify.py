@@ -22,10 +22,12 @@ TOL = 0.01
 _TZ = timedelta(hours=4)   # La Réunion
 
 
-def _expected_by_account(company_id, pfx, start, end, pay_accs):
-    """Agrège l'attendu depuis les CSV stockés : net crédit-débit par compte +
-    paiements SUR FACTURES par mode (lignes d'encaissement des pièces -F/-R).
-    Dédoublonne les lots de période identique (re-génération) en gardant le plus récent."""
+def _expected_by_account(company_id, pfx, start, end):
+    """Agrège l'ATTENDU depuis les CSV générés et stockés : net crédit-débit par compte
+    (= ce qui DOIT se trouver dans Pennylane). Dédoublonne les lots de période identique
+    (re-génération) en gardant le plus récent. Seul le journal TOSLT du CSV est lu pour
+    le CA (le 70101 du TOSLF reclasse et gonflerait le total) — mais TOUS les comptes
+    d'encaissement / TVA / 411 le sont."""
     with Session(engine) as s:
         batches = [b for b in s.exec(select(ImportBatch).where(
             ImportBatch.company_id == company_id, ImportBatch.kind == "toslt",
@@ -36,10 +38,7 @@ def _expected_by_account(company_id, pfx, start, end, pay_accs):
             k = (b.date_from, b.date_to)
             if k not in keep or b.id > keep[k].id:
                 keep[k] = b
-        import re
         net = defaultdict(float)
-        fac_pay = defaultdict(float)
-        piece2client, fac_detail = {}, []
         used, missing = [], []
         for b in keep.values():
             art = s.exec(select(JobArtifact).where(
@@ -55,28 +54,15 @@ def _expected_by_account(company_id, pfx, start, end, pay_accs):
                 d = row[0]
                 if not (start.isoformat() <= d <= end.isoformat()):
                     continue
-                acc, lib, piece = row[2], row[4], row[6]
-                deb = float(row[7] or 0)
-                cred = float(row[8] or 0)
-                net[acc] += cred - deb
-                if (lib.startswith("Facture ") or lib.startswith("Avoir ")) and "·" in lib:
-                    piece2client[piece] = lib.split("·", 1)[1].strip()
-                # paiement de facture : encaissement (débit) sur une pièce -F / -R
-                if acc in pay_accs and ("-F" in piece or "-R" in piece):
-                    amt = round(deb - cred, 2)
-                    fac_pay[pay_accs[acc]] += amt
-                    mfn = re.search(r"-[FR](\d+)", piece)
-                    fac_detail.append({"date": d, "fnum": int(mfn.group(1)) if mfn else 0,
-                                       "piece": piece, "mode": pay_accs[acc], "amount": amt})
-        for x in fac_detail:
-            x["nm"] = piece2client.get(x["piece"], "")
-    fac_detail.sort(key=lambda x: (x["mode"], x["date"], x["fnum"]))
-    return ({a: round(v, 2) for a, v in net.items()},
-            {m: round(v, 2) for m, v in fac_pay.items()}, fac_detail, used, missing)
+                acc = row[2]
+                net[acc] += float(row[8] or 0) - float(row[7] or 0)   # crédit − débit
+    return {a: round(v, 2) for a, v in net.items()}, used, missing
 
 
 def _aggregates(net, cfg, pfx):
-    """Reconstitue les totaux par poste depuis le net par compte (crédit-débit)."""
+    """Reconstitue les totaux par poste depuis le net par compte (crédit-débit) :
+    CA HT/TVA/TTC, TVA PAR TAUX (un compte = un taux), HT PAR TAUX (déduit de la TVA),
+    encaissements PAR MODE, et solde des comptes clients 411."""
     ca_accs = {cfg["ca_anonyme"], cfg["ca_b2c"], cfg["ca_b2b"]}
     tva_accs = set(cfg["tva"].values())
     ecfg = cfg["est"][pfx]
@@ -85,12 +71,24 @@ def _aggregates(net, cfg, pfx):
     ecart = ecfg["ecart"]
     ca_ht = round(sum(net.get(a, 0.0) for a in ca_accs), 2)
     tva = round(sum(net.get(a, 0.0) for a in tva_accs), 2)
+    # TVA par taux : net du compte de TVA de ce taux
+    tva_by_rate = {r: round(net.get(a, 0.0), 2) for r, a in cfg["tva"].items()}
+    # HT par taux : déduit de la TVA (HT = TVA / (taux/100)) ; le 0% = résidu du CA HT
+    ht_by_rate = {}
+    for r, t in tva_by_rate.items():
+        if abs(t) > TOL and float(r) > 0:
+            ht_by_rate[r] = round(t / (float(r) / 100.0), 2)
+    ht0 = round(ca_ht - sum(ht_by_rate.values()), 2)
+    if abs(ht0) > TOL:
+        ht_by_rate["0"] = ht0
     payments = {m: round(-sum(net.get(a, 0.0) for a in pay_lbl if pay_lbl[a] == m), 2)
                 for m in ("CB", "Espèce", "Ticket restaurant", "Autres")}
+    ecart_caisse = round(-net.get(ecart, 0.0), 2)
     known = ca_accs | tva_accs | set(pay_lbl) | {ecart}
     clients_411 = round(sum(v for a, v in net.items() if a not in known), 2)
     return {"ca_ht": ca_ht, "tva": tva, "ca_ttc": round(ca_ht + tva, 2),
-            "payments": payments, "clients_411": clients_411}
+            "tva_by_rate": tva_by_rate, "ht_by_rate": ht_by_rate,
+            "payments": payments, "ecart_caisse": ecart_caisse, "clients_411": clients_411}
 
 
 def _actual_by_account(pl, journal_ids, start, end):
@@ -133,11 +131,9 @@ def run_verify(ctx, company_code, pfx):
     start = min(b.date_from for b in batches)
     end = max(b.date_to for b in batches)
     label = f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
-    pay_accs = {ecfg["cb"]: "CB", ecfg["especes"]: "Espèce",
-                ecfg["ticket_resto"]: "Ticket restaurant", ecfg["autres"]: "Autres"}
     ctx.log(f"Vérification Pennylane · {establishment} · {label} (journaux {journal_label})")
     ctx.progress(0, 3, step="lecture de l'attendu (CSV générés)…")
-    expected, fac_pay, fac_detail, used, missing = _expected_by_account(company.id, pfx, start, end, pay_accs)
+    expected, used, missing = _expected_by_account(company.id, pfx, start, end)
     if missing:
         ctx.log(f"⚠️ lots sans CSV stocké ignorés : {', '.join(missing)}")
     if not expected:
@@ -158,48 +154,53 @@ def run_verify(ctx, company_code, pfx):
     diffs = [r for r in acc_rows if not r[3]]
     coherent = not diffs
 
-    # contrôles structurés (Attendu CSV vs Pennylane)
-    def chk(a, b):
-        return abs((a or 0) - (b or 0)) < TOL
-    summary = [("CA HT total", exp_agg["ca_ht"], act_agg["ca_ht"]),
-               ("TVA total", exp_agg["tva"], act_agg["tva"]),
-               ("CA TTC total", exp_agg["ca_ttc"], act_agg["ca_ttc"]),
-               ("Comptes clients 411 (solde)", exp_agg["clients_411"], act_agg["clients_411"])]
-    summary = [(lbl, e, a, chk(e, a)) for lbl, e, a in summary]
-    pay_rows = [(m, exp_agg["payments"][m], act_agg["payments"][m], chk(exp_agg["payments"][m], act_agg["payments"][m]))
-                for m in ("CB", "Espèce", "Ticket restaurant", "Autres")
-                if abs(exp_agg["payments"][m]) > TOL or abs(act_agg["payments"][m]) > TOL]
-    # réconciliation : comptes 411 conformes -> les paiements de factures (qui expliquent l'écart) sont intacts
-    cli_ok = chk(exp_agg["clients_411"], act_agg["clients_411"])
-    recon = [(m, v) for m, v in fac_pay.items() if abs(v) > TOL]
+    def chk(e, a):
+        return abs((e or 0) - (a or 0)) < TOL
+
+    def rows_from(keys, getter):
+        out = []
+        for k, lbl in keys:
+            e = getter(exp_agg, k)
+            a = getter(act_agg, k)
+            if abs(e or 0) > TOL or abs(a or 0) > TOL:
+                out.append((lbl, round(e or 0, 2), round(a or 0, 2), chk(e, a)))
+        return out
+
+    # MÊMES CONTRÔLES qu'à la génération, mais Attendu (CSV généré) vs Pennylane (API) :
+    sections = []
+    sections.append({"name": "Chiffre d'affaires & comptes clients", "rows": [
+        ("CA HT total", exp_agg["ca_ht"], act_agg["ca_ht"], chk(exp_agg["ca_ht"], act_agg["ca_ht"])),
+        ("TVA total", exp_agg["tva"], act_agg["tva"], chk(exp_agg["tva"], act_agg["tva"])),
+        ("CA TTC total", exp_agg["ca_ttc"], act_agg["ca_ttc"], chk(exp_agg["ca_ttc"], act_agg["ca_ttc"])),
+        ("Écart de caisse", exp_agg["ecart_caisse"], act_agg["ecart_caisse"], chk(exp_agg["ecart_caisse"], act_agg["ecart_caisse"])),
+        ("Comptes clients 411 (solde)", exp_agg["clients_411"], act_agg["clients_411"], chk(exp_agg["clients_411"], act_agg["clients_411"])),
+    ]})
+    rates = sorted(set(list(exp_agg["tva_by_rate"]) + list(act_agg["tva_by_rate"])), key=float)
+    tva_rows = rows_from([(r, f"TVA {r}%") for r in rates], lambda agg, r: agg["tva_by_rate"].get(r))
+    if tva_rows:
+        sections.append({"name": "TVA par taux", "rows": tva_rows})
+    hrates = sorted(set(list(exp_agg["ht_by_rate"]) + list(act_agg["ht_by_rate"])), key=float)
+    ht_rows = rows_from([(r, f"HT {r}%") for r in hrates], lambda agg, r: agg["ht_by_rate"].get(r))
+    if ht_rows:
+        sections.append({"name": "HT par taux (déduit de la TVA)", "rows": ht_rows})
+    pay_rows = rows_from([(m, m) for m in ("CB", "Espèce", "Ticket restaurant", "Autres")],
+                         lambda agg, m: agg["payments"].get(m))
+    sections.append({"name": "Encaissements par mode", "rows": pay_rows})
+    sections.append({"name": "Détail par compte",
+                     "rows": [(str(a), ev, av, ok) for a, ev, av, ok in acc_rows]})
 
     # ---- rapport texte ----
     L = [f"VÉRIFICATION PENNYLANE — {establishment} — {label}",
-         f"Journaux {journal_label} · {n_entries} écritures lues · lots {', '.join(used) or '—'}", "",
-         "== CONTRÔLES (Attendu CSV vs Pennylane) =="]
-    for lbl, e, a, ok in summary:
-        L.append(f"  {lbl:<28}{e:>14.2f}{a:>14.2f}   {'OK' if ok else '⚠️ ÉCART'}")
-    L += ["", "== PAIEMENTS PAR MODE (net encaissé) =="]
-    for m, e, a, ok in pay_rows:
-        L.append(f"  {m:<28}{e:>14.2f}{a:>14.2f}   {'OK' if ok else '⚠️ ÉCART'}")
-    L += ["", "== RÉCONCILIATION DES PAIEMENTS DE FACTURES =="]
-    L.append("  (paiements de factures encaissés en caisse, bookés au crédit du 411 — ils expliquent")
-    L.append("   l'écart de mode de paiement vs la synthèse au moment de la génération)")
-    for m, v in recon:
-        L.append(f"  {m:<28}{v:>14.2f}   bookés au crédit du 411 (lettrés F<n°>)")
-    L.append(f"  Contrôle : comptes clients 411 conformes entre CSV et Pennylane -> "
-             f"{'✓ paiements de factures intacts' if cli_ok else '⚠️ écart sur les 411'}")
-    if fac_detail:
-        L.append("  Détail des paiements de factures :")
-        L.append(f"    {'Date':<12}{'Facture':<10}{'Client':<24}{'Mode':<12}{'Montant':>12}")
-        for x in fac_detail:
-            L.append(f"    {x['date']:<12}{('F' + str(x['fnum'])):<10}{(x.get('nm') or '')[:22]:<24}"
-                     f"{x['mode']:<12}{x['amount']:>12.2f}")
-    L += ["", "== DÉTAIL PAR COMPTE ==", f"  {'Compte':<12}{'Attendu (CSV)':>16}{'Pennylane':>16}   État"]
-    for a, ev, av, ok in acc_rows:
-        L.append(f"  {a:<12}{ev:>16.2f}{av:>16.2f}   {'OK' if ok else '⚠️ ÉCART'}")
-    L += ["", ("✅ COHÉRENT — Pennylane correspond exactement aux lots générés (tous les contrôles OK)."
-               if coherent else f"❌ {len(diffs)} écart(s) : {', '.join(d[0] for d in diffs)}")]
+         f"Journaux {journal_label} · {n_entries} écritures lues · lots {', '.join(used) or '—'}",
+         "Attendu = CSV généré et importé · Pennylane = relu via l'API.", ""]
+    for sec in sections:
+        L.append(f"== {sec['name'].upper()} ==")
+        L.append(f"  {'':<30}{'Attendu (CSV)':>15}{'Pennylane':>15}   État")
+        for lbl, e, a, ok in sec["rows"]:
+            L.append(f"  {lbl:<30}{e:>15.2f}{a:>15.2f}   {'OK' if ok else '⚠️ ÉCART'}")
+        L.append("")
+    L.append("✅ COHÉRENT — Pennylane correspond exactement aux lots générés (tous les contrôles OK)."
+             if coherent else f"❌ {len(diffs)} écart(s) : {', '.join(d[0] for d in diffs)}")
     ctx.set_report("\n".join(L))
 
     now = datetime.utcnow() + _TZ
@@ -207,8 +208,7 @@ def run_verify(ctx, company_code, pfx):
     from . import report
     ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} compte_rendu_verif_{pfx}.pdf",
                      report.verify_pdf(establishment, journal_label, label, n_entries, used,
-                                       summary, pay_rows, recon, cli_ok, fac_detail, acc_rows, coherent,
-                                       run_id=ctx.run_id, executed_at=stamp),
+                                       sections, coherent, run_id=ctx.run_id, executed_at=stamp),
                      "application/pdf")
     _record(company.id, pfx, coherent, end, now, ctx.run_id)
     if coherent:

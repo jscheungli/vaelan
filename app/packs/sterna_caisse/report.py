@@ -654,19 +654,18 @@ def justif_pdf(establishment, journal, period_label, counts, detail, failed, coh
     return out
 
 
-def verify_pdf(establishment, journal, period_label, n_entries, used, summary, pay_rows,
-               recon, cli_ok, fac_detail, accounts, coherent, run_id=None, executed_at=None) -> bytes:
-    """Compte rendu PDF de vérification Pennylane DÉTAILLÉ : contrôles (CA/TVA/TTC/411),
-    paiements par mode, réconciliation des paiements de factures, détail par compte,
-    chacun comparant Attendu (CSV généré) vs Pennylane (lu via l'API)."""
+def verify_pdf(establishment, journal, period_label, n_entries, used, sections,
+               coherent, run_id=None, executed_at=None) -> bytes:
+    """Compte rendu PDF de vérification Pennylane : MÊMES contrôles qu'à la génération
+    (CA HT/TVA/TTC, TVA par taux, HT par taux, encaissements par mode, détail par compte),
+    chaque ligne comparant Attendu (CSV généré) vs Pennylane (lu via l'API) → OK / ÉCART."""
     def _ascii(s):
         return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
                 .replace("œ", "oe").replace("…", "..."))
     doc = fitz.open()
-    page = doc.new_page()
-    W = page.rect.width
+    W = doc.new_page().rect.width
     x0 = 40
-    state = {"y": 56, "page": page}
+    state = {"y": 56, "page": doc[0]}
     CA, CP, BX = 360, 460, 490
 
     def left(x, s, size=9, font="helv", color=_DARK):
@@ -685,28 +684,17 @@ def verify_pdf(establishment, journal, period_label, n_entries, used, summary, p
             state["page"] = doc.new_page()
             state["y"] = 56
 
-    def badge(ok, lbl_ok="OK", lbl_ko="ÉCART"):
+    def badge(ok):
         col = _GREEN if ok else _RED
-        lbl = lbl_ok if ok else lbl_ko
+        lbl = "OK" if ok else "ÉCART"
         w = fitz.get_text_length(lbl, fontname="hebo", fontsize=8) + 8
         state["page"].draw_rect(fitz.Rect(BX, state["y"] - 8, BX + w, state["y"] + 2.5), fill=col, color=col)
         state["page"].insert_text((BX + 4, state["y"]), lbl, fontsize=8, fontname="hebo", color=(1, 1, 1))
 
-    def section(name):
-        ensure(36)
-        state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, W - 40, state["y"] + 4), fill=_BAR, color=_BAR)
-        left(x0 + 3, name, 10, "hebo", (0.15, 0.15, 0.22)); nl(15)
-        right(CA, "Attendu (CSV)", 8, "helv", _GREY); right(CP, "Pennylane", 8, "helv", _GREY)
-        left(BX, "Contrôle", 8, "helv", _GREY); nl(13)
-
-    def line(lbl, ev, av, ok):
-        ensure()
-        left(x0 + 4, lbl, 9)
-        right(CA, _fmt(ev)); right(CP, _fmt(av)); badge(ok); nl(14)
-
     left(x0, "Compte rendu · Vérification Pennylane (après import)", 15, "hebo"); nl(18)
     for m in [f"Établissement : {establishment}        Période couverte : {period_label}",
-              f"Journaux : {journal}        Écritures Pennylane lues : {n_entries}        Lots : {', '.join(used) or '-'}"]:
+              f"Journaux : {journal}        Écritures Pennylane lues : {n_entries}        Lots : {', '.join(used) or '-'}",
+              "Attendu = CSV généré et importé · Pennylane = relu via l'API. Tout doit être identique."]:
         left(x0, m, 9, "helv", (0.3, 0.3, 0.3)); nl(13)
     trace = []
     if run_id is not None:
@@ -717,44 +705,17 @@ def verify_pdf(establishment, journal, period_label, n_entries, used, summary, p
         left(x0, "        ".join(trace), 9, "helv", (0.3, 0.3, 0.3)); nl(13)
     nl(8)
 
-    section("Contrôles (chiffre d'affaires & comptes clients)")
-    for lbl, ev, av, ok in summary:
-        line(lbl, ev, av, ok)
-    nl(6)
-
-    section("Paiements par mode (net encaissé)")
-    for m, ev, av, ok in pay_rows:
-        line(m, ev, av, ok)
-    nl(6)
-
-    ensure(40)
-    state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, W - 40, state["y"] + 4), fill=_BAR, color=_BAR)
-    left(x0 + 3, "Réconciliation des paiements de factures", 10, "hebo", (0.15, 0.15, 0.22)); nl(15)
-    left(x0, "Paiements de factures encaissés en caisse (bookés au crédit du 411) — ils expliquent l'écart de", 8, "helv", _GREY); nl(11)
-    left(x0, "mode de paiement vs la synthèse. On vérifie qu'ils sont bien présents dans Pennylane.", 8, "helv", _GREY); nl(15)
-    for m, v in recon:
-        ensure()
-        left(x0 + 4, f"{m} sur factures", 9)
-        right(CA, _fmt(v)); left(BX - 70, "bookés au 411 (lettrés F<n°>)", 8, "helv", _GREY); nl(14)
-    ensure()
-    left(x0 + 4, "Comptes clients 411 conformes CSV ↔ Pennylane", 9)
-    badge(cli_ok, "CONFIRMÉ", "ÉCART"); nl(16)
-    if fac_detail:
-        left(x0, "Détail des paiements de factures :", 9, "hebo", (0.2, 0.2, 0.25)); nl(13)
-        left(x0 + 4, "Date", 8, "helv", _GREY); left(x0 + 70, "Facture", 8, "helv", _GREY)
-        left(x0 + 140, "Client", 8, "helv", _GREY); left(x0 + 330, "Mode", 8, "helv", _GREY)
-        right(BX + 50, "Montant", 8, "helv", _GREY); nl(12)
-        for x in fac_detail:
-            ensure(14)
-            left(x0 + 4, x["date"], 8, "cour"); left(x0 + 70, "F" + str(x["fnum"]), 8, "cour")
-            left(x0 + 140, (x.get("nm") or "")[:30], 8, "helv"); left(x0 + 330, x["mode"], 8, "helv")
-            right(BX + 50, _fmt(x["amount"]), 8, "cour"); nl(12)
+    for sec in sections:
+        ensure(36)
+        state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, W - 40, state["y"] + 4), fill=_BAR, color=_BAR)
+        left(x0 + 3, sec["name"], 10, "hebo", (0.15, 0.15, 0.22)); nl(15)
+        right(CA, "Attendu (CSV)", 8, "helv", _GREY); right(CP, "Pennylane", 8, "helv", _GREY)
+        left(BX, "Contrôle", 8, "helv", _GREY); nl(13)
+        for lbl, ev, av, ok in sec["rows"]:
+            ensure()
+            left(x0 + 4, str(lbl), 9)
+            right(CA, _fmt(ev)); right(CP, _fmt(av)); badge(ok); nl(14)
         nl(6)
-
-    section("Détail par compte")
-    for num, ev, av, ok in accounts:
-        line(str(num), ev, av, ok)
-    nl(8)
 
     ensure(20)
     col = _GREEN if coherent else _RED
