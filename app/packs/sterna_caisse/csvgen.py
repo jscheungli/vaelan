@@ -196,21 +196,32 @@ def build_toslt(establishment, date_from, date_to, company_id,
     tot = {"ca_ht": 0.0, "tva": 0.0, "enc": 0.0, "creance": 0.0, "ecart": 0.0}
 
     def _ca_lines(date, piece, vat):
-        """Crédit 70101/taux + TVA (le CA, gardé dans le Z). Renvoie le TTC."""
+        """CA 70101/taux + TVA (gardé dans le Z). Gère les AVOIRS (HT/TVA négatifs
+        bookés en sens inversé : débit au lieu de crédit). Renvoie le TTC."""
         ttcsum = 0.0
         for r, (ht, ttc_) in sorted(vat.items()):
-            if ttc_ == 0:
+            if abs(ht) < 0.005 and abs(ttc_) < 0.005:
                 continue
             rl = _rate_label(r)
-            rows.append([date, journal, ca_acc, "Vente Caisse Magasin (Tickets)",
-                         f"CA HT {rl}", rl, piece, "", f"{ht:.2f}", cat_family, cat_label, ""])
+            # CA HT : crédit si vente, débit si avoir
+            if ht >= 0:
+                rows.append([date, journal, ca_acc, "Vente Caisse Magasin (Tickets)",
+                             f"CA HT {rl}", rl, piece, "", f"{ht:.2f}", cat_family, cat_label, ""])
+            else:
+                rows.append([date, journal, ca_acc, "Avoir caisse",
+                             f"Avoir CA HT {rl}", rl, piece, f"{-ht:.2f}", "", cat_family, cat_label, ""])
             tot["ca_ht"] += ht
             ttcsum += ht
-            if r in tva_acc and ttc_ - ht > 0.005:
-                rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
-                             f"TVA {rl}", "", piece, "", f"{ttc_ - ht:.2f}", cat_family, cat_label, ""])
-                tot["tva"] += ttc_ - ht
-                ttcsum += ttc_ - ht
+            tva = round(ttc_ - ht, 2)
+            if r in tva_acc and abs(tva) > 0.005:
+                if tva >= 0:
+                    rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
+                                 f"TVA {rl}", "", piece, "", f"{tva:.2f}", cat_family, cat_label, ""])
+                else:
+                    rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
+                                 f"Avoir TVA {rl}", "", piece, f"{-tva:.2f}", "", cat_family, cat_label, ""])
+                tot["tva"] += tva
+                ttcsum += tva
         return round(ttcsum, 2)
 
     def emit_agg(date, piece, vat, pay):
@@ -241,10 +252,15 @@ def build_toslt(establishment, date_from, date_to, company_id,
         restant = créance (impayé)."""
         lettr = f"F{fnum}"
         ttcsum = _ca_lines(date, piece, vat)
-        # la facture : débit 411 du montant brut (TTC)
-        rows.append([date, journal, str(acc411), "Client - facture",
-                     f"Facture {fnum:07d} · {nm}", "", piece,
-                     f"{ttcsum:.2f}", "", cat_family, cat_label, lettr])
+        # la facture : débit 411 du montant brut TTC (crédit si avoir)
+        if ttcsum >= 0:
+            rows.append([date, journal, str(acc411), "Client - facture",
+                         f"Facture {fnum:07d} · {nm}", "", piece,
+                         f"{ttcsum:.2f}", "", cat_family, cat_label, lettr])
+        else:
+            rows.append([date, journal, str(acc411), "Client - avoir",
+                         f"Avoir {fnum:07d} · {nm}", "", piece,
+                         "", f"{-ttcsum:.2f}", cat_family, cat_label, lettr])
         paid = 0.0
         for pt, amt in sorted(pay.items()):
             if abs(amt) < 0.005:

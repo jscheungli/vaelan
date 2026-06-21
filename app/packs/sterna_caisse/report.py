@@ -17,8 +17,13 @@ def _rate_from_label(taux: str) -> str:
     return taux.replace("%", "").replace(",", ".").strip()
 
 
-def aggregate_rows(rows, cfg) -> dict:
-    """Relit les lignes du CSV généré et reconstitue les totaux par poste."""
+def aggregate_rows(rows, cfg, journal=None) -> dict:
+    """Relit les lignes du CSV généré et reconstitue les totaux par poste.
+
+    `journal` : si fourni, on n'agrège QUE ce journal (le CSV unique contient
+    TOSLT + TOSLF ; pour comparer le CA au Z, on ne prend que la caisse TOSLT où
+    le 70101 porte tout le CA avant reclassement — sinon les reclass d'avoirs sont
+    comptés en double)."""
     ca_acc = cfg["ca_anonyme"]
     rev_tva = {v: k for k, v in cfg["tva"].items()}
     ht_by_rate, tva_by_rate, pay = defaultdict(float), defaultdict(float), defaultdict(float)
@@ -30,14 +35,16 @@ def aggregate_rows(rows, cfg) -> dict:
         pay_lbl[a["ticket_resto"]] = "Ticket restaurant"
         pay_lbl[a["autres"]] = "Autres"
     for r in rows:
+        if journal and r[1] != journal:
+            continue
         acc, taux, d, c = r[2], r[5], float(r[7] or 0), float(r[8] or 0)
         deb += d
         cred += c
-        if acc == ca_acc:
-            ht_by_rate[_rate_from_label(taux)] += c
-        elif acc in rev_tva:
-            tva_by_rate[rev_tva[acc]] += c
-        elif acc in pay_lbl:
+        if acc == ca_acc:                       # CA = crédit (vente) - débit (avoir)
+            ht_by_rate[_rate_from_label(taux)] += c - d
+        elif acc in rev_tva:                    # TVA = crédit - débit (avoir)
+            tva_by_rate[rev_tva[acc]] += c - d
+        elif acc in pay_lbl:                    # encaissement = débit - crédit (rendu)
             pay[pay_lbl[acc]] += d - c
     return {
         "ht_by_rate": {k: round(v, 2) for k, v in ht_by_rate.items()},

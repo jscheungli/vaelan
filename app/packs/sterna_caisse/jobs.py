@@ -159,7 +159,9 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
             amount=res["ca_ttc"], csv_path=str(path)))
         s.commit()
 
-    csv_agg = report.aggregate_rows(res["rows"], config.resolve(company_code))
+    _rcfg = config.resolve(company_code)
+    _jtoslt = _rcfg["est"][pfx]["journal_tickets"]      # n'agréger que la caisse (pas le reclass TOSLF)
+    csv_agg = report.aggregate_rows(res["rows"], _rcfg, journal=_jtoslt)
     _emit_report(csv_agg=csv_agg, batch_code=code, balanced=res["balanced"])
 
     bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"
