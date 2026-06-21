@@ -17,6 +17,16 @@
 {% if err %}<div class="alert alert-danger small">Lecture Pennylane impossible : {{ err }}</div>{% endif %}
 
 {% if detail %}
+{% if detail.cutover %}
+<div class="alert alert-light border small py-2">
+  <i class="bi bi-arrow-left-right"></i> Bascule TopOrder (1<sup>re</sup> facture) : <strong>{{ detail.cutover }}</strong>.
+  Seuls les créances et virements <strong>à partir de cette date</strong> sont pris en compte (avant = ancien logiciel Kimayo).
+  {% if detail.kimayo_open %}<span class="text-muted">— {{ detail.kimayo_open }} créance(s) antérieure(s) exclue(s) ({{ '%.2f €'|format(detail.kimayo_amount) }}).</span>{% endif %}
+</div>
+{% else %}
+<div class="alert alert-warning small py-2"><i class="bi bi-exclamation-triangle"></i>
+  Aucune facture TopOrder détectée pour ce client (compte peut-être 100 % legacy Kimayo).</div>
+{% endif %}
 <div class="row g-2 mb-3">
   {% for lbl, val in [
       ('Encours facturé impayé (Pennylane)', money(detail.net)),

@@ -54,23 +54,44 @@ def pennylane_client(company_code, account, pl=None):
     if not acc:
         return None
     lines = pl.account_lines(acc["id"])
+    today = (datetime.utcnow() + _TZ).date()
+
+    # CUTOVER = bascule Kimayo -> TopOrder = date de la 1re FACTURE TopOrder du client.
+    # Une facture TopOrder = une créance (débit) avec une réf. F<n°> (qu'on a bookée
+    # depuis TopOrder). Avant cette date, c'est l'ère Kimayo (ancien logiciel) : on
+    # ignore ces créances ET les virements antérieurs (on ne peut pas régler une
+    # facture TopOrder pas encore émise). Règle métier : après bascule, plus de Kimayo.
+    fac_dates = [_pdate(l.get("date")) for l in lines
+                 if float(l.get("debit") or 0) > float(l.get("credit") or 0)
+                 and _fac_from_label(l.get("label")) is not None]
+    fac_dates = [d for d in fac_dates if d]
+    cutover = min(fac_dates) if fac_dates else None
+
     open_creances, payments = [], []
     net = 0.0
-    today = (datetime.utcnow() + _TZ).date()
     oldest = 0
+    kimayo_open = 0
+    kimayo_amount = 0.0
     for l in lines:
+        d = _pdate(l.get("date"))
         deb = float(l.get("debit") or 0)
         cred = float(l.get("credit") or 0)
         is_open = not ((l.get("lettered_ledger_entry_lines") or {}).get("ids"))
         fnum = _fac_from_label(l.get("label"))
+        # ère Kimayo (avant la 1re facture TopOrder) -> hors périmètre TopOrder
+        if cutover is None or (d and d < cutover):
+            if is_open and deb > cred:
+                kimayo_open += 1
+                kimayo_amount += deb - cred
+            continue
         if is_open:
             net += deb - cred
-        if deb > cred and is_open:                 # créance ouverte
-            age = _age(l.get("date"), today)
+        if deb > cred and is_open:                 # créance TopOrder ouverte
+            age = (today - d).days if d else 0
             oldest = max(oldest, age)
             open_creances.append({"id": l["id"], "fnum": fnum, "amount": round(deb, 2),
                                   "date": l.get("date"), "age": age})
-        if cred > deb:                             # un encaissement (règlement caisse ou virement)
+        if cred > deb:                             # encaissement (règlement caisse ou virement)
             is_vir = fnum is None                  # pas de réf. F<n°> -> virement (journal de banque)
             payments.append({"id": l["id"], "fnum": fnum, "amount": round(cred, 2),
                              "date": l.get("date"), "label": l.get("label") or "",
@@ -78,16 +99,17 @@ def pennylane_client(company_code, account, pl=None):
     open_creances.sort(key=lambda x: (x["date"] or ""))
     payments.sort(key=lambda x: (x["date"] or ""), reverse=True)
     return {"net": round(net, 2), "open_creances": open_creances, "payments": payments,
-            "oldest_age": oldest}
+            "oldest_age": oldest, "cutover": cutover.isoformat() if cutover else None,
+            "kimayo_open": kimayo_open, "kimayo_amount": round(kimayo_amount, 2)}
 
 
-def _age(d, today):
+def _pdate(d):
     if not d:
-        return 0
+        return None
     try:
-        return (today - datetime.strptime(d, "%Y-%m-%d").date()).days
+        return datetime.strptime(d, "%Y-%m-%d").date()
     except ValueError:
-        return 0
+        return None
 
 
 # ----------------------------------------------------------------- côté TopOrder
@@ -191,14 +213,18 @@ def run_payments_sync(ctx, company_code):
         if det is None:
             continue
         kind = "b2c" if acc in b2c_accounts else "b2b"
-        vir = [p for p in det["payments"] if p["is_virement"]]
-        vir_a_reporter = [p for p in vir if p["id"] not in reported]
         # agrégat TopOrder pour ce compte (somme des companyId qui pointent dessus)
         t = {"cur": 0.0, "ant": 0.0, "enc": 0.0}
         for cid in a2c.get(acc, []):
             ti = topo.get(cid)
             if ti:
                 t["cur"] += ti["cur"]; t["ant"] += ti["ant"]; t["enc"] += ti["enc"]
+        # client jamais passé sur TopOrder (aucune facture TopOrder ET rien en attente)
+        # = pur legacy Kimayo -> hors périmètre de cette page.
+        if det.get("cutover") is None and abs(t["cur"]) + abs(t["ant"]) + abs(t["enc"]) < TOL:
+            continue
+        vir = [p for p in det["payments"] if p["is_virement"]]
+        vir_a_reporter = [p for p in vir if p["id"] not in reported]
         attente = round(t["cur"] + t["ant"], 2)
         rows.append({
             "account": acc, "name": nm, "kind": kind,

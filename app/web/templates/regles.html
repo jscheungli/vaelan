@@ -127,6 +127,11 @@
     <strong>virements</strong> (crédits du journal de banque) à <strong>reporter manuellement dans TopOrder</strong> :
     une case à cocher trace <strong>qui</strong> l'a reporté et <strong>quand</strong> (clé = ligne Pennylane, idempotent).
     Recherche, filtres (écart / à reporter / encours), tri colonnes, pagination.
+    <br><strong>Bascule Kimayo → TopOrder :</strong> avant TopOrder, la facturation passait par Kimayo. Pour chaque
+    client, le <strong>cutover</strong> = date de sa <strong>1<sup>re</sup> facture TopOrder</strong> (plus ancienne créance
+    <code>F&lt;n°&gt;</code>). On ne compte <strong>que</strong> les créances et virements <strong>à partir de cette date</strong> :
+    les créances Kimayo antérieures sont exclues, et un virement reçu <strong>avant</strong> la 1<sup>re</sup> facture TopOrder
+    n'est jamais retenu (on ne peut pas régler une facture pas encore émise). Règle métier : après bascule, plus de Kimayo.
   {% endcall %}
 
   {% call sec('cfg', 'Configuration & traçabilité') %}
