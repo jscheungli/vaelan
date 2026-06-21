@@ -407,7 +407,7 @@ def paiements_sync(request: Request, code: str):
 
 
 @router.get("/c/{code}/paiements/{account}", response_class=HTMLResponse)
-def paiements_client(request: Request, code: str, account: str):
+def paiements_client(request: Request, code: str, account: str, ex: str = ""):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
@@ -418,7 +418,7 @@ def paiements_client(request: Request, code: str, account: str):
             PaymentReport.company_id == company.id, PaymentReport.account == account)).all()}
     ledger, err = None, None
     try:
-        ledger = caisse_payments.account_ledger(company.code, account)
+        ledger = caisse_payments.account_ledger(company.code, account, ex=ex or None)
     except Exception as e:
         err = str(e)[:200]
     return templates.TemplateResponse(request, "paiements_client.html",

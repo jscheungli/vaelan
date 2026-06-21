@@ -30,9 +30,25 @@
   {% endfor %}
 </div>
 
-<h3 class="h6 text-uppercase text-muted">Grand-livre du compte client Pennylane</h3>
-<p class="text-muted" style="font-size:.75rem;">Reproduction du compte 411. La colonne <strong>Lett.</strong> reprend la lettre de lettrage
-  (même groupe = même lettre/couleur). Chaque écriture est tagable :
+<div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+  <h3 class="h6 text-uppercase text-muted mb-0">Grand-livre du compte client Pennylane</h3>
+  {% set base = '/c/' + company.code + '/paiements/' + account %}
+  <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="Exercice">
+    <a href="{{ base }}?ex={{ ledger.prev }}" class="btn btn-outline-secondary" title="Exercice précédent"><i class="bi bi-chevron-left"></i></a>
+    <div class="btn-group btn-group-sm" role="group">
+      <button class="btn btn-outline-dark dropdown-toggle fw-semibold" data-bs-toggle="dropdown">Exercice {{ ledger.exercise_label }}</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        {% for y in ledger.exercises %}
+        <li><a class="dropdown-item {{ 'active' if y == ledger.exercise }}" href="{{ base }}?ex={{ y }}">Exercice {{ y }}-{{ y + 1 }}</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+    <a href="{{ base }}?ex={{ ledger.next }}" class="btn btn-outline-secondary" title="Exercice suivant"><i class="bi bi-chevron-right"></i></a>
+  </div>
+</div>
+<p class="text-muted" style="font-size:.75rem;">Vue par <strong>exercice comptable (1<sup>er</sup> juillet → 30 juin)</strong>, comme Pennylane :
+  on affiche l'à-nouveau du 1<sup>er</sup> juillet + les mouvements de l'année (le solde repart de 0). La colonne
+  <strong>Lett.</strong> reprend la lettre de lettrage (même groupe = même lettre/couleur). Chaque écriture est tagable :
   <span class="badge text-bg-success">Saisi</span> = reportée/rapprochée dans TopOrder ·
   <span class="badge text-bg-secondary">Ignoré</span> = non pertinente / déjà traitée (qui &amp; quand gardés).</p>
 

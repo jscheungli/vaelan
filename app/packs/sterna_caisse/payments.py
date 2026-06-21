@@ -118,23 +118,48 @@ def _letter(n):
     return s
 
 
-def account_ledger(company_code, account, pl=None):
-    """Reproduction FIDÈLE du grand-livre Pennylane d'un compte client 411 : toutes les
-    écritures (Date · Journal · Libellé · Nº pièce · Lettrage · Débit · Crédit · Solde),
-    avec la LETTRE de lettrage (A/B/C…, reconstituée par groupe) + couleur, et totaux."""
+def _fiscal_year(d):
+    """Année de DÉBUT de l'exercice (1er juillet → 30 juin) d'une date 'YYYY-MM-DD'.
+    Ex. 2026-03-15 -> 2025 (exercice 2025-2026) ; 2025-09-01 -> 2025."""
+    p = _pdate(d)
+    if not p:
+        return None
+    return p.year if p.month >= 7 else p.year - 1
+
+
+def account_ledger(company_code, account, ex=None, pl=None):
+    """Reproduction FIDÈLE du grand-livre Pennylane d'un compte client 411, PAR EXERCICE
+    (1er juillet → 30 juin). Une vue cumulée n'aurait aucun sens : chaque exercice, les
+    à-nouveaux (journal AN) re-portent le solde précédent (sinon double comptage). On
+    n'affiche donc que l'exercice choisi : à-nouveaux du 1er juillet + mouvements de l'année,
+    solde courant repartant de 0. Colonnes Date · Jour. · Libellé · Nº pièce · Lett. · D · C · Solde."""
     pl = pl or pennylane.for_company(company_code)
     acc = pl.find_account(account)
     if not acc:
         return None
     raw = pl.account_lines(acc["id"])
 
-    # enrichissement par écriture : n° de pièce + code journal (le list endpoint ne les donne pas)
+    # exercices disponibles (à partir des dates) + exercice courant ; sélection
+    today = (datetime.utcnow() + _TZ).date()
+    cur_fy = today.year if today.month >= 7 else today.year - 1
+    years = sorted({_fiscal_year(l.get("date")) for l in raw if _fiscal_year(l.get("date")) is not None} | {cur_fy},
+                   reverse=True)
+    try:
+        selected = int(ex)
+    except (TypeError, ValueError):
+        selected = cur_fy
+    if selected not in years:
+        years = sorted(set(years) | {selected}, reverse=True)
+
+    sub = [l for l in raw if _fiscal_year(l.get("date")) == selected]
+
+    # enrichissement (pièce + journal) UNIQUEMENT sur l'exercice affiché
     try:
         jmap = pl.journals_map()
     except Exception:
         jmap = {}
     ecache = {}
-    for l in raw:
+    for l in sub:
         eid = (l.get("ledger_entry") or {}).get("id")
         if eid and eid not in ecache:
             try:
@@ -142,28 +167,25 @@ def account_ledger(company_code, account, pl=None):
             except Exception:
                 ecache[eid] = {}
 
-    # lettrage : grouper les lignes par groupe (frozenset des ids lettrés), assigner A,B,C…
+    # lettrage : groupes (frozenset des ids), lettres A/B/C… dans l'ordre d'apparition de l'exercice
     gletter = {}
-    for l in sorted(raw, key=lambda x: (x.get("date") or "", x["id"])):
+    for l in sorted(sub, key=lambda x: (x.get("date") or "", x["id"])):
         ids = (l.get("lettered_ledger_entry_lines") or {}).get("ids")
-        if ids:
-            key = frozenset(ids)
-            if key not in gletter:
-                gletter[key] = _letter(len(gletter))
+        if ids and frozenset(ids) not in gletter:
+            gletter[frozenset(ids)] = _letter(len(gletter))
 
     lines = []
-    for l in raw:
+    for l in sub:
         eid = (l.get("ledger_entry") or {}).get("id")
         ent = ecache.get(eid, {})
         ids = (l.get("lettered_ledger_entry_lines") or {}).get("ids")
         letter = gletter.get(frozenset(ids)) if ids else None
         jr = l.get("journal")
-        # le code journal est sur l'ÉCRITURE (journal.id -> code via /journals)
         jcode = (jr.get("code") if isinstance(jr, dict) else None) \
             or jmap.get((ent.get("journal") or {}).get("id"))
         lines.append({
             "id": l["id"], "date": l.get("date"),
-            "label": l.get("label") or ent.get("label") or "",   # repli sur le libellé d'écriture (lignes de banque)
+            "label": l.get("label") or ent.get("label") or "",
             "journal": jcode or "", "piece": ent.get("piece_number") or "",
             "debit": round(float(l.get("debit") or 0), 2),
             "credit": round(float(l.get("credit") or 0), 2),
@@ -179,7 +201,9 @@ def account_ledger(company_code, account, pl=None):
         tot_c += x["credit"]
     return {"lines": lines, "total_debit": round(tot_d, 2), "total_credit": round(tot_c, 2),
             "solde": round(tot_d - tot_c, 2), "name": acc.get("label"), "number": account,
-            "letterable": bool(acc.get("letterable"))}
+            "letterable": bool(acc.get("letterable")),
+            "exercise": selected, "exercise_label": f"{selected}-{selected + 1}",
+            "exercises": years, "prev": selected - 1, "next": selected + 1}
 
 
 def _pdate(d):
