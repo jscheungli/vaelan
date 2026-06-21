@@ -369,6 +369,110 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
                            batch_code, n_tickets, balanced, run_id, executed_at, fac_payments, fac_detail))
 
 
+def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
+                 ambiguous, open_creances, errors, coherent, run_id=None, executed_at=None) -> bytes:
+    """Compte rendu PDF de l'étape 6 (lettrage des comptes 411)."""
+    def _ascii(s):
+        return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
+                .replace("œ", "oe").replace("…", "...").replace("⚠️", "!").replace("✅", "OK"))
+    doc = fitz.open()
+    state = {"y": 56, "page": doc.new_page()}
+    W = state["page"].rect.width
+    x0 = 40
+
+    def left(x, s, size=9, font="helv", color=_DARK):
+        state["page"].insert_text((x, state["y"]), _ascii(s), fontsize=size, fontname=font, color=color)
+
+    def right(xr, s, size=9, font="cour", color=_DARK):
+        s = _ascii(s)
+        state["page"].insert_text((xr - fitz.get_text_length(s, fontname=font, fontsize=size), state["y"]),
+                                  s, fontsize=size, fontname=font, color=color)
+
+    def ny(d):
+        state["y"] += d
+
+    def ensure(space=18):
+        if state["y"] + space > 800:
+            state["page"] = doc.new_page()
+            state["y"] = 56
+
+    def section(name, color=(0.15, 0.15, 0.22)):
+        ensure(30)
+        state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, W - 40, state["y"] + 4), fill=_BAR, color=_BAR)
+        left(x0 + 3, name, 10, "hebo", color); ny(16)
+
+    left(x0, "Compte rendu · Lettrage des comptes 411", 14, "hebo"); ny(18)
+    left(x0, f"Société : {company_name}        {period_label}", 9, "helv", (0.3, 0.3, 0.3)); ny(13)
+    trace = []
+    if run_id is not None:
+        trace.append(f"Tâche #{run_id}")
+    if executed_at:
+        trace.append(f"Vérifié le {executed_at}")
+    if trace:
+        left(x0, "        ".join(trace), 9, "helv", (0.3, 0.3, 0.3)); ny(13)
+    ny(8)
+
+    section("Synthèse")
+    for lbl, v in [("Factures soldées lettrées", counts["full"]),
+                   ("Lettrages partiels (acomptes)", counts["partial"]),
+                   ("Virements rapprochés (certains)", counts["vir"]),
+                   ("Ambigus (à traiter à la main)", counts["ambiguous"]),
+                   ("Créances ouvertes (impayées)", counts["open"]),
+                   ("Erreurs API", counts["errors"]),
+                   ("Comptes clients analysés", counts["accounts"])]:
+        ensure()
+        left(x0 + 4, lbl, 9); right(W - 60, str(v)); ny(14)
+    ny(6)
+
+    if partial:
+        section("Lettrages partiels (reste dû)")
+        for p in partial:
+            ensure(13)
+            left(x0 + 4, f"F{p['fnum']}", 9, "cour"); left(x0 + 80, p["nm"][:30], 9)
+            right(W - 150, f"payé {p['paid']:.2f}"); right(W - 60, f"reste {p['due']:.2f}", color=_RED); ny(13)
+        ny(6)
+    if vir_ok:
+        section("Virements rapprochés", _GREEN)
+        for v in vir_ok:
+            ensure(13)
+            left(x0 + 4, str(v["date"]), 8, "cour"); left(x0 + 90, f"F{v['fnum']}", 9, "cour")
+            left(x0 + 160, v["nm"][:30], 9); right(W - 60, f"{v['amount']:.2f}"); ny(13)
+        ny(6)
+    if ambiguous:
+        section("À traiter manuellement (ambigus)", _RED)
+        for a in ambiguous:
+            ensure(13)
+            ref = f"F{a['fnum']}" if a.get("fnum") else f"virement {a.get('amount', 0):.2f}"
+            left(x0 + 4, a["nm"][:28], 9); left(x0 + 200, ref, 9, "cour")
+            left(x0 + 290, str(a["why"])[:34], 8, "helv", _RED); ny(13)
+        ny(6)
+    if open_creances:
+        section("Créances ouvertes (impayées)")
+        for c in sorted(open_creances, key=lambda x: -x["age"]):
+            ensure(13)
+            left(x0 + 4, f"F{c['fnum']}", 9, "cour"); left(x0 + 80, c["nm"][:30], 9)
+            right(W - 110, f"{c['amount']:.2f}")
+            left(W - 95, f"{c['age']} j", 8, "helv", (_RED if c["age"] > 60 else _GREY)); ny(13)
+        ny(6)
+    if errors:
+        section("Erreurs API", _RED)
+        for e in errors:
+            ensure(13)
+            left(x0 + 4, str(e.get("nm", e.get("acc", "")))[:30], 9)
+            left(x0 + 200, str(e["why"])[:46], 8, "helv", _RED); ny(13)
+        ny(6)
+
+    ensure(20)
+    col = _GREEN if coherent else _RED
+    msg = ("COMPLET — toutes les factures soldables ont été lettrées"
+           if coherent else "À TRAITER — des points restent à la main (voir détail)")
+    w = fitz.get_text_length(msg, fontname="hebo", fontsize=10) + 12
+    state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, x0 + w, state["y"] + 4), fill=col, color=col)
+    state["page"].insert_text((x0 + 6, state["y"]), _ascii(msg), fontsize=10, fontname="hebo", color=(1, 1, 1))
+    out = doc.tobytes(); doc.close()
+    return out
+
+
 def justif_pdf(establishment, journal, period_label, counts, detail, failed, coherent,
                run_id=None, executed_at=None) -> bytes:
     """Compte rendu PDF de l'étape 5 (justificatifs) : combien d'écritures facture,

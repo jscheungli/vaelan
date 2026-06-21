@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
@@ -18,6 +18,7 @@ from app.packs.sterna_caisse.clients_sync import sync_clients
 from app.packs.sterna_caisse import suivi as caisse_suivi
 from app.packs.sterna_caisse.verify import run_verify
 from app.packs.sterna_caisse.justificatifs import run_justificatifs
+from app.packs.sterna_caisse.lettrage import run_lettrage
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -356,6 +357,24 @@ def suivi_justificatifs(request: Request, code: str, establishment: str = Form(.
     label = f"Justificatifs (PDF factures) · {establishment}"
     start_job("justificatifs_pennylane",
               lambda ctx: run_justificatifs(ctx, company.code, establishment),
+              company_id=company.id, pack="sterna.caisse", label=label,
+              user=current_user(request))
+    return RedirectResponse("/jobs", status_code=303)
+
+
+@router.post("/c/{code}/suivi/lettrage")
+def suivi_lettrage(request: Request, code: str, as_of: str = Form("")):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    from datetime import date as _date
+    try:
+        asof = _date.fromisoformat(as_of) if as_of else (datetime.utcnow() + timedelta(hours=4)).date()
+    except ValueError:
+        asof = (datetime.utcnow() + timedelta(hours=4)).date()
+    label = f"Lettrage 411 · {company.name} · arrêté au {asof.strftime('%d/%m/%Y')}"
+    start_job("lettrage_411",
+              lambda ctx: run_lettrage(ctx, company.code, asof),
               company_id=company.id, pack="sterna.caisse", label=label,
               user=current_user(request))
     return RedirectResponse("/jobs", status_code=303)

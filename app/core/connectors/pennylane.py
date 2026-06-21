@@ -49,6 +49,55 @@ class PennylaneClient:
         """Lignes détaillées d'une écriture (debit/credit + ledger_account.number)."""
         return self.get(f"/ledger_entries/{entry_id}").get("ledger_entry_lines") or []
 
+    def find_account(self, number: str):
+        """Résout un compte par son NUMÉRO -> dict {id, number, letterable} ou None."""
+        import json
+        flt = json.dumps([{"field": "number", "operator": "eq", "value": str(number)}])
+        d = self.get("/ledger_accounts", filter=flt, limit=1)
+        items = d.get("items") if isinstance(d, dict) else None
+        return items[0] if items else None
+
+    def account_lines(self, account_id, date_to=None):
+        """Toutes les lignes d'un COMPTE (tous journaux) jusqu'à date_to incluse.
+        Chaque ligne porte son état de lettrage : lettered_ledger_entry_lines.ids
+        (vide = ouvert). Sert au lettrage des comptes clients 411."""
+        import json
+        flt = [{"field": "ledger_account_id", "operator": "eq", "value": account_id}]
+        if date_to:
+            flt.append({"field": "date", "operator": "lteq", "value": date_to})
+        flt = json.dumps(flt)
+        out, cur = [], None
+        while True:
+            params = {"filter": flt, "limit": 100}
+            if cur:
+                params["cursor"] = cur
+            d = self.get("/ledger_entry_lines", **params)
+            out += d.get("items") or []
+            if not d.get("has_more"):
+                break
+            cur = d.get("next_cursor")
+        return out
+
+    def letter_lines(self, ids, strategy="none") -> bool:
+        """Lettre ensemble des lignes (POST /ledger_entry_lines/lettering).
+        strategy='none' (refuse si déséquilibré) ou 'partial' (autorise, acompte)."""
+        import json
+        if len(ids) < 2:
+            return False
+        body = json.dumps({"unbalanced_lettering_strategy": strategy,
+                           "ledger_entry_lines": [{"id": i} for i in ids]}).encode()
+        h = {**self._h, "Content-Type": "application/json"}
+        for attempt in range(6):
+            with httpx.Client(timeout=90) as c:
+                r = c.post(self.base_url + "/ledger_entry_lines/lettering", headers=h, content=body)
+            if r.status_code == 429 and attempt < 5:
+                wait = float(r.headers.get("Retry-After") or 0) or (1.5 * (attempt + 1))
+                time.sleep(min(wait, 10))
+                continue
+            r.raise_for_status()
+            return True
+        return False
+
     def upload_attachment(self, filename: str, data: bytes) -> Optional[int]:
         """Téléverse un fichier (PDF) comme pièce → renvoie l'id du file_attachment.
         En v2, la pièce est une ressource autonome (POST /file_attachments)."""

@@ -101,9 +101,26 @@
     par facture. Vert <strong>« complet »</strong> uniquement si <strong>0 écriture facture sans PDF</strong>.
   {% endcall %}
 
-  {% call sec('s9', '6 · Lettrage — à venir') %}
-    Soldes 411 par n° de facture, rapprochés avec les règlements (caisse, virements). Lettrage partiel possible
-    pour les factures à paiement partiel.
+  {% call sec('s9', '6 · Lettrage des comptes 411 — par Vaelan via l\'API') %}
+    Étape <strong>au niveau société</strong> (les comptes clients 411 sont partagés par les 3 boulangeries),
+    lançable <strong>à tout moment</strong> avec une <strong>date d'arrêté</strong> (« lettrer jusqu'au … »).
+    Vaelan lit chaque compte client <strong>tous journaux confondus</strong> (filtre par
+    <code>ledger_account_id</code>) — il capte donc aussi les <strong>virements du journal de banque</strong> —
+    et ne garde que les lignes <strong>ouvertes</strong> (<code>lettered_ledger_entry_lines.ids</code> vide).
+    Il regroupe par facture (réf. <code>F&lt;n°&gt;</code>) et lettre via <code>POST /ledger_entry_lines/lettering</code> :
+    <strong>soldé</strong> → lettrage complet ; <strong>acompte</strong> → lettrage partiel ;
+    <strong>virement</strong> (crédit sans réf.) rapproché <strong>seulement si certain</strong> (une seule créance
+    ouverte du même montant) ; <strong>ambigu / impayé</strong> → laissé ouvert et listé. <strong>Idempotent</strong> :
+    on relit tout l'ouvert à chaque passe (un virement arrivé après coup est capté à la passe suivante — aucune
+    hypothèse sur l'absence passée). Compte rendu : factures soldées lettrées, lettrages partiels (reste dû),
+    virements rapprochés, ambigus à traiter à la main, créances impayées avec <strong>ancienneté</strong>.
+  {% endcall %}
+
+  {% call sec('s10', '7 · Suivi des paiements — à venir') %}
+    Page de rapprochement TopOrder ↔ Pennylane par client : encours facturé impayé, en attente de facturation
+    (mois courant / antérieur), exposition totale, et la liste des <strong>virements à reporter manuellement
+    dans TopOrder</strong> (l'API TopOrder ne permet pas de saisir les règlements reçus), avec traçabilité
+    (qui a coché, quand).
   {% endcall %}
 
   {% call sec('cfg', 'Configuration & traçabilité') %}

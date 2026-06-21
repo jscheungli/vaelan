@@ -23,7 +23,7 @@ STEPS = [
     {"n": "3", "key": "import_tickets", "label": "Import du CSV dans Pennylane", "kind": "declare"},
     {"n": "4", "key": "verify_tickets", "label": "Cadrage de l'import par Vaelan", "kind": "verify"},
     {"n": "5", "key": "justificatifs", "label": "Attache des justificatifs (PDF factures) par Vaelan", "kind": "justif"},
-    {"n": "6", "key": "lettrage", "label": "Lettrage des comptes", "kind": "soon"},
+    {"n": "6", "key": "lettrage", "label": "Lettrage des comptes 411 (niveau société)", "kind": "lettrage", "scope": "company"},
 ]
 
 
@@ -61,13 +61,21 @@ def build_board(company):
     target = _target_date()
     # colonnes : SM, LP, SL (de gauche à droite) — ordre de la config
     ests = [e["pfx"] for e in config.ESTABLISHMENTS.values()]
+    today = (datetime.utcnow() + _TZ).date()
     rows = []
     for stp in STEPS:
+        if stp.get("scope") == "company":
+            # étape au niveau société : une seule cellule (comptes 411 partagés)
+            c = _cell(stp, "", clients, batches, decls, last_sync, target)
+            c["today"] = today.isoformat()
+            rows.append({"step": stp, "company": True, "cell": c})
+            continue
         cells = {}
         for pfx in ests:
             cells[pfx] = _cell(stp, pfx, clients, batches, decls, last_sync, target)
         rows.append({"step": stp, "cells": cells})
-    return {"establishments": ests, "steps": rows, "target": target.strftime("%d/%m/%Y")}
+    return {"establishments": ests, "steps": rows, "target": target.strftime("%d/%m/%Y"),
+            "today": today.isoformat()}
 
 
 def _cov_state(covered_to, target):
@@ -137,6 +145,20 @@ def _cell(stp, pfx, clients, batches, decls, last_sync, target):
         else:
             cell["state"] = "todo"
             cell["text"] = "à attacher"
+        return cell
+
+    if kind == "lettrage":
+        d = decls.get((pfx, stp["key"]))   # pfx == "" (niveau société)
+        cell = {"act": "lettrage", "run_id": (d.verify_run_id if d else None)}
+        if d and d.verified_at is not None:
+            cell["coverage"] = _date(d.covered_to)   # date d'arrêté
+            cell["coverage_iso"] = d.covered_to.isoformat() if d.covered_to else None
+            cell["realized"] = _dl(d.verified_at)
+            cell["state"] = "done" if d.verify_ok else "error"
+            cell["text"] = "lettré" if d.verify_ok else "points à traiter"
+        else:
+            cell["state"] = "todo"
+            cell["text"] = "à lettrer"
         return cell
 
     return {"state": "soon", "text": "à venir"}
