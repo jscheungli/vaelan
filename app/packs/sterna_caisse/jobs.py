@@ -42,18 +42,21 @@ def _batch_code(company_id, pfx, kind):
     return f"{pfx}{letter}{n + 1:02d}"
 
 
-def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to):
+def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to, fac_payments=None):
     """Compare le calcul tickets à la synthèse.
 
     Renvoie (blocking, warnings) :
       - blocking : période + CA Total (la vérité fiscale) -> empêchent la génération ;
-      - warnings : écarts par MODE DE PAIEMENT -> n'empêchent PAS la génération.
-    Justification : un ticket facturé (B2B) payé comptant est classé hors « caisse »
-    par la synthèse TopOrder, alors que c'est un vrai encaissement (relevé bancaire).
-    Le CA cadre et l'écriture est équilibrée -> on n'a pas à bloquer là-dessus.
+      - warnings : écarts par MODE DE PAIEMENT NON expliqués.
+    Un écart de mode de paiement est RÉCONCILIÉ (donc OK, pas un warning) s'il est
+    couvert par les paiements de FACTURES encaissés en caisse (`fac_payments`) : la
+    synthèse TopOrder classe certains paiements facturés hors « caisse », mais Vaelan
+    les a bien bookés au crédit du 411 (lettrés). On vérifie que l'écart ne vient pas
+    de nulle part : |écart| <= paiements de factures du même mode.
     """
     if syn.get("ca_total") is None:
         return ["synthèse illisible (CA Total introuvable)"], []
+    fac_payments = fac_payments or {}
     blocking, warnings = [], []
     p = syn.get("period")
     if p and (p["date_from"] != date_from or p["date_to"] != date_to):
@@ -65,10 +68,16 @@ def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to):
     for mode, synv in (syn.get("payments") or {}).items():
         ourv = (payments or {}).get(mode, 0.0)
         d = round(ourv - synv, 2)
-        flag = "" if abs(d) < 0.05 else "  ⚠️ (non bloquant : facturé comptant ?)"
-        ctx.log(f"  {mode} : tickets {ourv:.2f} vs synthèse {synv:.2f} → {d:+.2f}{flag}")
-        if abs(d) >= 0.05:
-            warnings.append(f"{mode} {d:+.2f} €")
+        if abs(d) < 0.05:
+            ctx.log(f"  {mode} : tickets {ourv:.2f} = synthèse {synv:.2f}")
+            continue
+        facv = fac_payments.get(mode, 0.0)
+        if abs(d) <= abs(facv) + 0.05:   # écart couvert par les paiements de factures -> réconcilié
+            ctx.log(f"  {mode} : écart {d:+.2f} RÉCONCILIÉ ✓ (paiements de factures encaissés "
+                    f"{facv:.2f} ≥ écart, bookés au crédit du 411)")
+        else:
+            ctx.log(f"  {mode} : écart {d:+.2f} NON expliqué ⚠️ (paiements factures {facv:.2f} < écart)")
+            warnings.append(f"{mode} {d:+.2f} € non expliqué")
     return blocking, warnings
 
 
@@ -111,14 +120,15 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     ctx.progress(total or res["n_tickets"], total or res["n_tickets"], step="cadrage…")
     def _emit_report(csv_agg=None, batch_code=None, balanced=None):
         args = dict(batch_code=batch_code, n_tickets=res["n_tickets"], balanced=balanced,
-                    run_id=ctx.run_id, executed_at=executed_at)
+                    run_id=ctx.run_id, executed_at=executed_at, fac_payments=res.get("fac_payments"))
         ctx.set_report(report.build("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args))
         ctx.add_artifact("report",
                          f"{fpfx} compte_rendu_TOSLT_{code}_{date_from}_{date_to}.pdf",
                          report.build_pdf("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args),
                          "application/pdf")
 
-    blocking, warnings = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to)
+    blocking, warnings = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to,
+                                         fac_payments=res.get("fac_payments"))
     if blocking:
         ctx.log("❌ ÉCART CA — CSV NON généré : " + " ; ".join(blocking))
         _emit_report()

@@ -58,10 +58,13 @@
     <strong>Pré-vol client (souple)</strong> : la génération est refusée uniquement si une facture de la période ne
     se route vers aucun compte 411 ; on liste les clients à corriger.<br>
     <strong>Cadrage</strong> : on compare le CA recalculé sur les tickets à la synthèse PDF.
-    <strong>Le CA Total (et la période) sont BLOQUANTS</strong> ; les écarts par <strong>mode de paiement</strong>
-    sont des <strong>AVERTISSEMENTS non bloquants</strong> (un ticket facturé payé comptant est classé hors « caisse »
-    par la synthèse TopOrder, alors que c'est un vrai encaissement ; le CA cadre et l'écriture est équilibrée).
-    Tolérance ± 0,05 €. Chaque génération produit un compte rendu PDF (Synthèse | API tickets | CSV agrégé, par poste).
+    <strong>Le CA Total (et la période) sont BLOQUANTS</strong>. Un écart par <strong>mode de paiement</strong>
+    (ex. CB) vient des tickets <strong>facturés payés comptant</strong> que la synthèse TopOrder classe hors « caisse ».
+    Vaelan les <strong>RÉCONCILIE</strong> : il vérifie que l'écart est entièrement <strong>couvert par les paiements
+    de factures encaissés en caisse</strong> (bookés au crédit du 411, lettrés <code>F&lt;n°&gt;</code>). Si oui →
+    contrôle « COUVERT » (l'écart ne vient pas de nulle part, il est traité dans le CSV). Si l'écart dépasse les
+    paiements de factures → avertissement « non expliqué ». Tolérance ± 0,05 €. Compte rendu PDF :
+    Synthèse | API tickets | CSV agrégé par poste + section « Réconciliation des écarts de paiement ».
   {% endcall %}
 
   {% call sec('s4', '4 · Cadrage de l\'import par Vaelan (vérification Pennylane)') %}

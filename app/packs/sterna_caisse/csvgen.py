@@ -105,6 +105,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
     n_tickets = 0
     tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
     pay_total = defaultdict(float)   # encaissements par mode (pour le cadrage)
+    fac_pay = defaultdict(float)     # encaissements SUR FACTURES par mode (réconciliation de l'écart)
     vat_total = defaultdict(lambda: [0.0, 0.0])  # taux -> [HT, TTC] (pull brut, pour le compte rendu)
     frm, pages = 0, 0
     while True:
@@ -150,6 +151,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 factures.append({"date": dd, "fnum": int(fnum), "acc": a, "nm": nm,
                                  "vat": dict(vat), "pay": dict(pay), "ttc": round(ttc, 2),
                                  "b2b": bool(coid and coid != ZERO)})
+                for _pt, _amt in pay.items():           # paiements comptant sur facture
+                    fac_pay[_pt] += _amt
             else:             # NON facturé : CA anonyme -> agrégat ; paiements -> règlement OU agrégat
                 d = agg[dd]
                 for r, (ht, t) in vat.items():
@@ -171,6 +174,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
                             continue
                         reglements.append({"date": pdate, "fnum": int(rfnum), "acc": a,
                                            "nm": nm, "mode": pt, "amount": amt})
+                        fac_pay[pt] += amt              # règlement de facture encaissé en caisse
                     else:       # encaissement anonyme
                         d["pay"][pt] += amt
         if on_progress:
@@ -183,13 +187,14 @@ def build_toslt(establishment, date_from, date_to, company_id,
 
     ca_ttc_z = round(tot_ttc, 2)
     payments = {k: round(v, 2) for k, v in sorted(pay_total.items())}
+    fac_payments = {k: round(v, 2) for k, v in sorted(fac_pay.items())}
     ht_by_rate = {r: round(v[0], 2) for r, v in sorted(vat_total.items())}
     tva_by_rate = {r: round(v[1] - v[0], 2) for r, v in sorted(vat_total.items())}
 
     # Pré-vol souple : on refuse de générer si une créance de la période ne se route pas.
     if unresolved:
         return {"unresolved": unresolved, "rows": [], "n_tickets": n_tickets,
-                "ca_ttc": ca_ttc_z, "payments": payments,
+                "ca_ttc": ca_ttc_z, "payments": payments, "fac_payments": fac_payments,
                 "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate}
 
     rows = []
@@ -359,7 +364,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
         "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(factures),
         "n_factures": len(factures), "n_b2b": n_b2b, "n_b2c": len(factures) - n_b2b,
         "n_reglements": len(reglements),
-        "ca_ttc": ca_ttc_z, "payments": payments,
+        "ca_ttc": ca_ttc_z, "payments": payments, "fac_payments": fac_payments,
         "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate,
         "ca_ht": round(tot["ca_ht"], 2), "tva": round(tot["tva"], 2),
         "encaisse": round(tot["enc"], 2), "creances": round(tot["creance"], 2),
