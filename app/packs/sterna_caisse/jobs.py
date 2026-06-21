@@ -141,13 +141,23 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
 
     # 4) Pré-vol client : chaque créance doit router vers un compte 411
     if res.get("unresolved"):
-        ctx.log(f"⛔ Pré-vol : {len(res['unresolved'])} créance(s) sans compte client — "
-                "génération refusée. Corrige dans TopOrder/Pennylane puis resynchronise les clients.")
-        for u in res["unresolved"][:15]:
-            ctx.log(f"   • {u['date']} · facture {u['facture'] or '?'} · "
-                    f"companyId {u['company_id']} · {u['amount']:.2f} €")
+        # regroupe par client pour un log lisible et CIBLÉ (nom + raison + factures)
+        byc = {}
+        for u in res["unresolved"]:
+            g = byc.setdefault(u.get("company_id") or "?", {
+                "name": u.get("name"), "reason": u.get("reason"), "siret": u.get("siret"),
+                "company_id": u.get("company_id"), "factures": [], "total": 0.0})
+            g["factures"].append(u.get("facture"))
+            g["total"] += u.get("amount") or 0
+        ctx.log(f"⛔ Pré-vol : {len(res['unresolved'])} créance(s) sur {len(byc)} client(s) sans compte 411 — "
+                "génération refusée. Clients à corriger (voir le compte rendu) :")
+        for g in sorted(byc.values(), key=lambda x: -x["total"]):
+            ctx.log(f"   • {g['name'] or '(nom inconnu)'} · companyId {g['company_id'] or '—'} · "
+                    f"SIRET {g['siret'] or '— (absent)'} · {g['total']:.2f} € · {len(g['factures'])} facture(s)")
+            ctx.log(f"       ⚠ {g['reason'] or 'à vérifier'}")
         _emit_report()
-        return f"Cadré ✓ mais bloqué : {len(res['unresolved'])} créance(s) sans compte client à corriger"
+        return (f"Cadré ✓ mais bloqué : {len(res['unresolved'])} créance(s) sur {len(byc)} client(s) "
+                "sans compte 411 (voir compte rendu)")
 
     # 5) Écriture du CSV UNIQUE (caisse TOSLT + reclassement TOSLF dans un seul fichier ;
     #    Pennylane sépare par la colonne « Code journal »). Sur disque + EN BASE (durable).

@@ -50,24 +50,40 @@ _PAYKEY = {"CB": "cb", "Carte": "cb", "Espèce": "especes", "Espece": "especes",
 def _resolver(company_id: int, cfg: dict):
     """Construit le routeur de créances depuis la table de correspondance (DB).
 
-    Renvoie resolve(pfx, coid, cid) -> (numéro de compte 411, nom) ou (None, None)
-    quand un client PRO n'a pas de compte (= anomalie bloquante au pré-vol).
+    Renvoie (resolve, diagnose) :
+      resolve(pfx, coid, cid) -> (numéro de compte 411, nom) ou (None, None) ;
+      diagnose(pfx, coid)     -> {name, siret, pennylane_name, reason} expliquant
+      PRÉCISÉMENT ce qui manque pour router la créance (au pré-vol bloquant).
     """
     with Session(engine) as s:
         rows = s.exec(select(ClientAccount).where(
             ClientAccount.company_id == company_id)).all()
-    b2b = {(r.establishment, r.toporder_company_id): (r.account_411, r.toporder_name)
-           for r in rows}
+    info = {(r.establishment, r.toporder_company_id): r for r in rows}
 
     def resolve(pfx, coid, cid):
         if coid and coid != ZERO:
-            acc, nm = b2b.get((pfx, coid), (None, None))
-            return (acc, nm or "client") if acc else (None, None)
+            r = info.get((pfx, coid))
+            return (r.account_411, r.toporder_name or "client") if (r and r.account_411) else (None, None)
         if cid and cid != ZERO:
             return cfg["est"][pfx]["b2c_commun"], "Particulier"
         return None, None
 
-    return resolve
+    def diagnose(pfx, coid):
+        if not coid or coid == ZERO:
+            return {"name": None, "siret": None, "pennylane_name": None,
+                    "reason": "facture sans référence client (ni société ni particulier) côté TopOrder"}
+        r = info.get((pfx, coid))
+        if r is None:
+            return {"name": None, "siret": None, "pennylane_name": None,
+                    "reason": "client absent de la table de correspondance — resynchroniser les clients"}
+        base = {"name": r.toporder_name, "siret": r.siret, "pennylane_name": r.pennylane_name}
+        if not r.siret:
+            return {**base, "reason": "pas de SIRET côté TopOrder → impossible de matcher Pennylane (saisir le SIRET dans TopOrder)"}
+        if not r.account_411:
+            return {**base, "reason": f"client présent mais sans compte client Pennylane (411) — statut « {r.status or '?'} » (créer/lier le compte dans Pennylane)"}
+        return {**base, "reason": f"incohérent — statut « {r.status or '?'} »"}
+
+    return resolve, diagnose
 
 
 def build_toslt(establishment, date_from, date_to, company_id,
@@ -85,7 +101,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
     if client is None:
         raise RuntimeError(f"Clé TopOrder absente pour {establishment} "
                            f"({toporder.env_var_for(establishment)})")
-    resolve = _resolver(company_id, cfg)
+    resolve, diagnose = _resolver(company_id, cfg)
 
     journal = ecfg["journal_tickets"]                  # ex. TOSLT
     ca_acc = cfg["ca_anonyme"]                          # 70101
@@ -147,7 +163,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 a, nm = resolve(pfx, coid, cid)
                 if not a:
                     unresolved.append({"date": dd, "company_id": coid, "customer_id": cid,
-                                       "facture": f"{int(fnum):07d}", "amount": round(ttc, 2)})
+                                       "facture": f"{int(fnum):07d}", "amount": round(ttc, 2),
+                                       **diagnose(pfx, coid)})
                     continue
                 factures.append({"date": dd, "fnum": int(fnum), "acc": a, "nm": nm,
                                  "vat": dict(vat), "pay": dict(pay), "ttc": round(ttc, 2),
@@ -175,7 +192,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
                         if not a:
                             unresolved.append({"date": pdate, "company_id": p.get("companyId"),
                                                "customer_id": p.get("customerId"),
-                                               "facture": f"{int(rfnum):07d}", "amount": round(amt, 2)})
+                                               "facture": f"{int(rfnum):07d}", "amount": round(amt, 2),
+                                               **diagnose(pfx, p.get("companyId"))})
                             continue
                         reglements.append({"date": pdate, "fnum": int(rfnum), "acc": a,
                                            "nm": nm, "mode": pt, "amount": amt})

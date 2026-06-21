@@ -168,9 +168,21 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     for d in fac_detail:
         fac_subtotals[d["mode"]] = round(fac_subtotals.get(d["mode"], 0.0) + (d.get("amount") or 0), 2)
     fac_total = round(sum(fac_subtotals.values()), 2)
+    # créances non routées (pré-vol bloquant) -> regroupées par client, avec le diagnostic
+    unres_groups = []
+    by = {}
+    for u in (api.get("unresolved") or []):
+        k = u.get("company_id") or "?"
+        g = by.setdefault(k, {"company_id": u.get("company_id"), "name": u.get("name"),
+                              "siret": u.get("siret"), "pennylane_name": u.get("pennylane_name"),
+                              "reason": u.get("reason"), "factures": [], "total": 0.0})
+        g["factures"].append({"facture": u.get("facture"), "date": u.get("date"),
+                              "amount": u.get("amount") or 0})
+        g["total"] = round(g["total"] + (u.get("amount") or 0), 2)
+    unres_groups = sorted(by.values(), key=lambda x: -x["total"])
     return {"title": title, "meta": meta, "sections": sections, "reconciliation": recon,
             "fac_detail": fac_detail, "fac_subtotals": fac_subtotals, "fac_total": fac_total,
-            "has_csv": has_csv, "balance": balance}
+            "unresolved": unres_groups, "has_csv": has_csv, "balance": balance}
 
 
 # ---------------------------------------------------------------- rendu TEXTE
@@ -182,6 +194,22 @@ def to_text(data) -> str:
         return {"ok": "OK", "ecart": "⚠️ ÉCART", "na": "—", "reconciled": "✓ RÉCONCILIÉ"}[st]
 
     L = [data["title"], *data["meta"], ""]
+    if data.get("unresolved"):
+        nf = sum(len(g["factures"]) for g in data["unresolved"])
+        L.append(f"== ⛔ CLIENTS À CORRIGER — {nf} créance(s) non routée(s) → CSV NON généré ==")
+        L.append("  Chaque créance d'un client PRO doit pointer vers un compte client Pennylane (411).")
+        L.append("  Corrige les clients ci-dessous (selon la raison), puis resynchronise les clients et relance.")
+        L.append("")
+        for g in data["unresolved"]:
+            nm = g.get("name") or "(nom inconnu)"
+            L.append(f"  • {nm}   ({g['total']:.2f} € · {len(g['factures'])} facture(s))")
+            L.append(f"      companyId TopOrder : {g.get('company_id') or '—'}    SIRET : {g.get('siret') or '— (absent)'}")
+            if g.get("pennylane_name"):
+                L.append(f"      côté Pennylane : {g['pennylane_name']}")
+            L.append(f"      ⚠ {g.get('reason') or 'à vérifier'}")
+            L.append(f"      factures : " + ", ".join(
+                f"F{f['facture']} ({f['date']}, {f['amount']:.2f} €)" for f in g["factures"][:12]))
+            L.append("")
     head = f"  {'':<22}{'Synthèse':>14}{'API tickets':>14}{'CSV agrégé':>14}    Match"
     for sec in data["sections"]:
         note = f"   ({sec['note']})" if sec["note"] else ""
@@ -282,6 +310,35 @@ def to_pdf(data) -> bytes:
     left(x0 + 92, "écart", size=8, color=_GREY)
     left(x0 + 130, "—  non comparable (source absente)", size=8, color=_GREY)
     nl(16)
+
+    # ⛔ clients à corriger (créances non routées) — bloc en tête car c'est le point bloquant
+    if data.get("unresolved"):
+        nf = sum(len(g["factures"]) for g in data["unresolved"])
+        ensure(40)
+        page.draw_rect(fitz.Rect(x0, y - 9, W - 40, y + 4), fill=_RED, color=_RED)
+        left(x0 + 3, f"CLIENTS A CORRIGER — {nf} creance(s) non routee(s) -> CSV NON genere",
+             10, "hebo", (1, 1, 1))
+        nl(15)
+        left(x0, "Chaque creance d'un client PRO doit pointer vers un compte client Pennylane (411). "
+                 "Corrige selon la raison, resynchronise les clients, puis relance.", 8, "helv", _GREY)
+        nl(14)
+        for g in data["unresolved"]:
+            ensure(58)
+            nm = g.get("name") or "(nom inconnu)"
+            left(x0 + 4, nm, 10, "hebo", _DARK)
+            right(W - 40, f"{_fmt(g['total'])} EUR · {len(g['factures'])} facture(s)", 9, "cour", _DARK)
+            nl(12)
+            left(x0 + 8, f"companyId TopOrder : {g.get('company_id') or '-'}", 8, "cour", _GREY)
+            left(x0 + 300, f"SIRET : {g.get('siret') or '- (absent)'}", 8, "cour", _GREY)
+            nl(11)
+            if g.get("pennylane_name"):
+                left(x0 + 8, f"cote Pennylane : {g['pennylane_name']}", 8, "helv", _GREY); nl(11)
+            left(x0 + 8, f"-> {g.get('reason') or 'a verifier'}", 8, "helv", _RED)
+            nl(12)
+            facs = ", ".join(f"F{f['facture']} ({f['date']}, {_fmt(f['amount'])})" for f in g["factures"][:10])
+            left(x0 + 8, "factures : " + facs, 8, "cour", _DARK)
+            nl(16)
+        nl(4)
 
     def col_headers():
         right(COL["syn"], "Synthèse", 8, "helv", _GREY)
