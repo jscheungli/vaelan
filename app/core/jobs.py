@@ -17,6 +17,10 @@ from app.core.config import APP_VERSION
 from app.models import Run, JobArtifact
 
 
+class JobCancelled(Exception):
+    """Levée quand l'utilisateur a demandé l'arrêt de la tâche."""
+
+
 class JobContext:
     """Passé à la fonction de job pour publier progression et logs."""
     def __init__(self, run_id: int):
@@ -34,7 +38,16 @@ class JobContext:
             s.add(r)
             s.commit()
 
+    def _cancelled(self) -> bool:
+        with Session(engine) as s:
+            r = s.get(Run, self.run_id)
+            return bool(r and r.cancel_requested)
+
     def progress(self, current: int, total: Optional[int] = None, step: Optional[str] = None):
+        # Point de contrôle de l'annulation : les jobs appellent progress() régulièrement
+        # (à chaque page de pull) -> arrêt PROPRE si l'utilisateur a cliqué « Interrompre ».
+        if self._cancelled():
+            raise JobCancelled()
         fields = {"progress_current": current}
         if total is not None:
             fields["progress_total"] = total
@@ -81,6 +94,9 @@ def start_job(kind: str, fn: Callable[[JobContext], Optional[str]],
         try:
             summary = fn(ctx)
             _finish(run_id, "ok", summary or "Terminé")
+        except JobCancelled:
+            ctx.log("⛔ Interrompu par l'utilisateur.")
+            _finish(run_id, "interrupted", "Interrompu par l'utilisateur")
         except Exception as e:
             ctx.log("ERREUR : " + str(e))
             ctx.log(traceback.format_exc())
@@ -88,6 +104,21 @@ def start_job(kind: str, fn: Callable[[JobContext], Optional[str]],
 
     threading.Thread(target=_runner, daemon=True).start()
     return run_id
+
+
+def request_cancel(run_id: int) -> bool:
+    """Demande l'arrêt d'une tâche en cours (le job s'arrête à son prochain
+    point de contrôle, c.-à-d. la prochaine page de pull). Renvoie True si demandé."""
+    with Session(engine) as s:
+        r = s.get(Run, run_id)
+        if not r or r.status != "running":
+            return False
+        r.cancel_requested = True
+        r.step = "⛔ interruption demandée…"
+        r.updated_at = datetime.utcnow()
+        s.add(r)
+        s.commit()
+        return True
 
 
 def _finish(run_id: int, status: str, summary: str):

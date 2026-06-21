@@ -45,6 +45,7 @@ class Run(SQLModel, table=True):
     kind: str
     label: Optional[str] = None   # description lisible (ex. "Import caisse · Saint-Leu · 01/05→17/06")
     status: str = "running"   # running / ok / error / interrupted
+    cancel_requested: bool = False   # l'utilisateur a demandé l'arrêt -> le job s'interrompt
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
     summary: Optional[str] = None

@@ -522,6 +522,15 @@ def jobs_page(request: Request):
     return templates.TemplateResponse(request, "jobs.html", _ctx(request))
 
 
+@router.post("/jobs/{run_id}/cancel")
+def jobs_cancel(request: Request, run_id: int):
+    if not current_user(request):
+        return RedirectResponse("/login", status_code=303)
+    from app.core.jobs import request_cancel
+    request_cancel(run_id)
+    return RedirectResponse("/jobs", status_code=303)
+
+
 @router.get("/jobs/feed", response_class=HTMLResponse)
 def jobs_feed(request: Request, page: int = 1):
     if not current_user(request):

@@ -16,7 +16,15 @@
         <span class="badge text-bg-light text-dark border">{{ cmap.get(r.company_id, '—') }}</span>
         <span class="fw-semibold ms-2">{{ r.label or r.kind }}</span>
         <span class="ms-2 text-muted">· {{ r.step or '' }}</span>
-        <span class="ms-auto text-muted">{{ r.progress_current or 0 }}{% if r.progress_total %}/{{ r.progress_total }}{% endif %}</span>
+        <span class="ms-auto text-muted me-2">{{ r.progress_current or 0 }}{% if r.progress_total %}/{{ r.progress_total }}{% endif %}</span>
+        {% if r.cancel_requested %}
+          <span class="badge text-bg-warning"><i class="bi bi-hourglass-split"></i> arrêt en cours…</span>
+        {% else %}
+          <form method="post" action="/jobs/{{ r.id }}/cancel" class="d-inline"
+                onsubmit="return confirm('Interrompre cette tâche ? Elle s\'arrêtera à la prochaine étape (quelques secondes).');">
+            <button class="btn btn-sm btn-outline-danger py-0" title="Interrompre la tâche"><i class="bi bi-stop-circle"></i> Interrompre</button>
+          </form>
+        {% endif %}
       </div>
       <div class="progress mt-1" style="height:6px;">
         <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: {{ pct if r.progress_total else 100 }}%"></div>

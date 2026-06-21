@@ -177,7 +177,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
                     d["vat"][r][0] += ht
                     d["vat"][r][1] += t
         if on_progress:
-            on_progress(n_tickets, f"pull tickets (CA)… {n_tickets}")
+            on_progress(n_tickets, f"Passe 1/2 — CA (tickets de vente) · {n_tickets} tickets")
         if pmax < date_from:
             break
         frm += len(b)
@@ -228,7 +228,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
             else:             # encaissement anonyme (incl. facture sans client) -> agrégat du jour
                 agg[pdate]["pay"][pt] += amt
         if on_progress:
-            on_progress(n_tickets, f"pull paiements… {pages} pages")
+            on_progress(n_tickets, f"Passe 2/2 — encaissements (paiements) · page {pages}")
         if pmin < date_from:
             break
         frm += len(b)
