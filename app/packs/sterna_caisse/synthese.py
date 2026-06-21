@@ -39,11 +39,13 @@ def parse(pdf_bytes: bytes) -> dict:
                             pass
         return None
 
-    payments = {}
-    for mode in ("CB", "Espèce", "Ticket restaurant", "Titre restaurant", "Chèque"):
-        v = value_after(mode)
-        if v is not None:
-            payments[mode] = v
+    pay_detail = _paytable(lines)
+    payments = {m: d["total"] for m, d in pay_detail.items()}
+    if not payments:                               # repli : ancienne méthode
+        for mode in ("CB", "Espèce", "Ticket restaurant", "Titre restaurant", "Chèque"):
+            v = value_after(mode)
+            if v is not None:
+                payments[mode] = v
 
     families, ca_ht = _families(lines)
 
@@ -54,9 +56,51 @@ def parse(pdf_bytes: bytes) -> dict:
         "ca_ht": ca_ht,                            # somme du CA HT des familles
         "families": families,                      # [{name, ht, ttc}]
         "total_paiements": value_after("TOTAL"),  # total net encaissé (modes de paiement)
-        "payments": payments,
+        "payments": payments,                      # {mode: total net = encaiss. − remb.}
+        "payments_detail": pay_detail,             # {mode: {total, encaissements, remboursements}}
+        "entree_caisse": value_after("Entrée de caisse"),
+        "sortie_caisse": value_after("Sortie de caisse"),
         "nb_clients": value_after("Nombre de"),
     }
+
+
+_MODES = ("CB", "Espèce", "Especes", "Espèces", "Ticket restaurant", "Titre restaurant",
+          "Chèque", "Cheque", "Carte cadeau", "Avoir", "Crédit", "Compte client", "Virement")
+
+
+def _paytable(lines):
+    """Table « Mode paiement » : par mode, [Total€, Qté(entier), Encaiss€, Remb€].
+    Renvoie {mode: {total, encaissements, remboursements}} (ligne « TOTAL » exclue)."""
+    try:
+        i = lines.index("Mode paiement")
+    except ValueError:
+        return {}
+    euro = re.compile(r"^-?[\d\s.,\xa0]+\s*€$")
+    out, name, vals = {}, None, []
+
+    def flush():
+        if name and vals:
+            out[name] = {"total": vals[0],
+                         "encaissements": vals[1] if len(vals) >= 2 else None,
+                         "remboursements": vals[2] if len(vals) >= 3 else None}
+
+    for l in lines[i + 1:]:
+        if l in ("Total", "Qté", "Encaissements", "Remboursements"):
+            continue
+        if l in ("TOTAL", "Informations", "Familles"):
+            break
+        if euro.match(l):
+            try:
+                vals.append(_num(l))
+            except ValueError:
+                pass
+        elif re.fullmatch(r"\d+", l):              # Qté (entier sans €) -> ignorée
+            continue
+        elif not re.search(r"\d", l):              # ligne texte = nom de mode
+            flush()
+            name, vals = (l if l in _MODES else None), []
+    flush()
+    return out
 
 
 def _families(lines):

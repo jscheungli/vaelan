@@ -134,59 +134,45 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
         s = round(sum(v for k, v in (d or {}).items() if k not in modes), 2)
         return s if abs(s) >= TOL else None
 
-    # vue « comptabilité » = le CSV agrégé s'il existe, sinon le flux tickets (cas cadrage/bloqué)
+    # vue « tickets » = le CSV agrégé s'il existe, sinon le flux tickets (cas cadrage/bloqué)
     compta = csv if has_csv else api
-    prows = []
-    for m in modes:
-        sv = syn.get("payments", {}).get(m)
-        av = api.get("payments", {}).get(m)
-        cv = (csv or {}).get("payments", {}).get(m)
-        rw = row(m, sv, av, cv)
-        # un écart synthèse ↔ compta sur un MODE n'est pas une erreur : c'est un partage
-        # encaissé/créances différent (factures réglées en caisse mais en 411 chez nous).
-        if rw["match"] == "ecart":
-            rw["match"] = "split"
-        prows.append(rw)
-    sv, av, cv = others(syn.get("payments")), others(api.get("payments")), others((csv or {}).get("payments"))
-    if sv is not None or av is not None or cv is not None:
-        rw = row("Autres / divers", sv, av, cv)
-        if rw["match"] == "ecart":
-            rw["match"] = "split"
-        prows.append(rw)
-    sections.append({"name": "Paiements par mode (net encaissé)", "note": "", "rows": prows})
-
+    facp = fac_payments or {}
     balance = None
     if has_csv and balanced is not None:
         balance = {"debit": csv.get("debit"), "credit": csv.get("credit"), "ok": bool(balanced)}
 
-    # ---- Réconciliation encaissé / créances (TOUT tie au CA TTC) ----
-    # Le CA TTC cadre ; seul le PARTAGE encaissé vs créances diffère, parce que la caisse
-    # officielle compte des factures comme réglées que notre compta a encore en 411.
-    def _sum_pay(d):
-        return round(sum(v or 0 for v in (d or {}).get("payments", {}).values()), 2)
-
-    ca_ttc = api.get("ca_ttc") if api.get("ca_ttc") is not None else syn.get("ca_total")
-    recon2 = None
-    if ca_ttc is not None and syn.get("payments"):
-        syn_enc = _sum_pay(syn)
-        compta_enc = _sum_pay(compta)
-        syn_cr = round(ca_ttc - syn_enc, 2)
-        compta_cr = round(ca_ttc - compta_enc, 2)
-        mode_ec = []
-        for m in modes + ["Autres / divers"]:
-            sv2 = syn.get("payments", {}).get(m)
-            cv2 = (compta.get("payments", {}) or {}).get(m)
-            if m == "Autres / divers":
-                sv2, cv2 = others(syn.get("payments")), others(compta.get("payments"))
-            if sv2 is None and cv2 is None:
-                continue
-            e = round((cv2 or 0) - (sv2 or 0), 2)
-            if abs(e) > TOL:
-                mode_ec.append({"mode": m, "ecart": e})
-        recon2 = {"ca_ttc": ca_ttc, "syn_enc": syn_enc, "compta_enc": compta_enc,
-                  "syn_cr": syn_cr, "compta_cr": compta_cr,
-                  "ecart_enc": round(compta_enc - syn_enc, 2),
-                  "ecart_cr": round(compta_cr - syn_cr, 2), "mode_ecarts": mode_ec}
+    # ---- Encaissements & écarts de paiement — UNIQUEMENT DU FACTUEL ----
+    # La synthèse donne, par mode, un TOTAL DE CAISSE = encaissements − remboursements
+    # (rendu de monnaie, avoirs), + des entrées/sorties de caisse. Nos tickets comptent les
+    # PAIEMENTS DE VENTES (anonyme + facture). Le CA Total est LE contrôle (il cadre). Les
+    # écarts par mode viennent des mouvements de caisse et du moment de saisie des règlements
+    # de factures ; la synthèse ne donne que des totaux -> non décomposable au centime.
+    ca_total = syn.get("ca_total")
+    syn_det = syn.get("payments_detail") or {}
+    paydetail = None
+    if syn.get("payments"):
+        mode_list = list(dict.fromkeys(list(syn.get("payments", {}).keys()) + modes))
+        rows_pd = []
+        for m in mode_list:
+            st = syn.get("payments", {}).get(m)                 # total net synthèse
+            ot = (compta.get("payments", {}) or {}).get(m)      # total nos tickets
+            ofac = round(facp.get(m, 0.0), 2)                   # dont factures
+            oanon = round((ot or 0) - ofac, 2) if ot is not None else None
+            d = syn_det.get(m, {})
+            rows_pd.append({"mode": m, "syn_total": st,
+                            "syn_enc": d.get("encaissements"), "syn_remb": d.get("remboursements"),
+                            "our_total": ot, "our_anon": oanon, "our_fac": ofac,
+                            "ecart": round((ot or 0) - (st or 0), 2)})
+        syn_modes = round(sum(v or 0 for v in syn.get("payments", {}).values()), 2)
+        paydetail = {
+            "rows": rows_pd,
+            "syn_modes_total": syn_modes,
+            "entree_caisse": syn.get("entree_caisse"),
+            "sortie_caisse": syn.get("sortie_caisse"),
+            "ca_total": ca_total,
+            # ventes non encaissées au comptoir = CA − total des modes (= ventes à crédit / factures)
+            "credit_sales": round(ca_total - syn_modes, 2) if ca_total is not None else None,
+        }
 
     # créances non routées (pré-vol bloquant) -> regroupées par client, avec le diagnostic
     unres_groups = []
@@ -200,7 +186,7 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
                               "amount": u.get("amount") or 0})
         g["total"] = round(g["total"] + (u.get("amount") or 0), 2)
     unres_groups = sorted(by.values(), key=lambda x: -x["total"])
-    return {"title": title, "meta": meta, "sections": sections, "recon2": recon2,
+    return {"title": title, "meta": meta, "sections": sections, "paydetail": paydetail,
             "unresolved": unres_groups, "has_csv": has_csv, "balance": balance}
 
 
@@ -238,22 +224,35 @@ def to_text(data) -> str:
         for r in sec["rows"]:
             L.append(f"  {r['label']:<22}{cell(r['syn'])}{cell(r['api'])}{cell(r['csv'])}    {badge(r['match'])}")
         L.append("")
-    if data.get("recon2"):
-        r = data["recon2"]
-        L.append("== RÉCONCILIATION ENCAISSÉ / CRÉANCES (tout cadre au CA TTC) ==")
-        L.append("  Le CA TTC est identique des deux côtés ; seul le PARTAGE encaissé vs créances diffère :")
-        L.append("  la caisse officielle compte certaines factures comme réglées, alors que la comptabilité")
-        L.append("  les a encore en créances clients ouvertes (411) — elles seront soldées au lettrage / suivi")
-        L.append("  des paiements. Démonstration (tout retombe sur le même CA TTC) :")
+    if data.get("paydetail"):
+        p = data["paydetail"]
+        L.append("== ENCAISSEMENTS PAR MODE — SYNTHÈSE (caisse) vs TICKETS (ventes) ==")
+        L.append("  ⚠ Le CONTRÔLE de cadrage est le CA Total (TTC), qui est identique des deux côtés (voir plus haut).")
+        L.append("  Les totaux par mode de la SYNTHÈSE sont des mouvements de CAISSE : total = encaissements −")
+        L.append("  remboursements (rendu de monnaie, avoirs). Nos TICKETS comptent les paiements de VENTES")
+        L.append("  (anonyme + facture). Ce ne sont donc pas tout à fait les mêmes natures.")
         L.append("")
-        L.append(f"  {'':<16}{'Encaissé':>14}{'+ Créances 411':>18}{'= CA TTC':>14}")
-        L.append(f"  {'Synthèse':<16}{_fmt(r['syn_enc']):>14}{_fmt(r['syn_cr']):>18}{_fmt(r['ca_ttc']):>14}")
-        L.append(f"  {'Comptabilité':<16}{_fmt(r['compta_enc']):>14}{_fmt(r['compta_cr']):>18}{_fmt(r['ca_ttc']):>14}")
-        ec = " + ".join(f"{m['mode']} {_fmt(m['ecart'])}" for m in r["mode_ecarts"]) or "—"
-        L.append(f"  {'Écart':<16}{_fmt(r['ecart_enc']):>14}{_fmt(r['ecart_cr']):>18}{_fmt(0):>14}")
+        for r in p["rows"]:
+            L.append(f"  {r['mode']}")
+            if r.get("syn_enc") is not None and r.get("syn_remb") is not None:
+                L.append(f"      Synthèse : encaissements {_fmt(r['syn_enc'])} − remboursements "
+                         f"{_fmt(abs(r['syn_remb']))} = {_fmt(r['syn_total'])} €")
+            else:
+                L.append(f"      Synthèse : {_fmt(r['syn_total'])} €")
+            if r.get("our_total") is not None:
+                L.append(f"      Tickets  : anonyme {_fmt(r['our_anon'])} + facture {_fmt(r['our_fac'])} "
+                         f"= {_fmt(r['our_total'])} €")
+            L.append(f"      Écart : {_fmt(r['ecart'])} €")
         L.append("")
-        L.append(f"  → écart d'encaissement {_fmt(r['ecart_enc'])} € (= {ec}) compensé EXACTEMENT par")
-        L.append(f"    l'écart de créances {_fmt(r['ecart_cr'])} € → le CA TTC cadre, c'est cohérent ✓")
+        if p.get("entree_caisse") is not None or p.get("sortie_caisse") is not None:
+            L.append(f"  Opérations de caisse (synthèse, hors ventes) : entrée {_fmt(p.get('entree_caisse'))} € · "
+                     f"sortie {_fmt(p.get('sortie_caisse'))} €")
+        L.append(f"  CA Total {_fmt(p.get('ca_total'))} € − total encaissé au comptoir {_fmt(p.get('syn_modes_total'))} € "
+                 f"= {_fmt(p.get('credit_sales'))} € de VENTES NON ENCAISSÉES (factures à crédit).")
+        L.append("  Dans le CSV, ces ventes non réglées deviennent des créances clients (411), à solder au")
+        L.append("  règlement (lettrage / suivi des paiements). Les petits écarts par mode = mouvements de caisse")
+        L.append("  + moment de saisie des règlements ; la synthèse ne donnant que des totaux, ils ne se")
+        L.append("  décomposent pas au centime. Le contrôle reste le CA Total.")
         L.append("")
     if data["balance"]:
         b = data["balance"]
@@ -380,33 +379,45 @@ def to_pdf(data) -> bytes:
             nl(14)
         nl(6)
 
-    if data.get("recon2"):
-        r = data["recon2"]
-        ensure(64)
+    if data.get("paydetail"):
+        p = data["paydetail"]
+        ensure(70)
         page.draw_rect(fitz.Rect(x0, y - 9, W - 40, y + 4), fill=_BAR, color=_BAR)
-        left(x0 + 3, "Réconciliation encaissé / créances (tout cadre au CA TTC)", size=10, font="hebo", color=(0.15, 0.15, 0.22))
-        nl(16)
-        for ln in ["Le CA TTC est identique des deux côtés ; seul le PARTAGE encaissé vs créances diffère : la caisse",
-                   "officielle compte certaines factures comme réglées, alors que la comptabilité les a encore en",
-                   "créances clients ouvertes (411) — soldées au lettrage / suivi des paiements. Tout retombe sur le CA TTC :"]:
+        left(x0 + 3, "Encaissements par mode — synthèse (caisse) vs tickets (ventes)", size=10, font="hebo", color=(0.15, 0.15, 0.22))
+        nl(15)
+        for ln in ["Le CONTRÔLE de cadrage est le CA Total (TTC), identique des deux côtés (section CA ci-dessus).",
+                   "Les totaux par mode de la SYNTHÈSE sont des mouvements de caisse : total = encaissements − remboursements",
+                   "(rendu de monnaie, avoirs). Nos TICKETS comptent les paiements de ventes (anonyme + facture)."]:
             ensure(11); left(x0 + 2, ln, 8, "helv", _GREY); nl(10)
-        nl(4)
-        C1, C2, C3 = 300, 410, 500
-        right(C1, "Encaissé", 8, "helv", _GREY); right(C2, "+ Créances 411", 8, "helv", _GREY)
-        right(C3, "= CA TTC", 8, "helv", _GREY); nl(13)
-        for lbl, enc, cr in [("Synthèse (caisse)", r["syn_enc"], r["syn_cr"]),
-                             ("Comptabilité (CSV)", r["compta_enc"], r["compta_cr"])]:
-            ensure(14)
-            left(x0 + 4, lbl, 9)
-            right(C1, _fmt(enc)); right(C2, _fmt(cr)); right(C3, _fmt(r["ca_ttc"])); nl(13)
-        ensure(14)
-        left(x0 + 4, "Écart", 9, "hebo")
-        right(C1, _fmt(r["ecart_enc"]), 9, "cour", _RED); right(C2, _fmt(r["ecart_cr"]), 9, "cour", _GREEN)
-        right(C3, _fmt(0)); nl(15)
-        ec = " + ".join(f"{m['mode']} {_fmt(m['ecart'])}" for m in r["mode_ecarts"]) or "—"
-        left(x0 + 2, f"-> ecart d'encaissement {_fmt(r['ecart_enc'])} EUR (= {ec})", 8, "helv", _GREY); nl(10)
-        left(x0 + 2, f"   compense EXACTEMENT l'ecart de creances {_fmt(r['ecart_cr'])} EUR -> CA TTC cadre, coherent.", 8, "helv", _GREY)
-        nl(16)
+        nl(3)
+        CS, CO, CE = 320, 470, 512
+        right(CS, "Synthèse (enc.−remb.=total)", 8, "helv", _GREY)
+        right(CO, "Tickets (anon.+fact.=total)", 8, "helv", _GREY)
+        right(CE, "Écart", 8, "helv", _GREY); nl(12)
+        for r in p["rows"]:
+            ensure(13)
+            left(x0 + 4, r["mode"], 9)
+            if r.get("syn_enc") is not None and r.get("syn_remb") is not None:
+                right(CS, f"{_fmt(r['syn_enc'])}-{_fmt(abs(r['syn_remb']))}={_fmt(r['syn_total'])}", 8, "cour")
+            else:
+                right(CS, _fmt(r["syn_total"]), 8, "cour")
+            if r.get("our_total") is not None:
+                right(CO, f"{_fmt(r['our_anon'])}+{_fmt(r['our_fac'])}={_fmt(r['our_total'])}", 8, "cour")
+            else:
+                right(CO, "—", 8, "cour")
+            right(CE, _fmt(r["ecart"]), 8, "cour", _DARK if abs(r["ecart"]) < TOL else _GREY)
+            nl(12)
+        nl(3)
+        if p.get("entree_caisse") is not None or p.get("sortie_caisse") is not None:
+            left(x0 + 2, f"Opérations de caisse (synthèse, hors ventes) : entrée {_fmt(p.get('entree_caisse'))} EUR · "
+                         f"sortie {_fmt(p.get('sortie_caisse'))} EUR", 8, "helv", _GREY); nl(11)
+        left(x0 + 2, f"CA Total {_fmt(p.get('ca_total'))} − encaissé comptoir {_fmt(p.get('syn_modes_total'))} = "
+                     f"{_fmt(p.get('credit_sales'))} EUR de ventes NON encaissées (factures a credit).", 8, "helv", _DARK); nl(11)
+        for ln in ["Ces ventes non reglees deviennent des creances clients (411) dans le CSV, a solder au reglement",
+                   "(lettrage / suivi des paiements). Les petits ecarts par mode = mouvements de caisse + moment de saisie",
+                   "des reglements ; la synthese ne donne que des totaux -> non decomposable au centime. Controle = CA Total."]:
+            ensure(11); left(x0 + 2, ln, 8, "helv", _GREY); nl(10)
+        nl(8)
 
     if data["balance"]:
         ensure(24)
