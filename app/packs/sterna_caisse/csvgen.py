@@ -115,15 +115,20 @@ def build_toslt(establishment, date_from, date_to, company_id,
 
     agg = defaultdict(lambda: {"vat": defaultdict(lambda: [0.0, 0.0]),
                                "pay": defaultdict(float)})
-    factures = []       # flux CA facturé : par facture (CA + 411 brut + paiements comptant)
-    reglements = []     # flux règlement : paiement de facture encaissé en caisse (orderPaymentId lié)
+    factures = []       # CA facturé : créance par facture (TTC plein), par date de TICKET
+    reglements = []     # règlements : 1 ligne par PAIEMENT de facture, par date de PAIEMENT
     unresolved = []
     n_tickets = 0
     tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
-    pay_total = defaultdict(float)   # encaissements par mode (pour le cadrage)
-    fac_pay = defaultdict(float)     # encaissements SUR FACTURES par mode (réconciliation de l'écart)
-    fac_pay_detail = []              # liste des paiements de factures (date, facture, client, mode, montant)
-    vat_total = defaultdict(lambda: [0.0, 0.0])  # taux -> [HT, TTC] (pull brut, pour le compte rendu)
+    pay_total = defaultdict(float)   # encaissements par mode (= total ticketpaymentdata = Z)
+    fac_pay = defaultdict(float)     # encaissements SUR FACTURES par mode
+    fac_pay_detail = []              # liste des règlements de factures (date, facture, client, mode, montant)
+    vat_total = defaultdict(lambda: [0.0, 0.0])  # taux -> [HT, TTC] (pour le compte rendu)
+
+    # ---- PASSE 1 : CA depuis les TICKETS DE VENTE (par date de ticket) ----
+    # On ne lit PAS les paiements ici : ils viennent de la passe 2 (par date de paiement),
+    # ce qui permet de capter les règlements de factures antérieures et d'exclure les
+    # paiements hors période (qui restent en créance). Cf. modèle CEGID de TopOrder.
     frm, pages = 0, 0
     while True:
         b = _get(client, f"/ppe/ticket/shop/{shop_id}", To=to,
@@ -151,14 +156,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 vat_total[r][0] += ht_l
                 vat_total[r][1] += ttc_l
             tot_ttc += ttc
-            payments_raw = w.get("ticketPaymentData") or []
-            pay = defaultdict(float)
-            for p in payments_raw:
-                amt = float(p.get("paymentAmount") or 0)
-                pay[p.get("paymentType") or "?"] += amt
-                pay_total[p.get("paymentType") or "?"] += amt
             fnum = tk2fac.get(tk.get("id")) or (tk.get("rootTicketId") and tk2fac.get(tk["rootTicketId"]))
-            if fnum:          # FACTURÉ -> écriture par facture (CA + 411 brut + paiements comptant)
+            if fnum:          # FACTURÉ -> créance (TTC plein) ; règlements en passe 2
                 coid, cid = tk.get("companyId"), tk.get("customerId")
                 a, nm = resolve(pfx, coid, cid)
                 if not a:
@@ -167,44 +166,62 @@ def build_toslt(establishment, date_from, date_to, company_id,
                                        **diagnose(pfx, coid)})
                     continue
                 factures.append({"date": dd, "fnum": int(fnum), "acc": a, "nm": nm,
-                                 "vat": dict(vat), "pay": dict(pay), "ttc": round(ttc, 2),
+                                 "vat": dict(vat), "ttc": round(ttc, 2),
                                  "b2b": bool(coid and coid != ZERO)})
-                for _pt, _amt in pay.items():           # paiements comptant sur facture
-                    if abs(_amt) < 0.005:
-                        continue
-                    fac_pay[_pt] += _amt
-                    fac_pay_detail.append({"date": dd, "fnum": int(fnum), "nm": nm,
-                                           "mode": _pt, "amount": round(_amt, 2)})
-            else:             # NON facturé : CA anonyme -> agrégat ; paiements -> règlement OU agrégat
+            else:             # NON facturé : CA anonyme -> agrégat du jour (paiements en passe 2)
                 d = agg[dd]
                 for r, (ht, t) in vat.items():
                     d["vat"][r][0] += ht
                     d["vat"][r][1] += t
-                for p in payments_raw:
-                    amt = float(p.get("paymentAmount") or 0)
-                    if abs(amt) < 0.005:
-                        continue
-                    pt = p.get("paymentType") or "?"
-                    rfnum = op2fac.get(p.get("orderPaymentId"))
-                    if rfnum:   # RÈGLEMENT d'une facture encaissé en caisse (comptant décalé inclus)
-                        pdate = _day(p.get("timestamp")) or dd
-                        a, nm = resolve(pfx, p.get("companyId"), p.get("customerId"))
-                        if not a:
-                            unresolved.append({"date": pdate, "company_id": p.get("companyId"),
-                                               "customer_id": p.get("customerId"),
-                                               "facture": f"{int(rfnum):07d}", "amount": round(amt, 2),
-                                               **diagnose(pfx, p.get("companyId"))})
-                            continue
-                        reglements.append({"date": pdate, "fnum": int(rfnum), "acc": a,
-                                           "nm": nm, "mode": pt, "amount": amt})
-                        fac_pay[pt] += amt              # règlement de facture encaissé en caisse
-                        fac_pay_detail.append({"date": pdate, "fnum": int(rfnum), "nm": nm,
-                                               "mode": pt, "amount": round(amt, 2)})
-                    else:       # encaissement anonyme
-                        d["pay"][pt] += amt
         if on_progress:
-            on_progress(n_tickets, f"pull tickets… {n_tickets} traités")
+            on_progress(n_tickets, f"pull tickets (CA)… {n_tickets}")
         if pmax < date_from:
+            break
+        frm += len(b)
+        if pages > 600:
+            break
+
+    # ---- PASSE 2 : ENCAISSEMENTS depuis ticketpaymentdata (par date de PAIEMENT) ----
+    # Lien paiement -> facture par rootTicketId -> tk2fac (capte les règlements de factures
+    # ANTÉRIEURES et nette le rendu de monnaie sur la même pièce). Total = Z de la synthèse.
+    frm, pages = 0, 0
+    while True:
+        b = _get(client, f"/ppe/ticketpaymentdata/shop/{shop_id}", To=to,
+                 PaginationFrom=frm, PaginationTo=frm + 99)
+        if not b:
+            break
+        pages += 1
+        pmin = "9999"
+        for p in b:
+            pdate = _day(p.get("timestamp"))
+            if pdate:
+                pmin = min(pmin, pdate)
+            if not pdate or not (date_from <= pdate <= date_to):
+                continue
+            amt = float(p.get("paymentAmount") or 0)
+            if abs(amt) < 0.005:
+                continue
+            pt = p.get("paymentType") or "?"
+            pay_total[pt] += amt
+            fnum = tk2fac.get(p.get("rootTicketId"))
+            if fnum:          # RÈGLEMENT de facture : 1 ligne par paiement, lettré F<n°>
+                coid, cid = p.get("companyId"), p.get("customerId")
+                a, nm = resolve(pfx, coid, cid)
+                if not a:
+                    unresolved.append({"date": pdate, "company_id": coid, "customer_id": cid,
+                                       "facture": f"{int(fnum):07d}", "amount": round(amt, 2),
+                                       **diagnose(pfx, coid)})
+                    continue
+                reglements.append({"date": pdate, "fnum": int(fnum), "acc": a, "nm": nm,
+                                   "mode": pt, "amount": amt})
+                fac_pay[pt] += amt
+                fac_pay_detail.append({"date": pdate, "fnum": int(fnum), "nm": nm,
+                                       "mode": pt, "amount": round(amt, 2)})
+            else:             # encaissement anonyme -> agrégat du jour (par date de paiement)
+                agg[pdate]["pay"][pt] += amt
+        if on_progress:
+            on_progress(n_tickets, f"pull paiements… {pages} pages")
+        if pmin < date_from:
             break
         frm += len(b)
         if pages > 600:
@@ -288,13 +305,12 @@ def build_toslt(establishment, date_from, date_to, company_id,
                          cat_family, cat_label, ""])
             tot["ecart"] += ec
 
-    def emit_facture(date, piece, fnum, acc411, nm, vat, pay):
-        """Écriture par FACTURE : CA + débit 411 (brut TTC) + ventilation des
-        paiements (débit encaissement + crédit 411). Lettrage F<n°>. Le solde 411
-        restant = créance (impayé)."""
+    def emit_facture(date, piece, fnum, acc411, nm, vat):
+        """Écriture par FACTURE : CA (crédit 70101/TVA) + débit 411 du BRUT TTC
+        (lettrage F<n°>). Les RÈGLEMENTS (crédit 411) viennent de la passe paiements
+        (par date de paiement) -> le solde 411 restant = créance impayée à l'arrêté."""
         lettr = f"F{fnum}"
         ttcsum = _ca_lines(date, piece, vat)
-        # la facture : débit 411 du montant brut TTC (crédit si avoir)
         if ttcsum >= 0:
             rows.append([date, journal, str(acc411), "Client - facture",
                          f"Facture {fnum:07d} · {nm}", "", piece,
@@ -303,31 +319,12 @@ def build_toslt(establishment, date_from, date_to, company_id,
             rows.append([date, journal, str(acc411), "Client - avoir",
                          f"Avoir {fnum:07d} · {nm}", "", piece,
                          "", f"{-ttcsum:.2f}", cat_family, cat_label, lettr])
-        paid = 0.0
-        for pt, amt in sorted(pay.items()):
-            if abs(amt) < 0.005:
-                continue
-            pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
-            # encaissement (banque) + crédit 411 (règlement, lettré F<n°>)
-            if amt > 0:
-                rows.append([date, journal, pacc, pt, f"{pt} facture {fnum:07d}", "", piece,
-                             f"{amt:.2f}", "", cat_family, cat_label, ""])
-                rows.append([date, journal, str(acc411), "Règlement client",
-                             f"Règlement {pt} F{fnum:07d}", "", piece, "", f"{amt:.2f}",
-                             cat_family, cat_label, lettr])
-            else:  # rendu : sens inversé
-                rows.append([date, journal, pacc, pt, f"{pt} facture {fnum:07d} (rendu)", "", piece,
-                             "", f"{-amt:.2f}", cat_family, cat_label, ""])
-                rows.append([date, journal, str(acc411), "Règlement client",
-                             f"Règlement {pt} F{fnum:07d} (rendu)", "", piece, f"{-amt:.2f}", "",
-                             cat_family, cat_label, lettr])
-            paid += amt
-        tot["enc"] += paid
-        tot["creance"] += round(ttcsum - paid, 2)   # 411 restant = impayé
+        tot["creance"] += ttcsum
 
     def emit_reglement(reg):
-        """Règlement de facture encaissé en caisse : débit encaissement + crédit 411
-        (lettré F<n°>). Solde le 411 de la facture (émise dans cette période ou avant)."""
+        """Règlement de facture (1 ligne par paiement) : débit encaissement + crédit 411
+        (lettré F<n°>), par date de paiement. Réduit le solde 411 de la facture (émise
+        dans cette période OU avant = antérieure). Lettrable (partiellement) à l'étape 6."""
         d, fnum, amt, pt = reg["date"], reg["fnum"], reg["amount"], reg["mode"]
         lettr = f"F{fnum}"
         piece = f"{pfx}{d[8:10]}{d[5:7]}{d[2:4]}-R{fnum:07d} #{batch_code}"
@@ -345,6 +342,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
                          f"Règlement F{fnum:07d} (rendu) · {reg['nm']}", "", piece, f"{-amt:.2f}", "",
                          cat_family, cat_label, lettr])
         tot["enc"] += amt
+        tot["creance"] -= amt          # le règlement réduit le solde 411 ouvert
 
     def piece_for(date, suffix=""):
         # pièce du jour en tête (lisible pour le rapprochement espèces/CB/…),
@@ -355,7 +353,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
         emit_agg(dt, piece_for(dt), agg[dt]["vat"], agg[dt]["pay"])
     for f in sorted(factures, key=lambda x: (x["date"], x["fnum"])):
         emit_facture(f["date"], piece_for(f["date"], f"-F{f['fnum']:07d}"),
-                     f["fnum"], f["acc"], f["nm"], f["vat"], f["pay"])
+                     f["fnum"], f["acc"], f["nm"], f["vat"])
     for reg in sorted(reglements, key=lambda x: (x["date"], x["fnum"])):
         emit_reglement(reg)
 
