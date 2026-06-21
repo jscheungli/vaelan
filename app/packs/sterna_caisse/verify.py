@@ -35,8 +35,10 @@ def _expected_by_account(company_id, pfx, start, end, pay_accs):
             k = (b.date_from, b.date_to)
             if k not in keep or b.id > keep[k].id:
                 keep[k] = b
+        import re
         net = defaultdict(float)
         fac_pay = defaultdict(float)
+        piece2client, fac_detail = {}, []
         used, missing = [], []
         for b in keep.values():
             art = s.exec(select(JobArtifact).where(
@@ -52,16 +54,24 @@ def _expected_by_account(company_id, pfx, start, end, pay_accs):
                 d = row[0]
                 if not (start.isoformat() <= d <= end.isoformat()):
                     continue
-                acc = row[2]
+                acc, lib, piece = row[2], row[4], row[6]
                 deb = float(row[7] or 0)
                 cred = float(row[8] or 0)
                 net[acc] += cred - deb
+                if (lib.startswith("Facture ") or lib.startswith("Avoir ")) and "·" in lib:
+                    piece2client[piece] = lib.split("·", 1)[1].strip()
                 # paiement de facture : encaissement (débit) sur une pièce -F / -R
-                piece = row[6]
                 if acc in pay_accs and ("-F" in piece or "-R" in piece):
-                    fac_pay[pay_accs[acc]] += deb - cred
+                    amt = round(deb - cred, 2)
+                    fac_pay[pay_accs[acc]] += amt
+                    mfn = re.search(r"-[FR](\d+)", piece)
+                    fac_detail.append({"date": d, "fnum": int(mfn.group(1)) if mfn else 0,
+                                       "piece": piece, "mode": pay_accs[acc], "amount": amt})
+        for x in fac_detail:
+            x["nm"] = piece2client.get(x["piece"], "")
+    fac_detail.sort(key=lambda x: (x["mode"], x["date"], x["fnum"]))
     return ({a: round(v, 2) for a, v in net.items()},
-            {m: round(v, 2) for m, v in fac_pay.items()}, used, missing)
+            {m: round(v, 2) for m, v in fac_pay.items()}, fac_detail, used, missing)
 
 
 def _aggregates(net, cfg, pfx):
@@ -125,7 +135,7 @@ def run_verify(ctx, company_code, pfx):
                 ecfg["ticket_resto"]: "Ticket restaurant", ecfg["autres"]: "Autres"}
     ctx.log(f"Vérification Pennylane · {establishment} · {label} (journaux {journal_label})")
     ctx.progress(0, 3, step="lecture de l'attendu (CSV générés)…")
-    expected, fac_pay, used, missing = _expected_by_account(company.id, pfx, start, end, pay_accs)
+    expected, fac_pay, fac_detail, used, missing = _expected_by_account(company.id, pfx, start, end, pay_accs)
     if missing:
         ctx.log(f"⚠️ lots sans CSV stocké ignorés : {', '.join(missing)}")
     if not expected:
@@ -174,9 +184,15 @@ def run_verify(ctx, company_code, pfx):
     L.append("  (paiements de factures encaissés en caisse, bookés au crédit du 411 — ils expliquent")
     L.append("   l'écart de mode de paiement vs la synthèse au moment de la génération)")
     for m, v in recon:
-        L.append(f"  {m:<28}{v:>14.2f}   bookés au 411")
+        L.append(f"  {m:<28}{v:>14.2f}   bookés au crédit du 411 (lettrés F<n°>)")
     L.append(f"  Contrôle : comptes clients 411 conformes entre CSV et Pennylane -> "
              f"{'✓ paiements de factures intacts' if cli_ok else '⚠️ écart sur les 411'}")
+    if fac_detail:
+        L.append("  Détail des paiements de factures :")
+        L.append(f"    {'Date':<12}{'Facture':<10}{'Client':<24}{'Mode':<12}{'Montant':>12}")
+        for x in fac_detail:
+            L.append(f"    {x['date']:<12}{('F' + str(x['fnum'])):<10}{(x.get('nm') or '')[:22]:<24}"
+                     f"{x['mode']:<12}{x['amount']:>12.2f}")
     L += ["", "== DÉTAIL PAR COMPTE ==", f"  {'Compte':<12}{'Attendu (CSV)':>16}{'Pennylane':>16}   État"]
     for a, ev, av, ok in acc_rows:
         L.append(f"  {a:<12}{ev:>16.2f}{av:>16.2f}   {'OK' if ok else '⚠️ ÉCART'}")
@@ -189,7 +205,7 @@ def run_verify(ctx, company_code, pfx):
     from . import report
     ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} compte_rendu_verif_{pfx}.pdf",
                      report.verify_pdf(establishment, journal_label, label, n_entries, used,
-                                       summary, pay_rows, recon, cli_ok, acc_rows, coherent,
+                                       summary, pay_rows, recon, cli_ok, fac_detail, acc_rows, coherent,
                                        run_id=ctx.run_id, executed_at=stamp),
                      "application/pdf")
     _record(company.id, pfx, coherent, end, now, ctx.run_id)

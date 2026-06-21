@@ -210,9 +210,13 @@ def build_toslt(establishment, date_from, date_to, company_id,
 
     def _ca_lines(date, piece, vat):
         """CA 70101/taux + TVA (gardé dans le Z). Gère les AVOIRS (HT/TVA négatifs
-        bookés en sens inversé : débit au lieu de crédit). Renvoie le TTC."""
+        bookés en sens inversé : débit au lieu de crédit). Renvoie le TTC.
+        On accumule les valeurs ARRONDIES (= celles écrites dans le CSV) pour que
+        l'écart de caisse équilibre l'écriture EXACTEMENT (sinon décalage d'1 cent
+        flottant -> « marge légale 1€ » à l'import Pennylane)."""
         ttcsum = 0.0
-        for r, (ht, ttc_) in sorted(vat.items()):
+        for r, (ht_raw, ttc_) in sorted(vat.items()):
+            ht = round(ht_raw, 2)
             if abs(ht) < 0.005 and abs(ttc_) < 0.005:
                 continue
             rl = _rate_label(r)
@@ -225,7 +229,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
                              f"Avoir CA HT {rl}", rl, piece, f"{-ht:.2f}", "", cat_family, cat_label, ""])
             tot["ca_ht"] += ht
             ttcsum += ht
-            tva = round(ttc_ - ht, 2)
+            tva = round(ttc_ - ht_raw, 2)
             if r in tva_acc and abs(tva) > 0.005:
                 if tva >= 0:
                     rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
@@ -241,7 +245,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
         """Écriture journalière ANONYME : CA + encaissements + écart de caisse."""
         ttcsum = _ca_lines(date, piece, vat)
         enc = 0.0
-        for pt, amt in sorted(pay.items()):
+        for pt, amt_raw in sorted(pay.items()):
+            amt = round(amt_raw, 2)          # valeur arrondie = celle écrite (équilibre exact)
             if abs(amt) < 0.005:
                 continue
             pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])

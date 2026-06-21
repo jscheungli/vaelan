@@ -370,7 +370,7 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
 
 
 def verify_pdf(establishment, journal, period_label, n_entries, used, summary, pay_rows,
-               recon, cli_ok, accounts, coherent, run_id=None, executed_at=None) -> bytes:
+               recon, cli_ok, fac_detail, accounts, coherent, run_id=None, executed_at=None) -> bytes:
     """Compte rendu PDF de vérification Pennylane DÉTAILLÉ : contrôles (CA/TVA/TTC/411),
     paiements par mode, réconciliation des paiements de factures, détail par compte,
     chacun comparant Attendu (CSV généré) vs Pennylane (lu via l'API)."""
@@ -450,10 +450,21 @@ def verify_pdf(establishment, journal, period_label, n_entries, used, summary, p
     for m, v in recon:
         ensure()
         left(x0 + 4, f"{m} sur factures", 9)
-        right(CA, _fmt(v)); left(BX - 60, "bookés au 411", 8, "helv", _GREY); nl(14)
+        right(CA, _fmt(v)); left(BX - 70, "bookés au 411 (lettrés F<n°>)", 8, "helv", _GREY); nl(14)
     ensure()
     left(x0 + 4, "Comptes clients 411 conformes CSV ↔ Pennylane", 9)
     badge(cli_ok, "CONFIRMÉ", "ÉCART"); nl(16)
+    if fac_detail:
+        left(x0, "Détail des paiements de factures :", 9, "hebo", (0.2, 0.2, 0.25)); nl(13)
+        left(x0 + 4, "Date", 8, "helv", _GREY); left(x0 + 70, "Facture", 8, "helv", _GREY)
+        left(x0 + 140, "Client", 8, "helv", _GREY); left(x0 + 330, "Mode", 8, "helv", _GREY)
+        right(BX + 50, "Montant", 8, "helv", _GREY); nl(12)
+        for x in fac_detail:
+            ensure(14)
+            left(x0 + 4, x["date"], 8, "cour"); left(x0 + 70, "F" + str(x["fnum"]), 8, "cour")
+            left(x0 + 140, (x.get("nm") or "")[:30], 8, "helv"); left(x0 + 330, x["mode"], 8, "helv")
+            right(BX + 50, _fmt(x["amount"]), 8, "cour"); nl(12)
+        nl(6)
 
     section("Détail par compte")
     for num, ev, av, ok in accounts:
