@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Utilisateurs · {{ app_name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+  <li class="breadcrumb-item active">Utilisateurs</li>
+</ol></nav>
+
+<h1 class="h4 mb-3">Utilisateurs & accès</h1>
+
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead><tr class="small text-muted">
+    <th>Utilisateur</th><th>Statut</th>
+    {% for c in companies %}<th class="text-center">{{ c.code }}</th>{% endfor %}
+    <th></th>
+  </tr></thead>
+  <tbody>
+  {% for u in users %}
+    <tr class="small">
+      <td><span class="fw-semibold">{{ u.name }}</span>
+        <div class="text-muted" style="font-size:.72rem;">{{ u.email }}{% if u.is_superuser %} · <span class="badge text-bg-dark">superadmin</span>{% endif %}</div></td>
+      <td>{% if u.active %}<span class="badge text-bg-success">actif</span>{% else %}<span class="badge text-bg-secondary">inactif</span>{% endif %}</td>
+      {% for c in companies %}
+        <td class="text-center">
+          {% if u.is_superuser %}<span class="text-muted small">tout</span>
+          {% else %}
+          <form method="post" action="/admin/users/access" class="d-inline">
+            <input type="hidden" name="user_id" value="{{ u.id }}"><input type="hidden" name="company_id" value="{{ c.id }}">
+            <select name="role" class="form-select form-select-sm py-0" style="font-size:.75rem; width:auto; display:inline-block;" onchange="this.form.submit()">
+              {% set cur = access.get((u.id, c.id), '') %}
+              <option value="" {{ 'selected' if not cur }}>—</option>
+              <option value="viewer" {{ 'selected' if cur == 'viewer' }}>viewer</option>
+              <option value="operator" {{ 'selected' if cur == 'operator' }}>operator</option>
+              <option value="admin" {{ 'selected' if cur == 'admin' }}>admin</option>
+            </select>
+          </form>
+          {% endif %}
+        </td>
+      {% endfor %}
+      <td class="text-end">
+        <form method="post" action="/admin/users/{{ u.id }}/toggle" class="d-inline">
+          <button class="btn btn-link btn-sm p-0 text-muted">{{ 'désactiver' if u.active else 'activer' }}</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2 class="h6 text-uppercase text-muted mt-4">Ajouter un utilisateur</h2>
+<form method="post" action="/admin/users/add" class="row g-2" style="max-width:720px;">
+  <div class="col-md-4"><input name="name" class="form-control form-control-sm" placeholder="Nom" required></div>
+  <div class="col-md-4"><input name="email" type="email" class="form-control form-control-sm" placeholder="Email" required></div>
+  <div class="col-md-2"><input name="password" type="text" class="form-control form-control-sm" placeholder="Mot de passe" required></div>
+  <div class="col-md-2 d-flex align-items-center gap-2">
+    <div class="form-check mb-0"><input class="form-check-input" type="checkbox" name="is_superuser" id="su" value="1"><label class="form-check-label small" for="su">superadmin</label></div>
+  </div>
+  <div class="col-12"><button class="btn btn-sm btn-dark"><i class="bi bi-person-plus"></i> Créer</button></div>
+</form>
+<p class="text-muted small mt-2">« — » = aucun accès. viewer = lecture ; operator = lance les tâches ; admin = tout. Le superadmin a accès à toutes les sociétés.</p>
+{% endblock %}

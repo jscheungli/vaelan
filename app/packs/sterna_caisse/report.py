@@ -284,3 +284,61 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
               batch_code=None, n_tickets=None, balanced=None, run_id=None, executed_at=None) -> bytes:
     return to_pdf(_compute(kind, establishment, date_from, date_to, syn, api, csv,
                            batch_code, n_tickets, balanced, run_id, executed_at))
+
+
+def verify_pdf(establishment, journal, period_label, n_entries, used, accounts,
+               coherent, run_id=None, executed_at=None) -> bytes:
+    """Compte rendu PDF de vérification Pennylane (même style) : tableau par compte
+    Attendu (CSV) | Pennylane + verdict. `accounts` = [(num, attendu, pennylane, ok)]."""
+    def _ascii(s):
+        return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
+                .replace("œ", "oe").replace("…", "..."))
+    doc = fitz.open()
+    page = doc.new_page()
+    W = page.rect.width
+    x0, y = 40, 56
+    CA, CP, BX = 330, 440, 470
+
+    def left(x, s, size=9, font="helv", color=_DARK):
+        page.insert_text((x, y), _ascii(s), fontsize=size, fontname=font, color=color)
+
+    def right(xr, s, size=9, font="cour", color=_DARK):
+        s = _ascii(s)
+        page.insert_text((xr - fitz.get_text_length(s, fontname=font, fontsize=size), y),
+                         s, fontsize=size, fontname=font, color=color)
+
+    left(x0, "Compte rendu · Vérification Pennylane (Tickets)", 15, "hebo")
+    y += 18
+    for m in [f"Établissement : {establishment}        Période couverte : {period_label}",
+              f"Journal {journal}        Écritures Pennylane : {n_entries}        Lots : {', '.join(used) or '-'}"]:
+        left(x0, m, 9, "helv", (0.3, 0.3, 0.3)); y += 13
+    trace = []
+    if run_id is not None:
+        trace.append(f"Tâche #{run_id}")
+    if executed_at:
+        trace.append(f"Vérifié le {executed_at}")
+    if trace:
+        left(x0, "        ".join(trace), 9, "helv", (0.3, 0.3, 0.3)); y += 13
+    y += 8
+    page.draw_rect(fitz.Rect(x0, y - 9, W - 40, y + 4), fill=_BAR, color=_BAR)
+    left(x0 + 3, "Rapprochement par compte", 10, "hebo", (0.15, 0.15, 0.22)); y += 16
+    right(CA, "Attendu (CSV)", 8, "helv", _GREY); right(CP, "Pennylane", 8, "helv", _GREY)
+    left(BX, "État", 8, "helv", _GREY); y += 13
+    for num, ev, av, ok in accounts:
+        if y > 800:
+            page = doc.new_page(); y = 56
+        left(x0 + 4, str(num), 9)
+        right(CA, _fmt(ev)); right(CP, _fmt(av))
+        col = _GREEN if ok else _RED
+        lbl = "OK" if ok else "ÉCART"
+        w = fitz.get_text_length(lbl, fontname="hebo", fontsize=8) + 8
+        page.draw_rect(fitz.Rect(BX, y - 8, BX + w, y + 2.5), fill=col, color=col)
+        page.insert_text((BX + 4, y), lbl, fontsize=8, fontname="hebo", color=(1, 1, 1)); y += 14
+    y += 8
+    col = _GREEN if coherent else _RED
+    msg = "COHÉRENT — Pennylane correspond aux lots générés" if coherent else "ÉCART — Pennylane diffère des lots générés"
+    w = fitz.get_text_length(msg, fontname="hebo", fontsize=10) + 12
+    page.draw_rect(fitz.Rect(x0, y - 9, x0 + w, y + 4), fill=col, color=col)
+    page.insert_text((x0 + 6, y), msg, fontsize=10, fontname="hebo", color=(1, 1, 1))
+    out = doc.tobytes(); doc.close()
+    return out

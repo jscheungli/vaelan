@@ -27,6 +27,8 @@
       {% if user %}
         <a class="nav-link small text-light" href="/companies"><i class="bi bi-building"></i> Sociétés</a>
         <a class="nav-link small text-light" href="/jobs"><i class="bi bi-list-task"></i> Tâches</a>
+        <a class="nav-link small text-light" href="/regles"><i class="bi bi-journal-text"></i> Règles</a>
+        {% if user.is_superuser %}<a class="nav-link small text-light" href="/admin/users"><i class="bi bi-people"></i> Utilisateurs</a>{% endif %}
         <span class="navbar-text small"><i class="bi bi-person-circle"></i> {{ user.name }}</span>
         <a class="btn btn-sm btn-outline-light" href="/logout"><i class="bi bi-box-arrow-right"></i></a>
       {% endif %}

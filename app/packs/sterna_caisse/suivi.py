@@ -128,6 +128,17 @@ def _cell(stp, pfx, clients, batches, decls, last_sync, target):
     return {"state": "soon", "text": "à venir"}
 
 
+def reset(company_id, establishment):
+    """Réinitialise le suivi d'un établissement : efface déclarations + vérifications
+    (pour repartir de zéro après suppression des imports dans Pennylane)."""
+    with Session(engine) as s:
+        for d in s.exec(select(StepDeclaration).where(
+                StepDeclaration.company_id == company_id,
+                StepDeclaration.establishment == establishment)).all():
+            s.delete(d)
+        s.commit()
+
+
 def declare(company_id, establishment, step, covered_to, undo=False):
     with Session(engine) as s:
         d = s.exec(select(StepDeclaration).where(

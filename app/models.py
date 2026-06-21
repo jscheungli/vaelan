@@ -51,6 +51,7 @@ class Run(SQLModel, table=True):
     log: Optional[str] = None  # journal détaillé (texte/JSON), pensé pour être relu
     report: Optional[str] = None  # compte rendu téléchargeable (rapprochement détaillé)
     app_version: Optional[str] = None  # version de Vaelan active au moment de la tâche (debug)
+    user_email: Optional[str] = None   # utilisateur qui a lancé la tâche
     # progression (pour l'affichage live de la page Jobs)
     step: Optional[str] = None
     progress_current: Optional[int] = None

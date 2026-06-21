@@ -69,9 +69,21 @@
 
 <div class="table-responsive">
 <table class="table table-sm align-middle">
+  {% set ETAB_COLORS = {'SM': ('#fff3cd', '#664d03'), 'LP': ('#d1e7dd', '#0a3622'),
+                        'SL': ('#e2d9f3', '#341a66'), 'KK': ('#ffe5d0', '#6b3410')} %}
   <thead><tr class="small text-muted">
     <th style="min-width:260px;">Étape</th>
-    {% for est in board.establishments %}<th class="text-center" style="min-width:160px;">{{ est }}</th>{% endfor %}
+    {% for est in board.establishments %}
+      {% set c = ETAB_COLORS.get(est, ('#e9ecef', '#343a40')) %}
+      <th style="min-width:160px;" class="text-start">
+        <span class="badge rounded-pill" style="background:{{ c[0] }};color:{{ c[1] }};font-weight:600;">{{ est }}</span>
+        <form method="post" action="/c/{{ company.code }}/suivi/reset" class="d-inline"
+              onsubmit="return confirm('Réinitialiser le suivi de {{ est }} (déclarations + vérifications) ? Les CSV générés ne sont pas supprimés.');">
+          <input type="hidden" name="establishment" value="{{ est }}">
+          <button class="btn btn-link btn-sm p-0 ms-1 text-muted" style="font-size:.7rem;" title="Réinitialiser le suivi de cet établissement">réinitialiser</button>
+        </form>
+      </th>
+    {% endfor %}
   </tr></thead>
   <tbody>
   {% for row in board.steps %}

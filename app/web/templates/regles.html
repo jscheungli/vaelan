@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Règles & logique · {{ app_name }}{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">Règles & logique de fonctionnement</h1>
+<p class="text-muted small">Référence des règles appliquées par chaque moteur et chaque étape. Mise à jour à chaque
+évolution de la logique. Version actuelle : <code>v{{ version }}</code>.</p>
+
+<div class="accordion" id="rg">
+
+  {% macro sec(id, title, open=false) %}
+  <div class="accordion-item">
+    <h2 class="accordion-header"><button class="accordion-button {{ '' if open else 'collapsed' }}" type="button"
+        data-bs-toggle="collapse" data-bs-target="#{{ id }}">{{ title }}</button></h2>
+    <div id="{{ id }}" class="accordion-collapse collapse {{ 'show' if open else '' }}" data-bs-parent="#rg">
+      <div class="accordion-body small">{{ caller() }}</div>
+    </div>
+  </div>
+  {% endmacro %}
+
+  {% call sec('s0', '0 · Séquence de clôture (9 étapes)', true) %}
+    Ordre d'exécution, par établissement : <strong>1.</strong> Synchronisation des clients →
+    <strong>2.</strong> Génération CSV Tickets → <strong>3.</strong> Import Tickets dans Pennylane (manuel) →
+    <strong>4.</strong> Cadrage de l'import Tickets par Vaelan (vérification) →
+    <strong>5-7.</strong> Factures (génération / import / cadrage) →
+    <strong>8.</strong> Attache des justificatifs (PDF factures) →
+    <strong>9.</strong> Lettrage. Le tableau de suivi (page d'accueil société) trace « jusqu'à quelle date » et
+    « réalisé le… » par étape. <strong>Couleur</strong> : vert si couvert jusqu'au dernier mois TERMINÉ
+    (fin du mois précédent), sinon orange « mois à clôturer ».
+  {% endcall %}
+
+  {% call sec('s1', '1 · Synchronisation des clients') %}
+    Table de correspondance TopOrder ↔ Pennylane. <strong>Clé de matching = SIRET TopOrder ↔ « Identifiant client »
+    Pennylane</strong> (champ <code>external_reference</code>, où l'on met le SIRET ; PAS le SIREN qui est partagé
+    entre établissements). Cascade de statut stricte : pas de SIRET → <em>SIRET manquant</em> ; SIRET sans jumeau
+    Pennylane → <em>absent de Pennylane</em> ; jumeau sans compte 411 → <em>incohérent</em> ; jumeau + 411 → <em>ok</em>.
+    Une ligne du mapping introuvable dans TopOrder → <em>absent TopOrder</em>. Vaelan détecte ; la correction se fait
+    dans TopOrder/Pennylane puis on resynchronise. Les identifiants assignés (asso « ASDR ») sont gérés.
+  {% endcall %}
+
+  {% call sec('s2', '2 · Génération CSV Tickets (TOSLT)') %}
+    Le ticket est la vérité fiscale ; tout le CA va au <strong>70101 (= le Z)</strong>.
+    <ul class="mb-1">
+      <li><strong>Tickets anonymes</strong> → 1 écriture agrégée par jour : crédit 70101/taux + TVA collectée ;
+      débit encaissements (CB/Espèce/TR, rendu monnaie netté) ; écart de caisse résiduel.</li>
+      <li><strong>Tickets facturés</strong> → 1 écriture par facture : crédit 70101/taux + TVA ;
+      <strong>débit 411 client du brut TTC</strong> (lettrage <code>F&lt;n°&gt;</code> = la facture) ;
+      par paiement : débit encaissement + crédit 411 (règlement, lettré). Solde 411 restant = impayé.</li>
+    </ul>
+    Format CSV validé import Pennylane : comptes par NUMÉRO, journal par CODE (TOSLT), taux en virgule (2,1%),
+    catégorie analytique sur TOUTES les lignes (Etablissement / nom court). Libellé de pièce
+    « <code>SM280526 #SMT03</code> » (jour en tête, lot en queue). Identifiant de lot supprimable d'un bloc.
+    Noms de fichiers préfixés <code>AAAAMMJJ HHMM</code> (heure Réunion).
+  {% endcall %}
+
+  {% call sec('s2b', '2b · Pré-vol & cadrage (verrou de génération)') %}
+    <strong>Pré-vol client (souple)</strong> : la génération est refusée uniquement si une facture de la période ne
+    se route vers aucun compte 411 ; on liste les clients à corriger.<br>
+    <strong>Cadrage</strong> : on compare le CA recalculé sur les tickets à la synthèse PDF.
+    <strong>Le CA Total (et la période) sont BLOQUANTS</strong> ; les écarts par <strong>mode de paiement</strong>
+    sont des <strong>AVERTISSEMENTS non bloquants</strong> (un ticket facturé payé comptant est classé hors « caisse »
+    par la synthèse TopOrder, alors que c'est un vrai encaissement ; le CA cadre et l'écriture est équilibrée).
+    Tolérance ± 0,05 €. Chaque génération produit un compte rendu PDF (Synthèse | API tickets | CSV agrégé, par poste).
+  {% endcall %}
+
+  {% call sec('s4', '4 · Cadrage de l\'import par Vaelan (vérification Pennylane)') %}
+    Re-jouable à tout moment. Vaelan relit les écritures TOSLT du période dans Pennylane (via l'API), les agrège
+    <strong>par compte</strong>, et compare à l'<strong>attendu</strong> = les CSV générés et stockés. Détecte toute
+    suppression / modification / ajout survenu depuis l'import. Horodate la dernière vérification (« c'était bon à
+    cette date »). Compte rendu PDF par compte (Attendu | Pennylane | OK/Écart).
+  {% endcall %}
+
+  {% call sec('s5', '5-7 · Factures (TOSLF) — à venir') %}
+    Reclassement HT du CA facturé : <strong>débit 70101 / crédit 7012 (B2B) ou 70102 (B2C)</strong> par facture
+    (net nul sur le CA total, pas de double comptage). Génération <strong>fusionnée</strong> avec les tickets
+    (1 synthèse → 2 CSV). <strong>Paiements décalés</strong> : une facture peut être réglée en caisse plus tard ;
+    deux flux par période — CA par date de ticket, règlements par date de paiement (liaison facture↔paiement via
+    <code>orderPaymentId</code>), lettrés par <code>F&lt;n°&gt;</code> à travers les périodes.
+  {% endcall %}
+
+  {% call sec('s8', '8-9 · Justificatifs & lettrage — à venir') %}
+    Étapes <strong>distinctes par type de justificatif</strong> (ex. « Attacher les PDF factures aux écritures
+    factures »), chacune finissant par un <strong>rapport de complétude</strong> (« toutes attachées, 0 écriture
+    sans PDF »). Lettrage : soldes 411 par n° de facture, rapprochés avec les règlements (caisse, virements).
+  {% endcall %}
+
+  {% call sec('cfg', 'Configuration & traçabilité') %}
+    Tous les comptes (70101/70102/7012, TVA par taux, encaissements par établissement), journaux (code + id) et
+    catégories analytiques sont <strong>éditables</strong> (page Configuration) ; seules les valeurs modifiées sont
+    stockées. Chaque tâche conserve : la synthèse fournie, le CSV généré, le compte rendu PDF, la version de Vaelan
+    et l'utilisateur. Tâches relançables ; suivi réinitialisable par établissement.
+  {% endcall %}
+
+</div>
+{% endblock %}

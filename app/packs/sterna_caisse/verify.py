@@ -126,8 +126,15 @@ def run_verify(ctx, company_code, pfx):
     ctx.set_report("\n".join(lines))
 
     now = datetime.utcnow() + _TZ
-    _record(company.id, pfx, coherent, end, now, ctx.run_id)
     stamp = now.strftime("%d/%m/%Y %H:%M")
+    from . import report
+    acc_rows = [(a, expected.get(a, 0.0), actual.get(a, 0.0), abs(expected.get(a, 0.0) - actual.get(a, 0.0)) < TOL)
+                for a in accounts]
+    ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} compte_rendu_verif_{pfx}.pdf",
+                     report.verify_pdf(establishment, journal_label, label, n_entries, used,
+                                       acc_rows, coherent, run_id=ctx.run_id, executed_at=stamp),
+                     "application/pdf")
+    _record(company.id, pfx, coherent, end, now, ctx.run_id)
     if coherent:
         ctx.log(f"✅ Cohérent — vérifié le {stamp}")
         return f"✅ Cohérent ({label}) — vérifié le {stamp}"

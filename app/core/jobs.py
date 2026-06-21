@@ -65,11 +65,12 @@ class JobContext:
 
 def start_job(kind: str, fn: Callable[[JobContext], Optional[str]],
               company_id: Optional[int] = None, pack: Optional[str] = None,
-              label: Optional[str] = None) -> int:
+              label: Optional[str] = None, user=None) -> int:
     """Crée un run et lance la fonction dans un thread daemon. Renvoie l'id du run."""
     with Session(engine) as s:
         run = Run(kind=kind, company_id=company_id, pack=pack, label=label, status="running",
-                  step="démarrage…", progress_current=0, app_version=APP_VERSION)
+                  step="démarrage…", progress_current=0, app_version=APP_VERSION,
+                  user_email=(getattr(user, "email", None) if user else None))
         s.add(run)
         s.commit()
         s.refresh(run)

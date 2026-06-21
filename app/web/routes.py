@@ -58,6 +58,93 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+# ----------------------------- Utilisateurs (admin) -----------------------------
+def _require_super(request):
+    u = current_user(request)
+    if not u:
+        return None, RedirectResponse("/login", status_code=303)
+    if not u.is_superuser:
+        return None, templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
+    return u, None
+
+
+@router.get("/regles", response_class=HTMLResponse)
+def regles(request: Request):
+    if not current_user(request):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "regles.html", _ctx(request))
+
+
+@router.get("/admin/users", response_class=HTMLResponse)
+def admin_users(request: Request):
+    from app.models import User, UserCompanyAccess
+    u, redir = _require_super(request)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        users = s.exec(select(User).order_by(User.id)).all()
+        companies = s.exec(select(Company).order_by(Company.code)).all()
+        access = {(a.user_id, a.company_id): a.role
+                  for a in s.exec(select(UserCompanyAccess)).all()}
+    return templates.TemplateResponse(request, "admin_users.html",
+                                      _ctx(request, users=users, companies=companies, access=access))
+
+
+@router.post("/admin/users/add")
+def admin_user_add(request: Request, email: str = Form(...), name: str = Form(...),
+                   password: str = Form(...), is_superuser: str = Form("")):
+    from app.models import User
+    from app.core.security import hash_password
+    u, redir = _require_super(request)
+    if redir:
+        return redir
+    em = email.lower().strip()
+    with Session(engine) as s:
+        if not s.exec(select(User).where(User.email == em)).first():
+            s.add(User(email=em, name=name.strip() or em, password_hash=hash_password(password),
+                       is_superuser=bool(is_superuser), active=True))
+            s.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/admin/users/access")
+def admin_user_access(request: Request, user_id: int = Form(...),
+                      company_id: int = Form(...), role: str = Form("")):
+    from app.models import UserCompanyAccess
+    u, redir = _require_super(request)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        a = s.exec(select(UserCompanyAccess).where(
+            UserCompanyAccess.user_id == user_id,
+            UserCompanyAccess.company_id == company_id)).first()
+        if not role:               # retirer l'accès
+            if a:
+                s.delete(a)
+        elif a:
+            a.role = role
+            s.add(a)
+        else:
+            s.add(UserCompanyAccess(user_id=user_id, company_id=company_id, role=role))
+        s.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/admin/users/{uid}/toggle")
+def admin_user_toggle(request: Request, uid: int):
+    from app.models import User
+    u, redir = _require_super(request)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        target = s.get(User, uid)
+        if target and target.id != u.id:        # on ne se désactive pas soi-même
+            target.active = not target.active
+            s.add(target)
+            s.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
 @router.get("/companies", response_class=HTMLResponse)
 def companies(request: Request):
     user = current_user(request)
@@ -125,7 +212,7 @@ def generate_run(request: Request, code: str,
     label = f"Cadrage + génération TOSLT · {short} · {date_from}→{date_to}"
     start_job("generate_toslt",
               lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data, fname),
-              company_id=company.id, pack="sterna.caisse", label=label)
+              company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
     return RedirectResponse("/jobs", status_code=303)
 
 
@@ -164,7 +251,7 @@ def import_run(request: Request, code: str,
     short = establishment.replace("OCOPAIN ", "")
     label = f"Cadrage caisse · {short} · {date_from}→{date_to}"
     start_job("cadrage", lambda ctx: run_cadrage(ctx, establishment, date_from, date_to, data, fname),
-              company_id=company.id, pack="sterna.caisse", label=label)
+              company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
     return RedirectResponse("/jobs", status_code=303)
 
 
@@ -242,8 +329,18 @@ def suivi_verify(request: Request, code: str, establishment: str = Form(...)):
     label = f"Vérif Pennylane (Tickets) · {establishment}"
     start_job("verify_pennylane",
               lambda ctx: run_verify(ctx, company.code, establishment),
-              company_id=company.id, pack="sterna.caisse", label=label)
-    return RedirectResponse(f"/c/{code}/suivi", status_code=303)
+              company_id=company.id, pack="sterna.caisse", label=label,
+              user=current_user(request))
+    return RedirectResponse("/jobs", status_code=303)   # -> page Tâches (suivi live)
+
+
+@router.post("/c/{code}/suivi/reset")
+def suivi_reset(request: Request, code: str, establishment: str = Form(...)):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    caisse_suivi.reset(company.id, establishment)
+    return RedirectResponse(f"/c/{code}", status_code=303)
 
 
 # ----------------------------- Clients (correspondance) -----------------------------
@@ -295,7 +392,8 @@ def clients_sync_action(request: Request, code: str):
     if redir:
         return redir
     start_job("sync_clients", lambda ctx: sync_clients(ctx, company.code),
-              company_id=company.id, pack="sterna.caisse", label="Synchronisation comptes clients")
+              company_id=company.id, pack="sterna.caisse", label="Synchronisation comptes clients",
+              user=current_user(request))
     return RedirectResponse("/jobs", status_code=303)
 
 
