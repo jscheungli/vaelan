@@ -163,8 +163,14 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     recon_modes = {x["mode"] for x in recon}
     fac_detail = [d for d in (fac_detail or []) if d.get("mode") in recon_modes] if recon else []
     fac_detail = sorted(fac_detail, key=lambda d: (d.get("mode", ""), d.get("date", ""), d.get("fnum", 0)))
+    # sous-totaux par mode (= l'« enveloppe » de chaque mode) + total général, pour vérifier
+    fac_subtotals = {}
+    for d in fac_detail:
+        fac_subtotals[d["mode"]] = round(fac_subtotals.get(d["mode"], 0.0) + (d.get("amount") or 0), 2)
+    fac_total = round(sum(fac_subtotals.values()), 2)
     return {"title": title, "meta": meta, "sections": sections, "reconciliation": recon,
-            "fac_detail": fac_detail, "has_csv": has_csv, "balance": balance}
+            "fac_detail": fac_detail, "fac_subtotals": fac_subtotals, "fac_total": fac_total,
+            "has_csv": has_csv, "balance": balance}
 
 
 # ---------------------------------------------------------------- rendu TEXTE
@@ -186,19 +192,33 @@ def to_text(data) -> str:
         L.append("")
     if data.get("reconciliation"):
         L.append("== RÉCONCILIATION DES ÉCARTS DE PAIEMENT ==")
+        L.append("  Les paiements de FACTURES encaissés en caisse sont comptabilisés au crédit du compte")
+        L.append("  client 411 (lettré F<n°>), alors que la synthèse les agrège dans le mode de paiement.")
+        L.append("  D'où un écart de RÉPARTITION par mode (le CA TTC total, lui, est identique). On vérifie")
+        L.append("  que chaque écart reste dans l'ENVELOPPE des paiements de factures du mode (donc explicable,")
+        L.append("  ce n'est pas une perte/excédent de caisse). L'écart est un NET : il n'égale pas l'enveloppe.")
+        L.append("")
         for x in data["reconciliation"]:
-            L.append(f"  {x['mode']} : tickets {_fmt(x['api'])} − synthèse {_fmt(x['syn'])} = écart {_fmt(x['ecart'])} €")
-            L.append(f"     → cet écart vient de paiements de factures que la synthèse classe hors « caisse ».")
-            L.append(f"     Total {x['mode']} de factures retraité (crédit 411, lettré F<n°>) : {_fmt(x['facture'])} €")
-            L.append(f"     Contrôle : écart {_fmt(x['ecart'])} ≤ {_fmt(x['facture'])} → entièrement constitué de "
-                     f"paiements de factures → COUVERT ✓")
+            env = data.get("fac_subtotals", {}).get(x["mode"], x["facture"])
+            L.append(f"  {x['mode']:<8} écart {_fmt(x['ecart']):>10} €   (tickets {_fmt(x['api'])} vs synthèse {_fmt(x['syn'])})")
+            L.append(f"           enveloppe paiements factures {x['mode']} = {_fmt(env)} €   "
+                     f"→ |écart| ≤ enveloppe → COUVERT ✓")
         if data.get("fac_detail"):
             L.append("")
-            L.append("  Détail des paiements de factures encaissés en caisse (bookés au 411) :")
+            L.append("  Détail des paiements de factures encaissés en caisse (crédit 411) :")
             L.append(f"    {'Date':<12}{'Facture':<10}{'Client':<24}{'Mode':<12}{'Montant':>12}")
+            cur_mode = None
             for d in data["fac_detail"]:
+                if cur_mode is not None and d["mode"] != cur_mode:
+                    L.append(f"    {'':<46}{('Sous-total ' + cur_mode):<12}"
+                             f"{_fmt(data['fac_subtotals'].get(cur_mode)):>12}")
+                cur_mode = d["mode"]
                 L.append(f"    {d['date']:<12}{('F' + str(d['fnum'])):<10}{(d['nm'] or '')[:22]:<24}"
                          f"{d['mode']:<12}{_fmt(d['amount']):>12}")
+            if cur_mode is not None:
+                L.append(f"    {'':<46}{('Sous-total ' + cur_mode):<12}"
+                         f"{_fmt(data['fac_subtotals'].get(cur_mode)):>12}")
+            L.append(f"    {'':<46}{'TOTAL':<12}{_fmt(data.get('fac_total')):>12}")
         L.append("")
     if data["balance"]:
         b = data["balance"]
@@ -301,23 +321,27 @@ def to_pdf(data) -> bytes:
         page.draw_rect(fitz.Rect(x0, y - 9, W - 40, y + 4), fill=_BAR, color=_BAR)
         left(x0 + 3, "Réconciliation des écarts de paiement", size=10, font="hebo", color=(0.15, 0.15, 0.22))
         nl(16)
+        # explication (une fois) : l'écart est un NET de répartition, borné par l'enveloppe
+        for ln in ["Les paiements de FACTURES encaissés en caisse sont comptabilisés au crédit du compte client 411,",
+                   "alors que la synthèse les agrège dans le mode de paiement : d'où un écart de RÉPARTITION par mode",
+                   "(le CA TTC total est identique). On vérifie que chaque écart reste dans l'ENVELOPPE des paiements",
+                   "de factures du mode (donc explicable). L'écart est un NET : il n'égale pas l'enveloppe."]:
+            ensure(11); left(x0 + 2, ln, 8, "helv", _GREY); nl(10)
+        nl(4)
         for x in data["reconciliation"]:
-            ensure(46)
-            left(x0, f"{x['mode']} : tickets {_fmt(x['api'])}  −  synthèse {_fmt(x['syn'])}  =  écart {_fmt(x['ecart'])} EUR",
+            ensure(28)
+            env = data.get("fac_subtotals", {}).get(x["mode"], x["facture"])
+            left(x0, f"{x['mode']} : écart {_fmt(x['ecart'])} EUR  (tickets {_fmt(x['api'])} vs synthèse {_fmt(x['syn'])})",
                  9, "cour", _DARK)
-            # badge COUVERT à droite
             w = fitz.get_text_length("COUVERT", fontname="hebo", fontsize=8) + 8
             page.draw_rect(fitz.Rect(BADGE_X, y - 8, BADGE_X + w, y + 2.5), fill=_GREEN, color=_GREEN)
             page.insert_text((BADGE_X + 4, y), "COUVERT", fontsize=8, fontname="hebo", color=(1, 1, 1))
-            nl(13)
-            left(x0 + 6, "Cet écart vient de paiements de factures que la synthèse classe hors « caisse ».", 8, "helv", _GREY)
-            nl(11)
-            left(x0 + 6, f"Total {x['mode']} de factures retraité (crédit 411, lettré F<n°>) : {_fmt(x['facture'])} EUR.", 8, "helv", _GREY)
-            nl(11)
-            left(x0 + 6, f"Contrôle : écart {_fmt(x['ecart'])} <= {_fmt(x['facture'])} -> entièrement constitué de paiements de factures.", 8, "helv", _GREY)
+            nl(12)
+            left(x0 + 6, f"enveloppe paiements factures {x['mode']} = {_fmt(env)} EUR  ->  |ecart| <= enveloppe  ->  couvert",
+                 8, "helv", _GREY)
             nl(15)
         if data.get("fac_detail"):
-            left(x0, "Détail des paiements de factures encaissés en caisse :", 9, "hebo", (0.2, 0.2, 0.25))
+            left(x0, "Détail des paiements de factures encaissés en caisse (crédit 411) :", 9, "hebo", (0.2, 0.2, 0.25))
             nl(13)
             left(x0 + 4, "Date", 8, "helv", _GREY)
             left(x0 + 70, "Facture", 8, "helv", _GREY)
@@ -325,14 +349,31 @@ def to_pdf(data) -> bytes:
             left(x0 + 330, "Mode", 8, "helv", _GREY)
             right(BADGE_X + 40, "Montant", 8, "helv", _GREY)
             nl(12)
+
+            def _subtotal(mode):
+                left(x0 + 140, f"Sous-total {mode}", 8, "hebo", (0.2, 0.2, 0.25))
+                right(BADGE_X + 40, _fmt(data["fac_subtotals"].get(mode)), 8, "hebo", _DARK)
+                nl(13)
+
+            cur_mode = None
             for d in data["fac_detail"]:
                 ensure(14)
+                if cur_mode is not None and d["mode"] != cur_mode:
+                    _subtotal(cur_mode)
+                cur_mode = d["mode"]
                 left(x0 + 4, d["date"], 8, "cour")
                 left(x0 + 70, "F" + str(d["fnum"]), 8, "cour")
                 left(x0 + 140, (d["nm"] or "")[:30], 8, "helv")
                 left(x0 + 330, d["mode"], 8, "helv")
                 right(BADGE_X + 40, _fmt(d["amount"]), 8, "cour")
                 nl(12)
+            if cur_mode is not None:
+                ensure(14); _subtotal(cur_mode)
+            ensure(16)
+            page.draw_rect(fitz.Rect(x0 + 138, y - 9, BADGE_X + 42, y + 3), fill=_BAR, color=_BAR)
+            left(x0 + 140, "TOTAL paiements de factures", 9, "hebo", (0.15, 0.15, 0.22))
+            right(BADGE_X + 40, _fmt(data.get("fac_total")), 9, "hebo", _DARK)
+            nl(14)
         nl(6)
 
     if data["balance"]:

@@ -200,10 +200,16 @@ def build_toslt(establishment, date_from, date_to, company_id,
 
     # Pré-vol souple : on refuse de générer si une créance de la période ne se route pas.
     if unresolved:
+        _nb2b = sum(1 for f in factures if f["b2b"])
         return {"unresolved": unresolved, "rows": [], "n_tickets": n_tickets,
                 "ca_ttc": ca_ttc_z, "payments": payments, "fac_payments": fac_payments,
                 "fac_payment_detail": fac_pay_detail,
-                "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate}
+                "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate,
+                # compteurs + CA HT/TVA pour le log et le compte rendu (CSV non généré)
+                "n_factures": len(factures), "n_b2b": _nb2b, "n_b2c": len(factures) - _nb2b,
+                "n_reglements": len(reglements),
+                "ca_ht": round(sum(ht_by_rate.values()), 2),
+                "tva": round(sum(tva_by_rate.values()), 2)}
 
     rows = []
     tot = {"ca_ht": 0.0, "tva": 0.0, "enc": 0.0, "creance": 0.0, "ecart": 0.0}
