@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}{{ cp.name if cp else account }} · Paiements · {{ company.name }}{% endblock %}
-{% macro money(v) %}{{ '%.2f €'|format(v) if v is not none else '—' }}{% endmacro %}
+{% block title %}{{ cp.name if cp else account }} · Compte client · {{ company.name }}{% endblock %}
+{% macro eur(v) %}{{ '%.2f'|format(v) if v not in (none, 0, 0.0) else '' }}{% endmacro %}
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb small">
   <li class="breadcrumb-item"><a href="/c/{{ company.code }}/paiements">Suivi des paiements</a></li>
@@ -16,85 +16,70 @@
 
 {% if err %}<div class="alert alert-danger small">Lecture Pennylane impossible : {{ err }}</div>{% endif %}
 
-{% if detail %}
-{% if detail.cutover %}
-<div class="alert alert-light border small py-2">
-  <i class="bi bi-arrow-left-right"></i> Bascule TopOrder (1<sup>re</sup> facture) : <strong>{{ detail.cutover }}</strong>.
-  Seuls les créances et virements <strong>à partir de cette date</strong> sont pris en compte (avant = ancien logiciel Kimayo).
-  {% if detail.kimayo_open %}<span class="text-muted">— {{ detail.kimayo_open }} créance(s) antérieure(s) exclue(s) ({{ '%.2f €'|format(detail.kimayo_amount) }}).</span>{% endif %}
-</div>
-{% else %}
-<div class="alert alert-warning small py-2"><i class="bi bi-exclamation-triangle"></i>
-  Aucune facture TopOrder détectée pour ce client (compte peut-être 100 % legacy Kimayo).</div>
-{% endif %}
+{% if ledger %}
 <div class="row g-2 mb-3">
   {% for lbl, val in [
-      ('Encours facturé impayé (Pennylane)', money(detail.net)),
-      ('Facturé non payé (TopOrder)', money(cp.encours_toporder if cp else 0)),
-      ('En attente de facturation', money((cp.attente_fact_courant + cp.attente_fact_anterieur) if cp else 0)),
-      ('Créance la plus ancienne', (detail.oldest_age ~ ' j') if detail.oldest_age else '—') ] %}
+      ('Total débit', '%.2f €'|format(ledger.total_debit)),
+      ('Total crédit', '%.2f €'|format(ledger.total_credit)),
+      ('Solde du compte', '%.2f €'|format(ledger.solde)),
+      ('Écritures', ledger.lines|length) ] %}
   <div class="col"><div class="card shadow-sm h-100"><div class="card-body py-2">
-    <div class="small text-muted">{{ lbl }}</div><div class="fw-bold">{{ val }}</div></div></div></div>
+    <div class="small text-muted">{{ lbl }}</div>
+    <div class="fw-bold {{ 'text-danger' if loop.index==3 and ledger.solde > 0.01 }}">{{ val }}</div>
+  </div></div></div>
   {% endfor %}
 </div>
-{% if cp and cp.ecart|abs > 0.01 %}
-<div class="alert alert-warning small py-2"><i class="bi bi-exclamation-triangle"></i>
-  Écart TopOrder − Pennylane = <strong>{{ money(cp.ecart) }}</strong> : probablement des règlements encaissés en compta
-  mais pas encore reportés dans TopOrder. Coche ci-dessous les virements une fois reportés.</div>
-{% endif %}
 
-<div class="row">
-  <div class="col-lg-5">
-    <h3 class="h6 text-uppercase text-muted">Créances ouvertes ({{ detail.open_creances|length }})</h3>
-    <table class="table table-sm">
-      <thead><tr class="small text-muted"><th>Facture</th><th>Date</th><th class="text-end">Montant</th><th class="text-end">Âge</th></tr></thead>
-      <tbody>
-      {% for c in detail.open_creances %}
-        <tr class="small"><td>{% if c.fnum %}F{{ c.fnum }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-          <td>{{ c.date }}</td><td class="text-end">{{ money(c.amount) }}</td>
-          <td class="text-end {{ 'text-danger' if c.age > 60 }}">{{ c.age }} j</td></tr>
-      {% else %}<tr><td colspan="4" class="text-muted small">Aucune créance ouverte.</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </div>
+<h3 class="h6 text-uppercase text-muted">Compte client Pennylane — grand-livre complet</h3>
+<p class="text-muted" style="font-size:.75rem;">Chaque écriture peut être taguée :
+  <span class="badge text-bg-success">Saisi</span> = reportée / rapprochée dans TopOrder ·
+  <span class="badge text-bg-secondary">Ignoré</span> = non pertinente ou déjà traitée. On garde qui &amp; quand.</p>
 
-  <div class="col-lg-7">
-    <h3 class="h6 text-uppercase text-muted">Historique des paiements ({{ detail.payments|length }})</h3>
-    <p class="text-muted" style="font-size:.75rem;">Les <span class="badge text-bg-info">virement</span> doivent être
-      reportés manuellement dans TopOrder. Coche quand c'est fait — on garde qui &amp; quand.</p>
-    <table class="table table-sm align-middle">
-      <thead><tr class="small text-muted"><th>Date</th><th>Libellé</th><th class="text-end">Montant</th><th>Reporté TopOrder</th></tr></thead>
-      <tbody>
-      {% for p in detail.payments %}
-        {% set rep = reported.get(p.id) %}
-        <tr class="small">
-          <td>{{ p.date }}</td>
-          <td>{{ p.label[:42] }}
-            {% if p.is_virement %}<span class="badge text-bg-info">virement</span>{% else %}<span class="badge text-bg-light text-muted">caisse F{{ p.fnum }}</span>{% endif %}
-            {% if p.lettered %}<i class="bi bi-link-45deg text-success" title="lettré en compta"></i>{% endif %}</td>
-          <td class="text-end">{{ money(p.amount) }}</td>
-          <td>
-            {% if p.is_virement %}
-              <form method="post" action="/c/{{ company.code }}/paiements/{{ account }}/report" class="d-inline">
-                <input type="hidden" name="line_id" value="{{ p.id }}">
-                <input type="hidden" name="amount" value="{{ p.amount }}">
-                <input type="hidden" name="op_date" value="{{ p.date }}">
-                <input type="hidden" name="label" value="{{ p.label[:80] }}">
-                {% if rep %}
-                  <button class="btn btn-sm btn-success py-0" title="Reporté par {{ rep.reported_by }} le {{ rep.reported_at.strftime('%d/%m %H:%M') }} — cliquer pour annuler">
-                    <i class="bi bi-check-circle-fill"></i> reporté</button>
-                  <div class="text-muted" style="font-size:.65rem;">{{ (rep.reported_by or '').split('@')[0] }} · {{ rep.reported_at.strftime('%d/%m %H:%M') }}</div>
-                {% else %}
-                  <button class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-square"></i> à reporter</button>
-                {% endif %}
-              </form>
-            {% else %}<span class="text-muted">—</span>{% endif %}
-          </td>
-        </tr>
-      {% else %}<tr><td colspan="4" class="text-muted small">Aucun paiement.</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </div>
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead><tr class="small text-muted">
+    <th>Date</th><th>Libellé</th><th>Journal</th>
+    <th class="text-end">Débit</th><th class="text-end">Crédit</th>
+    <th class="text-center">Lettré</th><th class="text-end">Solde</th><th class="text-center">Tag</th>
+  </tr></thead>
+  <tbody>
+  {% for l in ledger.lines %}
+    {% set tag = tags.get(l.id) %}
+    <tr class="small {{ 'table-success' if tag and tag.status=='saisi' else ('text-muted' if tag and tag.status=='ignore') }}">
+      <td class="text-nowrap">{{ l.date }}</td>
+      <td>{{ l.label[:48] }}
+        {% if l.is_virement %}<span class="badge text-bg-info">virement</span>{% endif %}</td>
+      <td><span class="text-muted" style="font-size:.7rem;">{{ l.journal or '' }}</span></td>
+      <td class="text-end">{{ eur(l.debit) }}</td>
+      <td class="text-end">{{ eur(l.credit) }}</td>
+      <td class="text-center">{% if l.lettered %}<i class="bi bi-link-45deg text-success" title="lettré"></i>{% endif %}</td>
+      <td class="text-end text-nowrap">{{ '%.2f'|format(l.balance) }}</td>
+      <td class="text-center text-nowrap">
+        <form method="post" action="/c/{{ company.code }}/paiements/{{ account }}/tag" class="d-inline">
+          <input type="hidden" name="line_id" value="{{ l.id }}">
+          <input type="hidden" name="amount" value="{{ l.credit or l.debit }}">
+          <input type="hidden" name="op_date" value="{{ l.date }}">
+          <input type="hidden" name="label" value="{{ l.label[:80] }}">
+          <button name="status" value="saisi" class="btn btn-sm py-0 px-1 {{ 'btn-success' if tag and tag.status=='saisi' else 'btn-outline-success' }}" title="Saisi / rapproché dans TopOrder"><i class="bi bi-check2"></i></button>
+          <button name="status" value="ignore" class="btn btn-sm py-0 px-1 {{ 'btn-secondary' if tag and tag.status=='ignore' else 'btn-outline-secondary' }}" title="Ignorer (non pertinent / déjà traité)"><i class="bi bi-slash-circle"></i></button>
+        </form>
+        {% if tag %}<div class="text-muted" style="font-size:.62rem;">{{ (tag.reported_by or '').split('@')[0] }} · {{ tag.reported_at.strftime('%d/%m %H:%M') }}</div>{% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="text-muted small">Aucune écriture sur ce compte.</td></tr>
+  {% endfor %}
+  </tbody>
+  <tfoot><tr class="fw-semibold">
+    <td colspan="3" class="text-end small">Totaux</td>
+    <td class="text-end">{{ '%.2f'|format(ledger.total_debit) }}</td>
+    <td class="text-end">{{ '%.2f'|format(ledger.total_credit) }}</td>
+    <td></td><td class="text-end">{{ '%.2f'|format(ledger.solde) }}</td><td></td>
+  </tr></tfoot>
+</table>
 </div>
+
+<div class="alert alert-light border small mt-2"><i class="bi bi-info-circle"></i>
+  <strong>À venir</strong> : le côté TopOrder (factures, paiements, avoirs) en regard, pour rapprocher les deux comptes ligne à ligne.</div>
 {% endif %}
 {% endblock %}

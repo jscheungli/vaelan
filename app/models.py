@@ -181,15 +181,17 @@ class ClientPayment(SQLModel, table=True):
 
 
 class PaymentReport(SQLModel, table=True):
-    """Traçabilité : un paiement (virement) reporté manuellement dans TopOrder.
+    """Tag manuel posé sur une écriture du compte client Pennylane (traçabilité).
 
-    Clé = ligne d'écriture Pennylane (ledger_entry_line_id) pour l'idempotence — un
-    virement arrivé après coup ne crée pas de doublon. On garde QUI a coché et QUAND."""
+    status : « saisi » (reporté/rapproché dans TopOrder) ou « ignore » (non pertinent /
+    déjà traité). Clé = ligne Pennylane (ledger_entry_line_id, idempotent). On garde QUI
+    a tagué et QUAND."""
     __tablename__ = "payment_reports"
     id: Optional[int] = Field(default=None, primary_key=True)
     company_id: int = Field(foreign_key="companies.id", index=True)
     account: str = Field(index=True)
     ledger_entry_line_id: int = Field(sa_column=Column(BigInteger, index=True, unique=True))
+    status: str = "saisi"                              # saisi / ignore
     amount: Optional[float] = None
     op_date: Optional[str] = None
     label: Optional[str] = None

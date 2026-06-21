@@ -414,38 +414,47 @@ def paiements_client(request: Request, code: str, account: str):
     with Session(engine) as s:
         cp = s.exec(select(ClientPayment).where(
             ClientPayment.company_id == company.id, ClientPayment.account == account)).first()
-        reported = {r.ledger_entry_line_id: r for r in s.exec(select(PaymentReport).where(
+        tags = {r.ledger_entry_line_id: r for r in s.exec(select(PaymentReport).where(
             PaymentReport.company_id == company.id, PaymentReport.account == account)).all()}
-    detail, err = None, None
+    ledger, err = None, None
     try:
-        detail = caisse_payments.pennylane_client(company.code, account)
+        ledger = caisse_payments.account_ledger(company.code, account)
     except Exception as e:
         err = str(e)[:200]
     return templates.TemplateResponse(request, "paiements_client.html",
                                       _ctx(request, company=company, account=account, cp=cp,
-                                           detail=detail, reported=reported, err=err))
+                                           ledger=ledger, tags=tags, err=err))
 
 
-@router.post("/c/{code}/paiements/{account}/report")
-def paiements_report(request: Request, code: str, account: str,
-                     line_id: int = Form(...), amount: str = Form(""),
-                     op_date: str = Form(""), label: str = Form("")):
+@router.post("/c/{code}/paiements/{account}/tag")
+def paiements_tag(request: Request, code: str, account: str,
+                  line_id: int = Form(...), status: str = Form(...), amount: str = Form(""),
+                  op_date: str = Form(""), label: str = Form("")):
+    """Tague une écriture du compte client : « saisi » (reporté dans TopOrder) ou
+    « ignore ». Re-cliquer le même statut = retirer le tag (bascule). Traçabilité qui/quand."""
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
+    if status not in ("saisi", "ignore"):
+        return RedirectResponse(f"/c/{code}/paiements/{account}", status_code=303)
     u = current_user(request)
     with Session(engine) as s:
         existing = s.exec(select(PaymentReport).where(
             PaymentReport.ledger_entry_line_id == line_id)).first()
-        if existing:
-            s.delete(existing)                      # re-cocher = décocher (bascule)
+        if existing and existing.status == status:
+            s.delete(existing)                          # même statut re-cliqué -> on retire
+        elif existing:
+            existing.status = status                    # change de statut
+            existing.reported_by = (u.email if u else None)
+            existing.reported_at = datetime.utcnow()
+            s.add(existing)
         else:
             try:
                 amt = float(amount)
             except ValueError:
                 amt = None
             s.add(PaymentReport(company_id=company.id, account=account, ledger_entry_line_id=line_id,
-                                amount=amt, op_date=op_date or None, label=label or None,
+                                status=status, amount=amt, op_date=op_date or None, label=label or None,
                                 reported_by=(u.email if u else None)))
         s.commit()
     return RedirectResponse(f"/c/{code}/paiements/{account}", status_code=303)

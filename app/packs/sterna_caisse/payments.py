@@ -103,6 +103,38 @@ def pennylane_client(company_code, account, pl=None):
             "kimayo_open": kimayo_open, "kimayo_amount": round(kimayo_amount, 2)}
 
 
+def account_ledger(company_code, account, pl=None):
+    """Reproduction INTÉGRALE du compte client 411 Pennylane : toutes les écritures
+    (date, libellé, journal, débit, crédit, lettrage) triées, avec SOLDE courant ligne
+    à ligne + totaux et solde final. Sert au grand-livre de la page paiements."""
+    pl = pl or pennylane.for_company(company_code)
+    acc = pl.find_account(account)
+    if not acc:
+        return None
+    lines = []
+    for l in pl.account_lines(acc["id"]):
+        deb = round(float(l.get("debit") or 0), 2)
+        cred = round(float(l.get("credit") or 0), 2)
+        jr = l.get("journal")
+        fnum = _fac_from_label(l.get("label"))
+        lines.append({
+            "id": l["id"], "date": l.get("date"), "label": l.get("label") or "",
+            "journal": (jr.get("code") or jr.get("label")) if isinstance(jr, dict) else None,
+            "debit": deb, "credit": cred, "fnum": fnum,
+            "lettered": bool((l.get("lettered_ledger_entry_lines") or {}).get("ids")),
+            "is_virement": cred > deb and fnum is None,   # crédit sans réf. = virement banque
+        })
+    lines.sort(key=lambda x: (x["date"] or "", x["id"]))
+    bal = tot_d = tot_c = 0.0
+    for x in lines:
+        bal += x["debit"] - x["credit"]
+        x["balance"] = round(bal, 2)
+        tot_d += x["debit"]
+        tot_c += x["credit"]
+    return {"lines": lines, "total_debit": round(tot_d, 2), "total_credit": round(tot_c, 2),
+            "solde": round(tot_d - tot_c, 2), "letterable": bool(acc.get("letterable"))}
+
+
 def _pdate(d):
     if not d:
         return None

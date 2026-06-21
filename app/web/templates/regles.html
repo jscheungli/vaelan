@@ -127,6 +127,12 @@
     <strong>virements</strong> (crédits du journal de banque) à <strong>reporter manuellement dans TopOrder</strong> :
     une case à cocher trace <strong>qui</strong> l'a reporté et <strong>quand</strong> (clé = ligne Pennylane, idempotent).
     Recherche, filtres (écart / à reporter / encours), tri colonnes, pagination.
+    <br><strong>Détail client = grand-livre complet du compte 411 Pennylane</strong> : toutes les écritures (date,
+    libellé, journal, débit, crédit, état de lettrage) avec <strong>solde courant ligne à ligne</strong> + totaux et
+    solde final. Chaque écriture est <strong>tagable</strong> : <em>Saisi</em> (reportée / rapprochée dans TopOrder) ou
+    <em>Ignoré</em> (non pertinente / déjà traitée), avec traçabilité qui &amp; quand (table <code>PaymentReport</code>,
+    clé = ligne Pennylane). <em>À venir : le côté TopOrder (factures, paiements, avoirs) en regard pour rapprocher
+    les deux comptes ligne à ligne.</em>
     <br><strong>Bascule Kimayo → TopOrder :</strong> avant TopOrder, la facturation passait par Kimayo. Pour chaque
     client, le <strong>cutover</strong> = date de sa <strong>1<sup>re</sup> facture TopOrder</strong> (plus ancienne créance
     <code>F&lt;n°&gt;</code>). On ne compte <strong>que</strong> les créances et virements <strong>à partir de cette date</strong> :
