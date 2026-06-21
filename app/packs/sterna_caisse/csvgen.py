@@ -98,7 +98,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
 
     agg = defaultdict(lambda: {"vat": defaultdict(lambda: [0.0, 0.0]),
                                "pay": defaultdict(float)})
-    crean = []
+    factures = []
     unresolved = []
     n_tickets = 0
     tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
@@ -140,19 +140,18 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 paysum += amt
             tot_ttc += ttc
             recv = round(ttc - paysum, 2)
-            if recv > 0.01:   # facturé à crédit -> écriture autonome
+            fnum = tk2fac.get(tk.get("id")) or (tk.get("rootTicketId") and tk2fac.get(tk["rootTicketId"]))
+            if fnum:          # FACTURÉ (comptant ou crédit) -> écriture par facture
                 coid, cid = tk.get("companyId"), tk.get("customerId")
                 a, nm = resolve(pfx, coid, cid)
-                fnum = tk2fac.get(tk.get("id")) or (tk.get("rootTicketId") and tk2fac.get(tk["rootTicketId"]))
                 if not a:
                     unresolved.append({"date": dd, "company_id": coid, "customer_id": cid,
-                                       "facture": (f"{int(fnum):07d}" if fnum else None),
-                                       "amount": recv})
+                                       "facture": f"{int(fnum):07d}", "amount": round(ttc, 2)})
                     continue
-                crean.append({"date": dd, "fnum": int(fnum) if fnum else 0,
-                              "acc": a, "nm": nm, "vat": dict(vat), "pay": dict(pay),
-                              "recv": recv})
-            else:             # anonyme / payé comptant -> agrégat journalier
+                factures.append({"date": dd, "fnum": int(fnum), "acc": a, "nm": nm,
+                                 "vat": dict(vat), "pay": dict(pay), "ttc": round(ttc, 2),
+                                 "recv": recv})
+            else:             # anonyme -> agrégat journalier
                 d = agg[dd]
                 for r, (ht, t) in vat.items():
                     d["vat"][r][0] += ht
@@ -181,8 +180,9 @@ def build_toslt(establishment, date_from, date_to, company_id,
     rows = []
     tot = {"ca_ht": 0.0, "tva": 0.0, "enc": 0.0, "creance": 0.0, "ecart": 0.0}
 
-    def emit(date, piece, vat, pay, cre_acc=None, cre_amt=0.0, cre_nm=None, cre_fnum=None):
-        ttcsum = sum(v[1] for v in vat.values())
+    def _ca_lines(date, piece, vat):
+        """Crédit 70101/taux + TVA (le CA, gardé dans le Z). Renvoie le TTC."""
+        ttcsum = 0.0
         for r, (ht, ttc_) in sorted(vat.items()):
             if ttc_ == 0:
                 continue
@@ -190,10 +190,17 @@ def build_toslt(establishment, date_from, date_to, company_id,
             rows.append([date, journal, ca_acc, "Vente Caisse Magasin (Tickets)",
                          f"CA HT {rl}", rl, piece, "", f"{ht:.2f}", cat_family, cat_label, ""])
             tot["ca_ht"] += ht
+            ttcsum += ht
             if r in tva_acc and ttc_ - ht > 0.005:
                 rows.append([date, journal, tva_acc[r], f"TVA collectée {rl}",
                              f"TVA {rl}", "", piece, "", f"{ttc_ - ht:.2f}", cat_family, cat_label, ""])
                 tot["tva"] += ttc_ - ht
+                ttcsum += ttc_ - ht
+        return round(ttcsum, 2)
+
+    def emit_agg(date, piece, vat, pay):
+        """Écriture journalière ANONYME : CA + encaissements + écart de caisse."""
+        ttcsum = _ca_lines(date, piece, vat)
         enc = 0.0
         for pt, amt in sorted(pay.items()):
             if abs(amt) < 0.005:
@@ -205,16 +212,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", cat_family, cat_label, ""])
             enc += amt
         tot["enc"] += enc
-        if cre_acc is not None:
-            # lettrage F<n°> sur la créance 411 -> solde au règlement du client
-            lettr = f"F{cre_fnum}" if cre_fnum else ""
-            rows.append([date, journal, str(cre_acc), "Créance client",
-                         f"Créance {cre_fnum:07d} · {cre_nm}", "", piece,
-                         f"{cre_amt:.2f}", "", cat_family, cat_label, lettr])
-            tot["creance"] += cre_amt
-            ec = round(ttcsum - enc - cre_amt, 2)
-        else:
-            ec = round(ttcsum - enc, 2)
+        ec = round(ttcsum - enc, 2)
         if abs(ec) >= 0.01:
             rows.append([date, journal, ecart_acc, "Écart de caisse / avance",
                          ("Avance/dépôt" if ec < 0 else "Écart de caisse"), "", piece,
@@ -222,23 +220,54 @@ def build_toslt(establishment, date_from, date_to, company_id,
                          cat_family, cat_label, ""])
             tot["ecart"] += ec
 
+    def emit_facture(date, piece, fnum, acc411, nm, vat, pay):
+        """Écriture par FACTURE : CA + débit 411 (brut TTC) + ventilation des
+        paiements (débit encaissement + crédit 411). Lettrage F<n°>. Le solde 411
+        restant = créance (impayé)."""
+        lettr = f"F{fnum}"
+        ttcsum = _ca_lines(date, piece, vat)
+        # la facture : débit 411 du montant brut (TTC)
+        rows.append([date, journal, str(acc411), "Client - facture",
+                     f"Facture {fnum:07d} · {nm}", "", piece,
+                     f"{ttcsum:.2f}", "", cat_family, cat_label, lettr])
+        paid = 0.0
+        for pt, amt in sorted(pay.items()):
+            if abs(amt) < 0.005:
+                continue
+            pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
+            # encaissement (banque) + crédit 411 (règlement, lettré F<n°>)
+            if amt > 0:
+                rows.append([date, journal, pacc, pt, f"{pt} facture {fnum:07d}", "", piece,
+                             f"{amt:.2f}", "", cat_family, cat_label, ""])
+                rows.append([date, journal, str(acc411), "Règlement client",
+                             f"Règlement {pt} F{fnum:07d}", "", piece, "", f"{amt:.2f}",
+                             cat_family, cat_label, lettr])
+            else:  # rendu : sens inversé
+                rows.append([date, journal, pacc, pt, f"{pt} facture {fnum:07d} (rendu)", "", piece,
+                             "", f"{-amt:.2f}", cat_family, cat_label, ""])
+                rows.append([date, journal, str(acc411), "Règlement client",
+                             f"Règlement {pt} F{fnum:07d} (rendu)", "", piece, f"{-amt:.2f}", "",
+                             cat_family, cat_label, lettr])
+            paid += amt
+        tot["enc"] += paid
+        tot["creance"] += round(ttcsum - paid, 2)   # 411 restant = impayé
+
     def piece_for(date, suffix=""):
         # pièce du jour en tête (lisible pour le rapprochement espèces/CB/…),
-        # identifiant de lot en queue avec « # » -> lot repérable/supprimable d'un bloc.
-        # ex. « SM280526 #SMT03 » ; créance « SM020626-F0000019 #SMT03 »
+        # identifiant de lot en queue avec « # ». ex. « SM280526 #SMT03 »
         return f"{pfx}{date[8:10]}{date[5:7]}{date[2:4]}{suffix} #{batch_code}"
 
     for dt in sorted(agg):
-        emit(dt, piece_for(dt), agg[dt]["vat"], agg[dt]["pay"])
-    for c in sorted(crean, key=lambda x: (x["date"], x["fnum"])):
-        emit(c["date"], piece_for(c["date"], f"-F{c['fnum']:07d}"),
-             c["vat"], c["pay"], c["acc"], c["recv"], c["nm"], c["fnum"])
+        emit_agg(dt, piece_for(dt), agg[dt]["vat"], agg[dt]["pay"])
+    for f in sorted(factures, key=lambda x: (x["date"], x["fnum"])):
+        emit_facture(f["date"], piece_for(f["date"], f"-F{f['fnum']:07d}"),
+                     f["fnum"], f["acc"], f["nm"], f["vat"], f["pay"])
 
     deb = sum(float(r[7]) for r in rows if r[7])
     cred = sum(float(r[8]) for r in rows if r[8])
     return {
         "header": HEADER, "rows": rows, "unresolved": [],
-        "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(crean),
+        "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(factures),
         "ca_ttc": ca_ttc_z, "payments": payments,
         "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate,
         "ca_ht": round(tot["ca_ht"], 2), "tva": round(tot["tva"], 2),
