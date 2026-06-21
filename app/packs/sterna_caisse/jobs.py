@@ -43,41 +43,34 @@ def _batch_code(company_id, pfx, kind):
 
 
 def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to, fac_payments=None):
-    """Compare le calcul tickets à la synthèse.
+    """Compare le calcul Vaelan à la synthèse.
 
     Renvoie (blocking, warnings) :
       - blocking : période + CA Total (la vérité fiscale) -> empêchent la génération ;
-      - warnings : écarts par MODE DE PAIEMENT NON expliqués.
-    Un écart de mode de paiement est RÉCONCILIÉ (donc OK, pas un warning) s'il est
-    couvert par les paiements de FACTURES encaissés en caisse (`fac_payments`) : la
-    synthèse TopOrder classe certains paiements facturés hors « caisse », mais Vaelan
-    les a bien bookés au crédit du 411 (lettrés). On vérifie que l'écart ne vient pas
-    de nulle part : |écart| <= paiements de factures du même mode.
+      - warnings : écarts par MODE DE PAIEMENT (encaissements).
+    Depuis le moteur 2 flux (encaissements = ticketpaymentdata par date de paiement),
+    les encaissements par mode DOIVENT être identiques à la synthèse. Un écart n'est
+    donc plus « réconcilié » : c'est une vraie anomalie (warning, affichée en rouge
+    dans le compte rendu). Le CA Total reste le seul contrôle bloquant.
     """
     if syn.get("ca_total") is None:
         return ["synthèse illisible (CA Total introuvable)"], []
-    fac_payments = fac_payments or {}
     blocking, warnings = [], []
     p = syn.get("period")
     if p and (p["date_from"] != date_from or p["date_to"] != date_to):
         blocking.append(f"période synthèse {p['date_from']}→{p['date_to']} ≠ demandée")
     diff = round((ca_ttc or 0) - syn["ca_total"], 2)
-    ctx.log(f"Cadrage CA : tickets {ca_ttc:.2f} vs synthèse {syn['ca_total']:.2f} → écart {diff:+.2f}")
+    ctx.log(f"Cadrage CA : Vaelan {ca_ttc:.2f} vs synthèse {syn['ca_total']:.2f} → écart {diff:+.2f}")
     if abs(diff) >= 0.05:
         blocking.append(f"écart CA {diff:+.2f} €")
     for mode, synv in (syn.get("payments") or {}).items():
         ourv = (payments or {}).get(mode, 0.0)
         d = round(ourv - synv, 2)
         if abs(d) < 0.05:
-            ctx.log(f"  {mode} : tickets {ourv:.2f} = synthèse {synv:.2f}")
-            continue
-        facv = fac_payments.get(mode, 0.0)
-        if abs(d) <= abs(facv) + 0.05:   # écart couvert par les paiements de factures -> réconcilié
-            ctx.log(f"  {mode} : écart {d:+.2f} RÉCONCILIÉ ✓ (paiements de factures encaissés "
-                    f"{facv:.2f} ≥ écart, bookés au crédit du 411)")
+            ctx.log(f"  {mode} : encaissé {ourv:.2f} = synthèse {synv:.2f}")
         else:
-            ctx.log(f"  {mode} : écart {d:+.2f} NON expliqué ⚠️ (paiements factures {facv:.2f} < écart)")
-            warnings.append(f"{mode} {d:+.2f} € non expliqué")
+            ctx.log(f"  {mode} : encaissé {ourv:.2f} vs synthèse {synv:.2f} → écart {d:+.2f} ⚠️")
+            warnings.append(f"{mode} {d:+.2f} €")
     return blocking, warnings
 
 
