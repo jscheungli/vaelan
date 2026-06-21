@@ -8,10 +8,11 @@ import json
 import os
 
 # établissement -> shop_id TopOrder + préfixe court
+# Ordre d'affichage habituel : Sainte-Marie, La Possession, Saint-Leu (menus + tableau de suivi).
 ESTABLISHMENTS = {
-    "OCOPAIN SAINT-LEU":     {"pfx": "SL", "shop_id": "08de7f5e-07cb-4114-8211-0a8c8b7e012a"},
-    "OCOPAIN LA POSSESSION": {"pfx": "LP", "shop_id": "08de7f5e-5e84-444a-8c9a-f7e86ed0e785"},
     "OCOPAIN SAINTE-MARIE":  {"pfx": "SM", "shop_id": "08de7f5d-bc8d-407f-850c-e5c0dded9eea"},
+    "OCOPAIN LA POSSESSION": {"pfx": "LP", "shop_id": "08de7f5e-5e84-444a-8c9a-f7e86ed0e785"},
+    "OCOPAIN SAINT-LEU":     {"pfx": "SL", "shop_id": "08de7f5e-07cb-4114-8211-0a8c8b7e012a"},
 }
 
 # Comptes Pennylane STERNA (numéros), par préfixe d'établissement.

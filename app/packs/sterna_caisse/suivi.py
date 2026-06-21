@@ -103,7 +103,7 @@ def _cell(stp, pfx, clients, batches, decls, last_sync, target):
         if d and d.covered_to:
             st = "declared" if d.covered_to >= target else "todo"
             return {"state": st, "coverage": _date(d.covered_to),
-                    "realized": _dl(d.done_at), "act": "declare", "step": stp["key"],
+                    "realized": _dl(d.done_at), "by": d.declared_by, "act": "declare", "step": stp["key"],
                     "text": (None if st == "declared" else "mois à clôturer")}
         return {"state": "todo", "text": "à déclarer", "act": "declare", "step": stp["key"]}
 
@@ -137,7 +137,7 @@ def reset(company_id, establishment):
         s.commit()
 
 
-def declare(company_id, establishment, step, covered_to, undo=False):
+def declare(company_id, establishment, step, covered_to, undo=False, user_email=None):
     with Session(engine) as s:
         d = s.exec(select(StepDeclaration).where(
             StepDeclaration.company_id == company_id, StepDeclaration.establishment == establishment,
@@ -151,6 +151,7 @@ def declare(company_id, establishment, step, covered_to, undo=False):
             d = StepDeclaration(company_id=company_id, establishment=establishment, step=step)
         d.covered_to = covered_to
         d.done_at = datetime.utcnow() + _TZ
+        d.declared_by = user_email
         d.state = "declared"
         d.updated_at = datetime.utcnow()
         s.add(d)

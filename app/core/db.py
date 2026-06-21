@@ -32,6 +32,7 @@ _COLUMN_ADDS = [
     "ALTER TABLE step_declarations ADD COLUMN IF NOT EXISTS verify_ok BOOLEAN",
     "ALTER TABLE step_declarations ADD COLUMN IF NOT EXISTS verify_run_id INTEGER",
     "ALTER TABLE step_declarations ADD COLUMN IF NOT EXISTS done_at TIMESTAMP",
+    "ALTER TABLE step_declarations ADD COLUMN IF NOT EXISTS declared_by VARCHAR",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_name VARCHAR",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_reg_no VARCHAR",
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_external_ref VARCHAR",

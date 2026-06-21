@@ -143,6 +143,7 @@ class StepDeclaration(SQLModel, table=True):
     state: str = "declared"                        # declared / verified
     covered_to: Optional[date] = None              # fait JUSQU'AU (date de couverture)
     done_at: Optional[datetime] = None             # réalisé/déclaré le (heure Réunion)
+    declared_by: Optional[str] = None              # email de l'utilisateur qui a déclaré
     note: Optional[str] = None
     verified_at: Optional[datetime] = None         # dernière vérification Pennylane
     verify_ok: Optional[bool] = None               # cohérent (True) / écart (False)

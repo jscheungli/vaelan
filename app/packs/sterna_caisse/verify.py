@@ -7,6 +7,7 @@ horodate la dernière vérification (on sait que « c'était bon à cette date �
 """
 import csv as _csv
 import io
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -100,6 +101,7 @@ def _actual_by_account(pl, journal_ids, start, end):
         entries = pl.ledger_entries(jid, start.isoformat(), end.isoformat())
         n += len(entries)
         for e in entries:
+            time.sleep(0.06)        # rythme gentil pour éviter le 429 (en plus du retry)
             for l in pl.entry_lines(e["id"]):
                 acc = (l.get("ledger_account") or {}).get("number")
                 if not acc:

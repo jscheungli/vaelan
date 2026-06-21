@@ -317,7 +317,9 @@ def suivi_declare(request: Request, code: str, establishment: str = Form(...),
             cov = _date.fromisoformat(covered_to)
         except ValueError:
             cov = None
-    caisse_suivi.declare(company.id, establishment, step, cov, undo=bool(undo))
+    u = current_user(request)
+    caisse_suivi.declare(company.id, establishment, step, cov, undo=bool(undo),
+                         user_email=(u.email if u else None))
     return RedirectResponse(f"/c/{code}/suivi", status_code=303)
 
 

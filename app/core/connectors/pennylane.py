@@ -1,5 +1,6 @@
 """Connecteur Pennylane (une clé par société, en variable d'environnement)."""
 import os
+import time
 from typing import Optional
 import httpx
 
@@ -12,8 +13,15 @@ class PennylaneClient:
         self._h = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
     def get(self, path: str, **params):
-        with httpx.Client(timeout=60) as c:
-            r = c.get(self.base_url + path, headers=self._h, params=params)
+        # Retry sur 429 (rate limit) : la vérif fait beaucoup d'appels rapprochés
+        # (N+1 sur les lignes d'écriture). On respecte Retry-After + backoff progressif.
+        for attempt in range(6):
+            with httpx.Client(timeout=60) as c:
+                r = c.get(self.base_url + path, headers=self._h, params=params)
+            if r.status_code == 429 and attempt < 5:
+                wait = float(r.headers.get("Retry-After") or 0) or (1.5 * (attempt + 1))
+                time.sleep(min(wait, 10))
+                continue
             r.raise_for_status()
             return r.json()
 

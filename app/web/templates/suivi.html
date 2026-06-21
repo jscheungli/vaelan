@@ -16,7 +16,7 @@
     {% endif %}
 
     {% if c.coverage %}<span class="text-dark" style="font-size:.72rem;">jusqu'au <strong>{{ c.coverage }}</strong></span>{% endif %}
-    {% if c.realized %}<span class="text-muted" style="font-size:.7rem;">réalisé {{ c.realized }}</span>{% endif %}
+    {% if c.realized %}<span class="text-muted" style="font-size:.7rem;">réalisé {{ c.realized }}{% if c.by %} · par {{ c.by.split('@')[0] }}{% endif %}</span>{% endif %}
 
     {% if c.act == 'link' %}
       {% set href = '/c/' + company.code + ('/clients' if step.key == 'clients' else '/import') %}
@@ -40,7 +40,7 @@
           <input type="hidden" name="establishment" value="{{ est }}">
           <button class="btn btn-outline-dark btn-sm py-0" style="font-size:.72rem;" title="Relire Pennylane et confirmer"><i class="bi bi-shield-check"></i> Vérifier</button>
         </form>
-        {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/report" class="small" title="Compte rendu"><i class="bi bi-file-text"></i></a>{% endif %}
+        {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
       </div>
     {% endif %}
   </div>
