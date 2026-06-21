@@ -19,11 +19,11 @@ _TZ = timedelta(hours=4)   # La Réunion (affichage)
 # Les 9 étapes de la séquence de clôture (lignes du tableau).
 STEPS = [
     {"n": "1", "key": "clients", "label": "Synchronisation des clients", "kind": "clients"},
-    {"n": "2", "key": "gen_tickets", "label": "Génération du CSV — écritures Tickets", "kind": "gen"},
+    {"n": "2", "key": "gen_tickets", "label": "Génération du CSV — écritures Tickets", "kind": "gen", "bkind": "toslt"},
     {"n": "3", "key": "import_tickets", "label": "Import des écritures Tickets dans Pennylane", "kind": "declare"},
     {"n": "4", "key": "verify_tickets", "label": "Cadrage de l'import Tickets par Vaelan", "kind": "verify"},
-    {"n": "5", "key": "gen_factures", "label": "Génération du CSV — écritures Factures", "kind": "soon"},
-    {"n": "6", "key": "import_factures", "label": "Import des écritures Factures dans Pennylane", "kind": "soon"},
+    {"n": "5", "key": "gen_factures", "label": "Génération du CSV — écritures Factures", "kind": "gen", "bkind": "toslf"},
+    {"n": "6", "key": "import_factures", "label": "Import des écritures Factures dans Pennylane", "kind": "declare"},
     {"n": "7", "key": "verify_factures", "label": "Cadrage de l'import Factures par Vaelan", "kind": "soon"},
     {"n": "8", "key": "justificatifs", "label": "Import des justificatifs (PDF factures) par Vaelan", "kind": "soon"},
     {"n": "9", "key": "lettrage", "label": "Lettrage des comptes", "kind": "soon"},
@@ -53,7 +53,8 @@ def build_board(company):
     with Session(engine) as s:
         clients = s.exec(select(ClientAccount).where(ClientAccount.company_id == company.id)).all()
         batches = s.exec(select(ImportBatch).where(
-            ImportBatch.company_id == company.id, ImportBatch.kind == "toslt")).all()
+            ImportBatch.company_id == company.id,
+            ImportBatch.kind.in_(["toslt", "toslf"]))).all()
         decls = {(d.establishment, d.step): d for d in s.exec(select(StepDeclaration).where(
             StepDeclaration.company_id == company.id)).all()}
         last_sync = s.exec(select(Run).where(
@@ -91,7 +92,7 @@ def _cell(stp, pfx, clients, batches, decls, last_sync, target):
         return {"state": "done", "text": "ok", "realized": realized, "act": "link"}
 
     if kind == "gen":
-        bs = [b for b in batches if b.establishment == pfx]
+        bs = [b for b in batches if b.establishment == pfx and b.kind == stp.get("bkind", "toslt")]
         if not bs:
             return {"state": "todo", "text": "à générer", "act": "link"}
         covered = max(b.date_to for b in bs)

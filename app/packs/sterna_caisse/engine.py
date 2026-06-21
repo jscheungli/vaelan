@@ -31,8 +31,14 @@ def _get(client, path, _tries=6, **params):
 
 
 def _fac_ticketids(client, shop_id):
-    """ticketId/rootTicketId facturés -> n° de facture (continousSequence)."""
-    tk2fac, frm = {}, 0
+    """ticketId/rootTicketId facturés -> n° de facture (continousSequence).
+
+    Renvoie aussi `op2fac` : orderPaymentId -> n° de facture (depuis
+    `linkedOrderPayment`). Sert à reconnaître, en caisse, un règlement de facture
+    (y compris décalé) : un paiement dont l'orderPaymentId est lié à une facture.
+    """
+    import json
+    tk2fac, op2fac, frm = {}, {}, 0
     while True:
         b = _get(client, f"/ppe/invoice/shop/{shop_id}", PaginationFrom=frm, PaginationTo=frm + 99)
         if not b:
@@ -43,10 +49,16 @@ def _fac_ticketids(client, shop_id):
                 tk2fac[i["ticketId"]] = n
             if i.get("rootTicketId"):
                 tk2fac[i["rootTicketId"]] = n
+            lop = i.get("linkedOrderPayment")
+            try:
+                for oid in (json.loads(lop) if lop else []):
+                    op2fac[oid] = n
+            except (ValueError, TypeError):
+                pass
         frm += len(b)
         if frm > 3000:
             break
-    return tk2fac
+    return tk2fac, op2fac
 
 
 def compute_ca(establishment: str, date_from: str, date_to: str, on_progress=None) -> dict:
@@ -58,7 +70,7 @@ def compute_ca(establishment: str, date_from: str, date_to: str, on_progress=Non
         raise RuntimeError(f"Clé TopOrder absente pour {establishment} "
                            f"({toporder.env_var_for(establishment)})")
 
-    tk2fac = _fac_ticketids(client, shop_id)
+    tk2fac, _op2fac = _fac_ticketids(client, shop_id)
     to = int(time.mktime(time.strptime(date_to, "%Y-%m-%d"))) + 4 * 3600 + 24 * 3600
 
     vat = defaultdict(lambda: [0.0, 0.0])   # taux -> [HT, TTC]

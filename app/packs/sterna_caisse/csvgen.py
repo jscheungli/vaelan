@@ -71,8 +71,9 @@ def _resolver(company_id: int, cfg: dict):
 
 
 def build_toslt(establishment, date_from, date_to, company_id,
-                batch_code, company_code, on_progress=None) -> dict:
-    """Construit les lignes du CSV TOSLT. Ne touche à rien si `unresolved` non vide."""
+                batch_code, company_code, toslf_batch_code=None, on_progress=None) -> dict:
+    """Construit les lignes des CSV TOSLT (caisse) ET TOSLF (reclassement factures),
+    en un seul pull. Ne touche à rien si `unresolved` non vide."""
     est = config.ESTABLISHMENTS[establishment]
     pfx = est["pfx"]
     shop_id = est["shop_id"]
@@ -93,12 +94,13 @@ def build_toslt(establishment, date_from, date_to, company_id,
     ecart_acc = acc["ecart"]
 
     import time
-    tk2fac = _fac_ticketids(client, shop_id)
+    tk2fac, op2fac = _fac_ticketids(client, shop_id)
     to = int(time.mktime(time.strptime(date_to, "%Y-%m-%d"))) + 4 * 3600 + 24 * 3600
 
     agg = defaultdict(lambda: {"vat": defaultdict(lambda: [0.0, 0.0]),
                                "pay": defaultdict(float)})
-    factures = []
+    factures = []       # flux CA facturé : par facture (CA + 411 brut + paiements comptant)
+    reglements = []     # flux règlement : paiement de facture encaissé en caisse (orderPaymentId lié)
     unresolved = []
     n_tickets = 0
     tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
@@ -120,7 +122,6 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 continue
             n_tickets += 1
             vat = defaultdict(lambda: [0.0, 0.0])
-            pay = defaultdict(float)
             ttc = 0.0
             for l in (w.get("ticketSalesLines") or []):
                 r = f"{float(l.get('vatRate') or 0):g}"
@@ -131,17 +132,15 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 ttc += ttc_l
                 vat_total[r][0] += ht_l
                 vat_total[r][1] += ttc_l
-            paysum = 0.0
-            for p in (w.get("ticketPaymentData") or []):
-                amt = float(p.get("paymentAmount") or 0)
-                pt = p.get("paymentType") or "?"
-                pay[pt] += amt
-                pay_total[pt] += amt
-                paysum += amt
             tot_ttc += ttc
-            recv = round(ttc - paysum, 2)
+            payments_raw = w.get("ticketPaymentData") or []
+            pay = defaultdict(float)
+            for p in payments_raw:
+                amt = float(p.get("paymentAmount") or 0)
+                pay[p.get("paymentType") or "?"] += amt
+                pay_total[p.get("paymentType") or "?"] += amt
             fnum = tk2fac.get(tk.get("id")) or (tk.get("rootTicketId") and tk2fac.get(tk["rootTicketId"]))
-            if fnum:          # FACTURÉ (comptant ou crédit) -> écriture par facture
+            if fnum:          # FACTURÉ -> écriture par facture (CA + 411 brut + paiements comptant)
                 coid, cid = tk.get("companyId"), tk.get("customerId")
                 a, nm = resolve(pfx, coid, cid)
                 if not a:
@@ -150,14 +149,30 @@ def build_toslt(establishment, date_from, date_to, company_id,
                     continue
                 factures.append({"date": dd, "fnum": int(fnum), "acc": a, "nm": nm,
                                  "vat": dict(vat), "pay": dict(pay), "ttc": round(ttc, 2),
-                                 "recv": recv})
-            else:             # anonyme -> agrégat journalier
+                                 "b2b": bool(coid and coid != ZERO)})
+            else:             # NON facturé : CA anonyme -> agrégat ; paiements -> règlement OU agrégat
                 d = agg[dd]
                 for r, (ht, t) in vat.items():
                     d["vat"][r][0] += ht
                     d["vat"][r][1] += t
-                for pt, amt in pay.items():
-                    d["pay"][pt] += amt
+                for p in payments_raw:
+                    amt = float(p.get("paymentAmount") or 0)
+                    if abs(amt) < 0.005:
+                        continue
+                    pt = p.get("paymentType") or "?"
+                    rfnum = op2fac.get(p.get("orderPaymentId"))
+                    if rfnum:   # RÈGLEMENT d'une facture encaissé en caisse (comptant décalé inclus)
+                        pdate = _day(p.get("timestamp")) or dd
+                        a, nm = resolve(pfx, p.get("companyId"), p.get("customerId"))
+                        if not a:
+                            unresolved.append({"date": pdate, "company_id": p.get("companyId"),
+                                               "customer_id": p.get("customerId"),
+                                               "facture": f"{int(rfnum):07d}", "amount": round(amt, 2)})
+                            continue
+                        reglements.append({"date": pdate, "fnum": int(rfnum), "acc": a,
+                                           "nm": nm, "mode": pt, "amount": amt})
+                    else:       # encaissement anonyme
+                        d["pay"][pt] += amt
         if on_progress:
             on_progress(n_tickets, f"pull tickets… {n_tickets} traités")
         if pmax < date_from:
@@ -252,6 +267,27 @@ def build_toslt(establishment, date_from, date_to, company_id,
         tot["enc"] += paid
         tot["creance"] += round(ttcsum - paid, 2)   # 411 restant = impayé
 
+    def emit_reglement(reg):
+        """Règlement de facture encaissé en caisse : débit encaissement + crédit 411
+        (lettré F<n°>). Solde le 411 de la facture (émise dans cette période ou avant)."""
+        d, fnum, amt, pt = reg["date"], reg["fnum"], reg["amount"], reg["mode"]
+        lettr = f"F{fnum}"
+        piece = f"{pfx}{d[8:10]}{d[5:7]}{d[2:4]}-R{fnum:07d} #{batch_code}"
+        pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
+        if amt > 0:
+            rows.append([d, journal, pacc, pt, f"Règlement {pt} F{fnum:07d}", "", piece,
+                         f"{amt:.2f}", "", cat_family, cat_label, ""])
+            rows.append([d, journal, str(reg["acc"]), "Règlement client",
+                         f"Règlement F{fnum:07d} · {reg['nm']}", "", piece, "", f"{amt:.2f}",
+                         cat_family, cat_label, lettr])
+        else:
+            rows.append([d, journal, pacc, pt, f"Règlement {pt} F{fnum:07d} (rendu)", "", piece,
+                         "", f"{-amt:.2f}", cat_family, cat_label, ""])
+            rows.append([d, journal, str(reg["acc"]), "Règlement client",
+                         f"Règlement F{fnum:07d} (rendu) · {reg['nm']}", "", piece, f"{-amt:.2f}", "",
+                         cat_family, cat_label, lettr])
+        tot["enc"] += amt
+
     def piece_for(date, suffix=""):
         # pièce du jour en tête (lisible pour le rapprochement espèces/CB/…),
         # identifiant de lot en queue avec « # ». ex. « SM280526 #SMT03 »
@@ -262,16 +298,55 @@ def build_toslt(establishment, date_from, date_to, company_id,
     for f in sorted(factures, key=lambda x: (x["date"], x["fnum"])):
         emit_facture(f["date"], piece_for(f["date"], f"-F{f['fnum']:07d}"),
                      f["fnum"], f["acc"], f["nm"], f["vat"], f["pay"])
+    for reg in sorted(reglements, key=lambda x: (x["date"], x["fnum"])):
+        emit_reglement(reg)
+
+    # ----- TOSLF : reclassement HT 70101 -> 7012 (B2B) / 70102 (B2C) par facture -----
+    jf = ecfg["journal_factures"]
+    lbl_b2b, lbl_b2c = "Reclassement B2B", "Reclassement B2C"
+    toslf_rows = []
+    tcode = toslf_batch_code or batch_code
+
+    def toslf_emit(f):
+        fnum, b2b, date = f["fnum"], f["b2b"], f["date"]
+        dest = cfg["ca_b2b"] if b2b else cfg["ca_b2c"]
+        lbl = lbl_b2b if b2b else lbl_b2c
+        piece = f"F{fnum:07d} #{tcode}"
+        for r, (ht, ttc_) in sorted(f["vat"].items()):
+            if abs(ht) < 0.005:
+                continue
+            rl = _rate_label(r)
+            if ht >= 0:   # sortie de l'anonyme (débit 70101) / entrée en 7012-70102 (crédit)
+                toslf_rows.append([date, jf, ca_acc, "Reclassement (sortie caisse)",
+                                   f"Reclass {fnum:07d} {rl}", rl, piece, f"{ht:.2f}", "", cat_family, cat_label, ""])
+                toslf_rows.append([date, jf, dest, lbl, f"{lbl} {fnum:07d} {rl}", rl, piece,
+                                   "", f"{ht:.2f}", cat_family, cat_label, ""])
+            else:         # avoir : sens inversé
+                h = -ht
+                toslf_rows.append([date, jf, ca_acc, "Reclassement (sortie caisse)",
+                                   f"Reclass avoir {fnum:07d} {rl}", rl, piece, "", f"{h:.2f}", cat_family, cat_label, ""])
+                toslf_rows.append([date, jf, dest, lbl, f"{lbl} avoir {fnum:07d} {rl}", rl, piece,
+                                   f"{h:.2f}", "", cat_family, cat_label, ""])
+
+    for f in sorted(factures, key=lambda x: (x["date"], x["fnum"])):
+        toslf_emit(f)
 
     deb = sum(float(r[7]) for r in rows if r[7])
     cred = sum(float(r[8]) for r in rows if r[8])
+    fdeb = sum(float(r[7]) for r in toslf_rows if r[7])
+    fcred = sum(float(r[8]) for r in toslf_rows if r[8])
+    n_b2b = sum(1 for f in factures if f["b2b"])
     return {
-        "header": HEADER, "rows": rows, "unresolved": [],
+        "header": HEADER, "rows": rows, "toslf_header": HEADER, "toslf_rows": toslf_rows,
+        "unresolved": [],
         "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(factures),
+        "n_factures": len(factures), "n_b2b": n_b2b, "n_b2c": len(factures) - n_b2b,
+        "n_reglements": len(reglements),
         "ca_ttc": ca_ttc_z, "payments": payments,
         "ht_by_rate": ht_by_rate, "tva_by_rate": tva_by_rate,
         "ca_ht": round(tot["ca_ht"], 2), "tva": round(tot["tva"], 2),
         "encaisse": round(tot["enc"], 2), "creances": round(tot["creance"], 2),
         "ecart": round(tot["ecart"], 2),
         "balanced": abs(deb - cred) < 0.05, "debit": round(deb, 2), "credit": round(cred, 2),
+        "toslf_balanced": abs(fdeb - fcred) < 0.05, "toslf_debit": round(fdeb, 2), "toslf_credit": round(fcred, 2),
     }
