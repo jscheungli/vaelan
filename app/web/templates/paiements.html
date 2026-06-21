@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Suivi des paiements · {{ company.name }}{% endblock %}
+{% macro money(v) %}{{ '%.2f €'|format(v) if v is not none else '—' }}{% endmacro %}
+{% macro sorthead(key, label) %}
+  <a href="?sort={{ key }}{% if q %}&q={{ q }}{% endif %}{% if flt %}&flt={{ flt }}{% endif %}"
+     class="text-decoration-none {{ 'fw-bold text-dark' if sort == key else 'text-muted' }}">
+    {{ label }}{% if sort == key %} <i class="bi bi-caret-down-fill" style="font-size:.6rem;"></i>{% endif %}</a>
+{% endmacro %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Suivi des paiements</li>
+</ol></nav>
+
+<div class="d-flex align-items-center mb-1 flex-wrap gap-2">
+  <h1 class="h4 mb-0">Suivi des paiements</h1>
+  <div class="ms-auto d-flex align-items-center gap-2">
+    {% if board.synced %}<span class="small text-muted">synchro {{ board.synced.strftime('%d/%m %H:%M') }}</span>{% endif %}
+    <form method="post" action="/c/{{ company.code }}/paiements/sync" class="d-inline">
+      <button class="btn btn-sm btn-dark"><i class="bi bi-arrow-repeat"></i> Synchroniser</button>
+    </form>
+  </div>
+</div>
+<p class="text-muted small">Rapprochement TopOrder ↔ Pennylane par client. L'API TopOrder ne permet pas de saisir
+les règlements reçus : les <strong>virements à reporter</strong> doivent être saisis manuellement dans TopOrder
+(ouvre le détail d'un client pour les voir et les cocher).</p>
+
+<div class="row g-2 mb-3">
+  {% set t = board.totals %}
+  {% for lbl, val, cls in [
+      ('Clients', t.clients, 'text-bg-light'),
+      ('Encours facturé impayé', money(t.encours), 'text-bg-light'),
+      ('En attente de facturation', money(t.attente), 'text-bg-light'),
+      ('Clients avec écart', t.ecart_n, 'text-bg-warning' if t.ecart_n else 'text-bg-light'),
+      ('Virements à reporter', t.vir_n ~ ' · ' ~ money(t.vir_montant), 'text-bg-danger' if t.vir_n else 'text-bg-success') ] %}
+  <div class="col"><div class="card shadow-sm h-100"><div class="card-body py-2">
+    <div class="small text-muted">{{ lbl }}</div><div class="fw-bold">{{ val }}</div>
+  </div></div></div>
+  {% endfor %}
+</div>
+
+<form method="get" class="row g-2 mb-2 align-items-center">
+  <div class="col-auto"><input type="search" name="q" value="{{ q }}" class="form-control form-control-sm"
+       placeholder="Rechercher (nom / compte)…" style="width:240px;"></div>
+  <div class="col-auto">
+    <select name="flt" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="" {{ 'selected' if not flt }}>Tous les clients</option>
+      <option value="ecart" {{ 'selected' if flt == 'ecart' }}>Seulement avec écart</option>
+      <option value="virements" {{ 'selected' if flt == 'virements' }}>À reporter dans TopOrder</option>
+      <option value="encours" {{ 'selected' if flt == 'encours' }}>Encours &gt; 0</option>
+    </select>
+  </div>
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <div class="col-auto"><button class="btn btn-sm btn-outline-dark">Filtrer</button>
+    {% if q or flt %}<a href="/c/{{ company.code }}/paiements" class="btn btn-sm btn-link text-muted">réinitialiser</a>{% endif %}</div>
+</form>
+
+{% if not board.synced %}
+<div class="alert alert-info small">Aucune synchro pour l'instant. Clique sur <strong>Synchroniser</strong> pour calculer les encours (cela lit TopOrder et Pennylane — peut prendre un moment).</div>
+{% endif %}
+
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle">
+  <thead><tr class="small text-muted">
+    <th>{{ sorthead('name', 'Client') }}</th>
+    <th class="text-end">{{ sorthead('encours', 'Encours facturé') }}</th>
+    <th class="text-end">En attente fact.<br><span style="font-size:.7rem;">courant / antérieur</span></th>
+    <th class="text-end">{{ sorthead('exposition', 'Exposition') }}</th>
+    <th class="text-end">{{ sorthead('ecart', 'Écart TO↔PL') }}</th>
+    <th class="text-end">Virements à reporter</th>
+    <th class="text-end">{{ sorthead('age', 'Ancienneté') }}</th>
+    <th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in board.rows %}
+    <tr class="small">
+      <td><a href="/c/{{ company.code }}/paiements/{{ r.account }}" class="text-decoration-none fw-semibold">{{ r.name or r.account }}</a>
+        <div class="text-muted" style="font-size:.7rem;"><code>{{ r.account }}</code> · {{ r.kind|upper }}</div></td>
+      <td class="text-end">{{ money(r.encours_pennylane) }}<div class="text-muted" style="font-size:.7rem;">{{ r.nb_open }} facture(s)</div></td>
+      <td class="text-end">{{ money(r.attente_fact_courant) }} <span class="text-muted">/ {{ money(r.attente_fact_anterieur) }}</span></td>
+      <td class="text-end fw-semibold">{{ money(r.exposition) }}</td>
+      <td class="text-end">{% if r.ecart|abs > 0.01 %}<span class="badge text-bg-warning">{{ money(r.ecart) }}</span>{% else %}<span class="text-success"><i class="bi bi-check"></i></span>{% endif %}</td>
+      <td class="text-end">{% if r.nb_virements_a_reporter %}<span class="badge text-bg-danger">{{ r.nb_virements_a_reporter }} · {{ money(r.virements_a_reporter) }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td class="text-end">{% if r.oldest_age %}<span class="{{ 'text-danger fw-semibold' if r.oldest_age > 60 else 'text-muted' }}">{{ r.oldest_age }} j</span>{% else %}—{% endif %}</td>
+      <td class="text-end"><a href="/c/{{ company.code }}/paiements/{{ r.account }}" class="btn btn-sm btn-outline-dark py-0"><i class="bi bi-eye"></i></a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="text-muted small">Aucun client.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if board.pages > 1 %}
+<nav class="d-flex justify-content-between align-items-center small">
+  <span class="text-muted">{{ board.total }} client(s) · page {{ board.page }}/{{ board.pages }}</span>
+  <div class="btn-group">
+    {% set qs = '&q=' ~ q ~ '&flt=' ~ flt ~ '&sort=' ~ sort %}
+    <a class="btn btn-sm btn-outline-dark {{ 'disabled' if board.page <= 1 }}" href="?page={{ board.page - 1 }}{{ qs }}">Précédent</a>
+    <a class="btn btn-sm btn-outline-dark {{ 'disabled' if board.page >= board.pages }}" href="?page={{ board.page + 1 }}{{ qs }}">Suivant</a>
+  </div>
+</nav>
+{% endif %}
+{% endblock %}

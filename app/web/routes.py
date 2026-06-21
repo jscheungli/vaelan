@@ -11,7 +11,7 @@ from app.core.security import authenticate, current_user, user_companies, role_f
 from app.core import registry
 from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
-from app.models import Company, Run, ClientAccount, ImportBatch, JobArtifact
+from app.models import Company, Run, ClientAccount, ImportBatch, JobArtifact, ClientPayment, PaymentReport
 from app.packs.sterna_caisse import config as caisse_config
 from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt
 from app.packs.sterna_caisse.clients_sync import sync_clients
@@ -19,6 +19,7 @@ from app.packs.sterna_caisse import suivi as caisse_suivi
 from app.packs.sterna_caisse.verify import run_verify
 from app.packs.sterna_caisse.justificatifs import run_justificatifs
 from app.packs.sterna_caisse.lettrage import run_lettrage
+from app.packs.sterna_caisse import payments as caisse_payments
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -378,6 +379,76 @@ def suivi_lettrage(request: Request, code: str, as_of: str = Form("")):
               company_id=company.id, pack="sterna.caisse", label=label,
               user=current_user(request))
     return RedirectResponse("/jobs", status_code=303)
+
+
+# ----------------------------- Suivi des paiements (étape 7) -----------------------------
+@router.get("/c/{code}/paiements", response_class=HTMLResponse)
+def paiements_page(request: Request, code: str, q: str = "", flt: str = "",
+                   sort: str = "exposition", page: int = 1):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    board = caisse_payments.board(company.id, q=q, flt=flt, sort=sort, page=page)
+    return templates.TemplateResponse(request, "paiements.html",
+                                      _ctx(request, company=company, board=board,
+                                           q=q, flt=flt, sort=sort))
+
+
+@router.post("/c/{code}/paiements/sync")
+def paiements_sync(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    start_job("payments_sync",
+              lambda ctx: caisse_payments.run_payments_sync(ctx, company.code),
+              company_id=company.id, pack="sterna.caisse",
+              label=f"Synchro paiements · {company.name}", user=current_user(request))
+    return RedirectResponse("/jobs", status_code=303)
+
+
+@router.get("/c/{code}/paiements/{account}", response_class=HTMLResponse)
+def paiements_client(request: Request, code: str, account: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        cp = s.exec(select(ClientPayment).where(
+            ClientPayment.company_id == company.id, ClientPayment.account == account)).first()
+        reported = {r.ledger_entry_line_id: r for r in s.exec(select(PaymentReport).where(
+            PaymentReport.company_id == company.id, PaymentReport.account == account)).all()}
+    detail, err = None, None
+    try:
+        detail = caisse_payments.pennylane_client(company.code, account)
+    except Exception as e:
+        err = str(e)[:200]
+    return templates.TemplateResponse(request, "paiements_client.html",
+                                      _ctx(request, company=company, account=account, cp=cp,
+                                           detail=detail, reported=reported, err=err))
+
+
+@router.post("/c/{code}/paiements/{account}/report")
+def paiements_report(request: Request, code: str, account: str,
+                     line_id: int = Form(...), amount: str = Form(""),
+                     op_date: str = Form(""), label: str = Form("")):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    u = current_user(request)
+    with Session(engine) as s:
+        existing = s.exec(select(PaymentReport).where(
+            PaymentReport.ledger_entry_line_id == line_id)).first()
+        if existing:
+            s.delete(existing)                      # re-cocher = décocher (bascule)
+        else:
+            try:
+                amt = float(amount)
+            except ValueError:
+                amt = None
+            s.add(PaymentReport(company_id=company.id, account=account, ledger_entry_line_id=line_id,
+                                amount=amt, op_date=op_date or None, label=label or None,
+                                reported_by=(u.email if u else None)))
+        s.commit()
+    return RedirectResponse(f"/c/{code}/paiements/{account}", status_code=303)
 
 
 @router.post("/c/{code}/suivi/reset")

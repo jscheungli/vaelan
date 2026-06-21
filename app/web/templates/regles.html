@@ -116,11 +116,17 @@
     virements rapprochés, ambigus à traiter à la main, créances impayées avec <strong>ancienneté</strong>.
   {% endcall %}
 
-  {% call sec('s10', '7 · Suivi des paiements — à venir') %}
-    Page de rapprochement TopOrder ↔ Pennylane par client : encours facturé impayé, en attente de facturation
-    (mois courant / antérieur), exposition totale, et la liste des <strong>virements à reporter manuellement
-    dans TopOrder</strong> (l'API TopOrder ne permet pas de saisir les règlements reçus), avec traçabilité
-    (qui a coché, quand).
+  {% call sec('s10', '7 · Suivi des paiements (page continue)') %}
+    Page <strong>autonome</strong> (pas une étape de clôture séquentielle) de rapprochement <strong>TopOrder ↔
+    Pennylane par client</strong> (clé = compte 411, company-wide). Un job de <strong>synchro</strong> calcule un
+    instantané par client : <strong>encours facturé impayé</strong> (solde 411 ouvert côté Pennylane),
+    <strong>en attente de facturation</strong> (commandes TopOrder différées non facturées — statuts
+    WAITING_FOR_BILLING / PURCHASE_ORDER —, mois courant / antérieur), <strong>exposition totale</strong>
+    (= facturé impayé + en attente, tri par défaut décroissant), et l'<strong>écart</strong> TopOrder − Pennylane.
+    L'API TopOrder ne permettant pas de saisir les règlements reçus, le détail d'un client liste ses
+    <strong>virements</strong> (crédits du journal de banque) à <strong>reporter manuellement dans TopOrder</strong> :
+    une case à cocher trace <strong>qui</strong> l'a reporté et <strong>quand</strong> (clé = ligne Pennylane, idempotent).
+    Recherche, filtres (écart / à reporter / encours), tri colonnes, pagination.
   {% endcall %}
 
   {% call sec('cfg', 'Configuration & traçabilité') %}

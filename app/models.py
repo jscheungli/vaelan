@@ -151,6 +151,51 @@ class StepDeclaration(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ClientPayment(SQLModel, table=True):
+    """Instantané de l'encours d'un client (B2B = un compte 411 ; B2C = compte commun).
+
+    Produit par le job de synchro paiements ; la page le lit pour un affichage rapide.
+    Réconcilie l'encours côté Pennylane (facturé impayé) et côté TopOrder (facturé non
+    payé + en attente de facturation). Clé stable = compte 411 (company-wide)."""
+    __tablename__ = "client_payments"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="companies.id", index=True)
+    account: str = Field(index=True)                 # n° de compte 411 (clé client)
+    name: Optional[str] = None
+    kind: str = "b2b"                                 # b2b / b2c
+    # Pennylane (compta)
+    encours_pennylane: float = 0.0                    # solde 411 ouvert (facturé impayé)
+    nb_open: int = 0                                  # nb de créances ouvertes
+    oldest_age: int = 0                               # ancienneté (jours) de la + vieille créance
+    virements_a_reporter: float = 0.0                 # somme des virements non encore reportés dans TopOrder
+    nb_virements_a_reporter: int = 0
+    # TopOrder (gestion)
+    encours_toporder: float = 0.0                     # facturé non payé côté TopOrder
+    attente_fact_courant: float = 0.0                 # en attente de facturation, mois courant
+    attente_fact_anterieur: float = 0.0               # en attente de facturation, antérieur
+    ecart: float = 0.0                                # encours_toporder - encours_pennylane
+    exposition: float = 0.0                           # encours_pennylane + attente de facturation (tri)
+    synced_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PaymentReport(SQLModel, table=True):
+    """Traçabilité : un paiement (virement) reporté manuellement dans TopOrder.
+
+    Clé = ligne d'écriture Pennylane (ledger_entry_line_id) pour l'idempotence — un
+    virement arrivé après coup ne crée pas de doublon. On garde QUI a coché et QUAND."""
+    __tablename__ = "payment_reports"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="companies.id", index=True)
+    account: str = Field(index=True)
+    ledger_entry_line_id: int = Field(sa_column=Column(BigInteger, index=True, unique=True))
+    amount: Optional[float] = None
+    op_date: Optional[str] = None
+    label: Optional[str] = None
+    reported_by: Optional[str] = None                 # email de l'utilisateur
+    reported_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ImportBatch(SQLModel, table=True):
     """Un lot d'import (= un CSV = un identifiant compact dans les libellés)."""
     __tablename__ = "imports"
