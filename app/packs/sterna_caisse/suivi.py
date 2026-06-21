@@ -59,8 +59,8 @@ def build_board(company):
             Run.status == "ok").order_by(Run.id.desc())).first()
 
     target = _target_date()
-    # colonnes : SM, LP, SL (de gauche à droite)
-    ests = list(reversed([e["pfx"] for e in config.ESTABLISHMENTS.values()]))
+    # colonnes : SM, LP, SL (de gauche à droite) — ordre de la config
+    ests = [e["pfx"] for e in config.ESTABLISHMENTS.values()]
     rows = []
     for stp in STEPS:
         cells = {}

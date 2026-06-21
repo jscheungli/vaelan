@@ -59,3 +59,17 @@
   </tbody>
 </table>
 </div>
+
+{% if total_pages and total_pages > 1 %}
+<nav class="d-flex align-items-center justify-content-between small">
+  <span class="text-muted">{{ total }} tâche{{ 's' if total > 1 else '' }} · page {{ page }}/{{ total_pages }}</span>
+  <div class="btn-group">
+    <button class="btn btn-sm btn-outline-dark{% if page <= 1 %} disabled{% endif %}"
+            hx-get="/jobs/feed?page={{ page - 1 }}" hx-target="#jobs-feed" hx-swap="innerHTML"
+            {% if page <= 1 %}disabled{% endif %}><i class="bi bi-chevron-left"></i> Précédent</button>
+    <button class="btn btn-sm btn-outline-dark{% if page >= total_pages %} disabled{% endif %}"
+            hx-get="/jobs/feed?page={{ page + 1 }}" hx-target="#jobs-feed" hx-swap="innerHTML"
+            {% if page >= total_pages %}disabled{% endif %}>Suivant <i class="bi bi-chevron-right"></i></button>
+  </div>
+</nav>
+{% endif %}

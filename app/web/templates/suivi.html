@@ -19,7 +19,7 @@
     {% if c.realized %}<span class="text-muted" style="font-size:.7rem;">réalisé {{ c.realized }}{% if c.by %} · par {{ c.by.split('@')[0] }}{% endif %}</span>{% endif %}
 
     {% if c.act == 'link' %}
-      {% set href = '/c/' + company.code + ('/clients' if step.key == 'clients' else '/import') %}
+      {% set href = '/c/' + company.code + ('/clients' if step.key == 'clients' else '/import?est=' + est) %}
       <a href="{{ href }}" class="btn btn-outline-dark btn-sm py-0 mt-1" style="font-size:.72rem;">
         {{ 'Synchroniser' if step.key == 'clients' else 'Générer' }} <i class="bi bi-arrow-right"></i></a>
     {% elif c.act == 'declare' %}

@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from fastapi import APIRouter, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
@@ -186,17 +187,27 @@ def _company_or_redirect(request: Request, code: str):
 
 
 @router.get("/c/{code}/import", response_class=HTMLResponse)
-def import_form(request: Request, code: str):
+def import_form(request: Request, code: str, est: str = ""):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
     establishments = list(caisse_config.ESTABLISHMENTS.keys())
+    # pfx (ex. ?est=SM venant du tableau de suivi) -> nom complet à pré-sélectionner
+    pfx2name = {e["pfx"]: name for name, e in caisse_config.ESTABLISHMENTS.items()}
+    selected = pfx2name.get(est.upper(), "")
     with Session(engine) as s:
         batches = s.exec(select(ImportBatch).where(ImportBatch.company_id == company.id)
                          .order_by(ImportBatch.id.desc()).limit(20)).all()
+    # date de début par défaut = lendemain du dernier import (toslt) de l'établissement choisi
+    default_from = ""
+    if est:
+        prev = [b.date_to for b in batches if b.establishment == est.upper() and b.kind == "toslt"]
+        if prev:
+            default_from = (max(prev) + timedelta(days=1)).isoformat()
     return templates.TemplateResponse(request, "import.html",
                                       _ctx(request, company=company, establishments=establishments,
-                                           batches=batches))
+                                           batches=batches, selected_est=selected,
+                                           default_from=default_from))
 
 
 @router.post("/c/{code}/generate")
@@ -408,12 +419,20 @@ def jobs_page(request: Request):
 
 
 @router.get("/jobs/feed", response_class=HTMLResponse)
-def jobs_feed(request: Request):
+def jobs_feed(request: Request, page: int = 1):
     if not current_user(request):
         return RedirectResponse("/login", status_code=303)
+    from sqlalchemy import func
+    PER_PAGE = 10
+    page = max(1, page)
     with Session(engine) as s:
         running = s.exec(select(Run).where(Run.status == "running").order_by(Run.id.desc())).all()
-        recent = s.exec(select(Run).where(Run.status != "running").order_by(Run.id.desc()).limit(30)).all()
+        total = s.exec(select(func.count()).select_from(Run).where(Run.status != "running")).one()
+        total = total[0] if isinstance(total, tuple) else total
+        total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+        page = min(page, total_pages)
+        recent = s.exec(select(Run).where(Run.status != "running").order_by(Run.id.desc())
+                        .offset((page - 1) * PER_PAGE).limit(PER_PAGE)).all()
         cmap = {c.id: c.name for c in s.exec(select(Company)).all()}
         # quels runs ont quels artefacts (requête légère : run_id + kind, sans les données)
         ids = [r.id for r in recent]
@@ -427,7 +446,8 @@ def jobs_feed(request: Request):
     # 2s empêche de scroller, ex. jusqu'au pied de page). Reprend au prochain chargement.
     status = 200 if running else 286
     return templates.TemplateResponse(request, "_jobs_feed.html",
-                                      _ctx(request, running=running, recent=recent, cmap=cmap, arts=arts),
+                                      _ctx(request, running=running, recent=recent, cmap=cmap, arts=arts,
+                                           page=page, total_pages=total_pages, total=total),
                                       status_code=status)
 
 

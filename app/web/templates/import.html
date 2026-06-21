@@ -24,13 +24,14 @@ identifiant (ex. <code>SMT01</code>) en tête de pièce → supprimable d'un blo
       <div class="mb-3">
         <label class="form-label small">Établissement</label>
         <select name="establishment" class="form-select" required>
-          {% for e in establishments %}<option value="{{ e }}">{{ e }}</option>{% endfor %}
+          {% for e in establishments %}<option value="{{ e }}"{% if e == selected_est %} selected{% endif %}>{{ e }}</option>{% endfor %}
         </select>
       </div>
       <div class="row g-2 mb-3">
         <div class="col">
           <label class="form-label small">Date de début</label>
-          <input type="date" name="date_from" class="form-control" required>
+          <input type="date" name="date_from" class="form-control" value="{{ default_from }}" required>
+          {% if default_from %}<div class="form-text" style="font-size:.7rem;">lendemain du dernier import</div>{% endif %}
         </div>
         <div class="col">
           <label class="form-label small">Date de fin</label>

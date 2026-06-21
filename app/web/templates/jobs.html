@@ -9,7 +9,7 @@
 </div>
 <p class="text-muted small">Suivi en direct des exécutions (imports, calculs, remédiations…).</p>
 
-<div hx-get="/jobs/feed" hx-trigger="load, every 2s" hx-swap="innerHTML">
+<div id="jobs-feed" hx-get="/jobs/feed" hx-trigger="load, every 2s" hx-swap="innerHTML">
   <div class="text-muted small">chargement…</div>
 </div>
 {% endblock %}
