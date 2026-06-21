@@ -43,25 +43,33 @@ def _batch_code(company_id, pfx, kind):
 
 
 def _cadrage_issues(ctx, ca_ttc, payments, syn, date_from, date_to):
-    """Compare le calcul tickets à la synthèse. Renvoie la liste des écarts (vide = cadré)."""
-    issues = []
+    """Compare le calcul tickets à la synthèse.
+
+    Renvoie (blocking, warnings) :
+      - blocking : période + CA Total (la vérité fiscale) -> empêchent la génération ;
+      - warnings : écarts par MODE DE PAIEMENT -> n'empêchent PAS la génération.
+    Justification : un ticket facturé (B2B) payé comptant est classé hors « caisse »
+    par la synthèse TopOrder, alors que c'est un vrai encaissement (relevé bancaire).
+    Le CA cadre et l'écriture est équilibrée -> on n'a pas à bloquer là-dessus.
+    """
     if syn.get("ca_total") is None:
-        return ["synthèse illisible (CA Total introuvable)"]
+        return ["synthèse illisible (CA Total introuvable)"], []
+    blocking, warnings = [], []
     p = syn.get("period")
     if p and (p["date_from"] != date_from or p["date_to"] != date_to):
-        issues.append(f"période synthèse {p['date_from']}→{p['date_to']} ≠ demandée")
+        blocking.append(f"période synthèse {p['date_from']}→{p['date_to']} ≠ demandée")
     diff = round((ca_ttc or 0) - syn["ca_total"], 2)
     ctx.log(f"Cadrage CA : tickets {ca_ttc:.2f} vs synthèse {syn['ca_total']:.2f} → écart {diff:+.2f}")
     if abs(diff) >= 0.05:
-        issues.append(f"écart CA {diff:+.2f} €")
+        blocking.append(f"écart CA {diff:+.2f} €")
     for mode, synv in (syn.get("payments") or {}).items():
         ourv = (payments or {}).get(mode, 0.0)
         d = round(ourv - synv, 2)
-        flag = "" if abs(d) < 0.05 else "  ⚠️"
+        flag = "" if abs(d) < 0.05 else "  ⚠️ (non bloquant : facturé comptant ?)"
         ctx.log(f"  {mode} : tickets {ourv:.2f} vs synthèse {synv:.2f} → {d:+.2f}{flag}")
         if abs(d) >= 0.05:
-            issues.append(f"écart {mode} {d:+.2f} €")
-    return issues
+            warnings.append(f"{mode} {d:+.2f} €")
+    return blocking, warnings
 
 
 def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
@@ -108,12 +116,15 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
                          report.build_pdf("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args),
                          "application/pdf")
 
-    issues = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to)
-    if issues:
-        ctx.log("❌ ÉCARTS — CSV NON généré : " + " ; ".join(issues))
+    blocking, warnings = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to)
+    if blocking:
+        ctx.log("❌ ÉCART CA — CSV NON généré : " + " ; ".join(blocking))
         _emit_report()
-        return "Écart (CSV non généré) : " + " ; ".join(issues[:3])
-    ctx.log("✅ Cadrage parfait.")
+        return "Écart CA (CSV non généré) : " + " ; ".join(blocking[:3])
+    if warnings:
+        ctx.log("⚠️ Écart(s) de mode de paiement (non bloquant — voir le compte rendu) : "
+                + " ; ".join(warnings))
+    ctx.log("✅ Cadrage CA OK.")
 
     # 4) Pré-vol client : chaque créance doit router vers un compte 411
     if res.get("unresolved"):
@@ -153,7 +164,9 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
             f"+ {res['n_creances']} créances · {bal}")
     ctx.log(f"CA TTC {res['ca_ttc']:.2f} € (HT {res['ca_ht']:.2f} + TVA {res['tva']:.2f}) · "
             f"encaissé {res['encaisse']:.2f} · créances 411 {res['creances']:.2f} · écart {res['ecart']:.2f}")
-    return f"Cadré ✓ — lot {code} généré — CA TTC {res['ca_ttc']:.2f} € · {res['n_creances']} créances · {bal}"
+    warn = f" · ⚠ {len(warnings)} écart mode paiement (voir CR)" if warnings else ""
+    return (f"Cadré ✓ — lot {code} généré — CA TTC {res['ca_ttc']:.2f} € · "
+            f"{res['n_creances']} créances · {bal}{warn}")
 
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,
@@ -182,7 +195,7 @@ def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,
             f"| HT {ca['ca_ht']:.2f} | TVA {ca['tva']:.2f} | créances {ca['creances_total']:.2f}")
 
     ctx.progress(total or ca["n_tickets"], total or ca["n_tickets"], step="cadrage…")
-    issues = _cadrage_issues(ctx, ca["ca_ttc"], ca["payments"], syn, date_from, date_to)
+    blocking, warnings = _cadrage_issues(ctx, ca["ca_ttc"], ca["payments"], syn, date_from, date_to)
     ctx.set_report(report.build("cadrage", establishment, date_from, date_to,
                                 syn, ca, csv=None, n_tickets=ca["n_tickets"],
                                 run_id=ctx.run_id, executed_at=executed_at))
@@ -192,8 +205,9 @@ def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,
                                       run_id=ctx.run_id, executed_at=executed_at),
                      "application/pdf")
 
-    if not issues:
-        ctx.log("✅ CADRAGE PARFAIT — l'import pourra être généré.")
-        return f"Cadré ✓ — CA TTC {ca['ca_ttc']:.2f} € = synthèse ({ca['n_tickets']} tickets)"
-    ctx.log("❌ ÉCARTS détectés : " + " ; ".join(issues))
-    return "Écart : " + " ; ".join(issues[:3])
+    if not blocking:
+        warn = f" (⚠ {len(warnings)} écart mode paiement)" if warnings else ""
+        ctx.log("✅ CADRAGE CA OK — l'import pourra être généré." + warn)
+        return f"Cadré ✓ — CA TTC {ca['ca_ttc']:.2f} € = synthèse ({ca['n_tickets']} tickets){warn}"
+    ctx.log("❌ ÉCART CA : " + " ; ".join(blocking))
+    return "Écart CA : " + " ; ".join(blocking[:3])

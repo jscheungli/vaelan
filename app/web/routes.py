@@ -76,14 +76,13 @@ def dashboard(request: Request, code: str):
     if not company or role_for(user, company) is None:
         return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
 
-    packs = registry.packs_for(company.code)
-    ctx = {"company": company, "session": None}
-    cards = [{"pack": p, "phases": p.workflow(ctx)} for p in packs]
     pl = pennylane.for_company(company.code)
     health = pl.health() if pl else {"ok": False, "error": "clé API non configurée"}
+    board = caisse_suivi.build_board(company)
     return templates.TemplateResponse(
-        request, "dashboard.html",
-        _ctx(request, company=company, cards=cards, role=role_for(user, company), health=health),
+        request, "suivi.html",
+        _ctx(request, company=company, board=board, role=role_for(user, company),
+             health=health, home=True),
     )
 
 
@@ -212,14 +211,10 @@ async def config_save(request: Request, code: str):
 
 
 # ----------------------------- Suivi de clôture (tableau de bord) -----------------------------
-@router.get("/c/{code}/suivi", response_class=HTMLResponse)
+@router.get("/c/{code}/suivi")
 def suivi_page(request: Request, code: str):
-    company, redir = _company_or_redirect(request, code)
-    if redir:
-        return redir
-    board = caisse_suivi.build_board(company)
-    return templates.TemplateResponse(request, "suivi.html",
-                                      _ctx(request, company=company, board=board))
+    # le tableau de suivi est désormais la page d'accueil de la société
+    return RedirectResponse(f"/c/{code}", status_code=303)
 
 
 @router.post("/c/{code}/suivi/declare")

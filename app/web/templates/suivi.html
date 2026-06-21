@@ -48,13 +48,24 @@
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb small">
   <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
-  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
-  <li class="breadcrumb-item active">Suivi</li>
+  <li class="breadcrumb-item active">{{ company.name }}</li>
 </ol></nav>
 
-<h1 class="h4 mb-1">Suivi de clôture</h1>
-<p class="text-muted small">Toutes les étapes de la séquence. Chaque cellule indique <strong>jusqu'à quelle date</strong>
-l'étape est faite et <strong>quand</strong> elle a été réalisée. Chaque étape est relançable à tout moment.</p>
+<div class="d-flex align-items-center mb-1 flex-wrap gap-2">
+  <h1 class="h4 mb-0">{{ company.name }}</h1>
+  {% if role %}<span class="badge text-bg-secondary">{{ role }}</span>{% endif %}
+  <div class="ms-auto d-flex align-items-center gap-2">
+    {% if health is defined %}<span class="small me-2">Pennylane :
+      {% if health.ok %}<span class="text-success"><i class="bi bi-check-circle-fill"></i> connecté</span>
+      {% else %}<span class="text-danger" title="{{ health.error }}"><i class="bi bi-x-circle-fill"></i> erreur</span>{% endif %}
+    </span>{% endif %}
+    <a href="/c/{{ company.code }}/clients" class="btn btn-sm btn-outline-dark"><i class="bi bi-people"></i> Clients</a>
+    <a href="/jobs" class="btn btn-sm btn-outline-dark"><i class="bi bi-list-task"></i> Tâches</a>
+    <a href="/c/{{ company.code }}/config" class="btn btn-sm btn-outline-dark"><i class="bi bi-gear"></i> Config</a>
+  </div>
+</div>
+<p class="text-muted small">Suivi de clôture — chaque cellule indique <strong>jusqu'à quelle date</strong> l'étape est faite et
+<strong>quand</strong>. Vert = à jour (dernier mois terminé couvert au {{ board.target }}) ; orange = un mois terminé reste à clôturer.</p>
 
 <div class="table-responsive">
 <table class="table table-sm align-middle">
