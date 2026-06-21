@@ -68,10 +68,13 @@
   {% endcall %}
 
   {% call sec('s4', '4 · Cadrage de l\'import par Vaelan (vérification Pennylane)') %}
-    Re-jouable à tout moment. Vaelan relit les écritures TOSLT du période dans Pennylane (via l'API), les agrège
-    <strong>par compte</strong>, et compare à l'<strong>attendu</strong> = les CSV générés et stockés. Détecte toute
-    suppression / modification / ajout survenu depuis l'import. Horodate la dernière vérification (« c'était bon à
-    cette date »). Compte rendu PDF par compte (Attendu | Pennylane | OK/Écart).
+    Re-jouable à tout moment. Vaelan relit les écritures des <strong>deux journaux</strong> (TOSLT + TOSLF) dans
+    Pennylane (via l'API) et compare l'<strong>Attendu</strong> (CSV générés et stockés) à <strong>Pennylane</strong>.
+    Le compte rendu PDF <strong>détaille tous les contrôles</strong> : CA HT / TVA / CA TTC, comptes clients 411,
+    paiements par mode, <strong>réconciliation des paiements de factures</strong> (les paiements de factures bookés au
+    crédit du 411 — ceux qui expliquaient l'écart de mode de paiement — sont confirmés présents dans Pennylane), et
+    le détail par compte. Détecte toute suppression / modification / ajout depuis l'import. Horodate la dernière
+    vérification (« c'était bon à cette date »).
   {% endcall %}
 
   {% call sec('s2c', 'Factures (TOSLF) & règlements — dans le même CSV') %}

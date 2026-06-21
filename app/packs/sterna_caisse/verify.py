@@ -21,21 +21,22 @@ TOL = 0.01
 _TZ = timedelta(hours=4)   # La Réunion
 
 
-def _expected_by_account(company_id, pfx, start, end):
-    """Agrège l'attendu (net crédit-débit par compte) depuis les CSV stockés du mois.
+def _expected_by_account(company_id, pfx, start, end, pay_accs):
+    """Agrège l'attendu depuis les CSV stockés : net crédit-débit par compte +
+    paiements SUR FACTURES par mode (lignes d'encaissement des pièces -F/-R).
     Dédoublonne les lots de période identique (re-génération) en gardant le plus récent."""
     with Session(engine) as s:
         batches = [b for b in s.exec(select(ImportBatch).where(
             ImportBatch.company_id == company_id, ImportBatch.kind == "toslt",
             ImportBatch.establishment == pfx)).all()
             if not (b.date_to < start or b.date_from > end)]
-        # dédoublonnage : 1 lot par (date_from, date_to), le plus récent
         keep = {}
         for b in batches:
             k = (b.date_from, b.date_to)
             if k not in keep or b.id > keep[k].id:
                 keep[k] = b
         net = defaultdict(float)
+        fac_pay = defaultdict(float)
         used, missing = [], []
         for b in keep.values():
             art = s.exec(select(JobArtifact).where(
@@ -55,7 +56,30 @@ def _expected_by_account(company_id, pfx, start, end):
                 deb = float(row[7] or 0)
                 cred = float(row[8] or 0)
                 net[acc] += cred - deb
-    return {a: round(v, 2) for a, v in net.items()}, used, missing
+                # paiement de facture : encaissement (débit) sur une pièce -F / -R
+                piece = row[6]
+                if acc in pay_accs and ("-F" in piece or "-R" in piece):
+                    fac_pay[pay_accs[acc]] += deb - cred
+    return ({a: round(v, 2) for a, v in net.items()},
+            {m: round(v, 2) for m, v in fac_pay.items()}, used, missing)
+
+
+def _aggregates(net, cfg, pfx):
+    """Reconstitue les totaux par poste depuis le net par compte (crédit-débit)."""
+    ca_accs = {cfg["ca_anonyme"], cfg["ca_b2c"], cfg["ca_b2b"]}
+    tva_accs = set(cfg["tva"].values())
+    ecfg = cfg["est"][pfx]
+    pay_lbl = {ecfg["cb"]: "CB", ecfg["especes"]: "Espèce",
+               ecfg["ticket_resto"]: "Ticket restaurant", ecfg["autres"]: "Autres"}
+    ecart = ecfg["ecart"]
+    ca_ht = round(sum(net.get(a, 0.0) for a in ca_accs), 2)
+    tva = round(sum(net.get(a, 0.0) for a in tva_accs), 2)
+    payments = {m: round(-sum(net.get(a, 0.0) for a in pay_lbl if pay_lbl[a] == m), 2)
+                for m in ("CB", "Espèce", "Ticket restaurant", "Autres")}
+    known = ca_accs | tva_accs | set(pay_lbl) | {ecart}
+    clients_411 = round(sum(v for a, v in net.items() if a not in known), 2)
+    return {"ca_ht": ca_ht, "tva": tva, "ca_ttc": round(ca_ht + tva, 2),
+            "payments": payments, "clients_411": clients_411}
 
 
 def _actual_by_account(pl, journal_ids, start, end):
@@ -97,11 +121,13 @@ def run_verify(ctx, company_code, pfx):
     start = min(b.date_from for b in batches)
     end = max(b.date_to for b in batches)
     label = f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
-    ctx.log(f"Vérification Pennylane · {establishment} · {label} (journal {journal_label})")
+    pay_accs = {ecfg["cb"]: "CB", ecfg["especes"]: "Espèce",
+                ecfg["ticket_resto"]: "Ticket restaurant", ecfg["autres"]: "Autres"}
+    ctx.log(f"Vérification Pennylane · {establishment} · {label} (journaux {journal_label})")
     ctx.progress(0, 3, step="lecture de l'attendu (CSV générés)…")
-    expected, used, missing = _expected_by_account(company.id, pfx, start, end)
+    expected, fac_pay, used, missing = _expected_by_account(company.id, pfx, start, end, pay_accs)
     if missing:
-        ctx.log(f"⚠️ lots sans CSV stocké (générés avant la conservation) ignorés : {', '.join(missing)}")
+        ctx.log(f"⚠️ lots sans CSV stocké ignorés : {', '.join(missing)}")
     if not expected:
         ctx.log("Aucun CSV stocké → rien à vérifier.")
         return "Rien à vérifier — aucun CSV stocké"
@@ -111,37 +137,65 @@ def run_verify(ctx, company_code, pfx):
     actual, n_entries = _actual_by_account(pl, journal_ids, start, end)
     ctx.log(f"Pennylane : {n_entries} écritures, {len(actual)} comptes")
 
-    ctx.progress(2, 3, step="rapprochement…")
+    ctx.progress(2, 3, step="rapprochement (tous les contrôles)…")
+    exp_agg = _aggregates(expected, cfg, pfx)
+    act_agg = _aggregates(actual, cfg, pfx)
     accounts = sorted(set(expected) | set(actual))
-    diffs = []
-    lines = [f"VÉRIFICATION PENNYLANE — {establishment} — {label}",
-             f"Journal {journal_label} · {n_entries} écritures Pennylane · lots {', '.join(used) or '—'}",
-             "", f"  {'Compte':<12}{'Attendu (CSV)':>16}{'Pennylane':>16}    État", ""]
-    for acc in accounts:
-        ev = expected.get(acc, 0.0)
-        av = actual.get(acc, 0.0)
-        ok = abs(ev - av) < TOL
-        if not ok:
-            diffs.append((acc, ev, av))
-        lines.append(f"  {acc:<12}{ev:>16.2f}{av:>16.2f}    {'OK' if ok else '⚠️ ÉCART'}")
+    acc_rows = [(a, expected.get(a, 0.0), actual.get(a, 0.0),
+                 abs(expected.get(a, 0.0) - actual.get(a, 0.0)) < TOL) for a in accounts]
+    diffs = [r for r in acc_rows if not r[3]]
     coherent = not diffs
-    lines += ["", ("✅ COHÉRENT — Pennylane correspond exactement aux lots générés."
-                   if coherent else f"❌ {len(diffs)} écart(s) : {', '.join(d[0] for d in diffs)}")]
-    ctx.set_report("\n".join(lines))
+
+    # contrôles structurés (Attendu CSV vs Pennylane)
+    def chk(a, b):
+        return abs((a or 0) - (b or 0)) < TOL
+    summary = [("CA HT total", exp_agg["ca_ht"], act_agg["ca_ht"]),
+               ("TVA total", exp_agg["tva"], act_agg["tva"]),
+               ("CA TTC total", exp_agg["ca_ttc"], act_agg["ca_ttc"]),
+               ("Comptes clients 411 (solde)", exp_agg["clients_411"], act_agg["clients_411"])]
+    summary = [(lbl, e, a, chk(e, a)) for lbl, e, a in summary]
+    pay_rows = [(m, exp_agg["payments"][m], act_agg["payments"][m], chk(exp_agg["payments"][m], act_agg["payments"][m]))
+                for m in ("CB", "Espèce", "Ticket restaurant", "Autres")
+                if abs(exp_agg["payments"][m]) > TOL or abs(act_agg["payments"][m]) > TOL]
+    # réconciliation : comptes 411 conformes -> les paiements de factures (qui expliquent l'écart) sont intacts
+    cli_ok = chk(exp_agg["clients_411"], act_agg["clients_411"])
+    recon = [(m, v) for m, v in fac_pay.items() if abs(v) > TOL]
+
+    # ---- rapport texte ----
+    L = [f"VÉRIFICATION PENNYLANE — {establishment} — {label}",
+         f"Journaux {journal_label} · {n_entries} écritures lues · lots {', '.join(used) or '—'}", "",
+         "== CONTRÔLES (Attendu CSV vs Pennylane) =="]
+    for lbl, e, a, ok in summary:
+        L.append(f"  {lbl:<28}{e:>14.2f}{a:>14.2f}   {'OK' if ok else '⚠️ ÉCART'}")
+    L += ["", "== PAIEMENTS PAR MODE (net encaissé) =="]
+    for m, e, a, ok in pay_rows:
+        L.append(f"  {m:<28}{e:>14.2f}{a:>14.2f}   {'OK' if ok else '⚠️ ÉCART'}")
+    L += ["", "== RÉCONCILIATION DES PAIEMENTS DE FACTURES =="]
+    L.append("  (paiements de factures encaissés en caisse, bookés au crédit du 411 — ils expliquent")
+    L.append("   l'écart de mode de paiement vs la synthèse au moment de la génération)")
+    for m, v in recon:
+        L.append(f"  {m:<28}{v:>14.2f}   bookés au 411")
+    L.append(f"  Contrôle : comptes clients 411 conformes entre CSV et Pennylane -> "
+             f"{'✓ paiements de factures intacts' if cli_ok else '⚠️ écart sur les 411'}")
+    L += ["", "== DÉTAIL PAR COMPTE ==", f"  {'Compte':<12}{'Attendu (CSV)':>16}{'Pennylane':>16}   État"]
+    for a, ev, av, ok in acc_rows:
+        L.append(f"  {a:<12}{ev:>16.2f}{av:>16.2f}   {'OK' if ok else '⚠️ ÉCART'}")
+    L += ["", ("✅ COHÉRENT — Pennylane correspond exactement aux lots générés (tous les contrôles OK)."
+               if coherent else f"❌ {len(diffs)} écart(s) : {', '.join(d[0] for d in diffs)}")]
+    ctx.set_report("\n".join(L))
 
     now = datetime.utcnow() + _TZ
     stamp = now.strftime("%d/%m/%Y %H:%M")
     from . import report
-    acc_rows = [(a, expected.get(a, 0.0), actual.get(a, 0.0), abs(expected.get(a, 0.0) - actual.get(a, 0.0)) < TOL)
-                for a in accounts]
     ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} compte_rendu_verif_{pfx}.pdf",
                      report.verify_pdf(establishment, journal_label, label, n_entries, used,
-                                       acc_rows, coherent, run_id=ctx.run_id, executed_at=stamp),
+                                       summary, pay_rows, recon, cli_ok, acc_rows, coherent,
+                                       run_id=ctx.run_id, executed_at=stamp),
                      "application/pdf")
     _record(company.id, pfx, coherent, end, now, ctx.run_id)
     if coherent:
-        ctx.log(f"✅ Cohérent — vérifié le {stamp}")
-        return f"✅ Cohérent ({label}) — vérifié le {stamp}"
+        ctx.log(f"✅ Cohérent (tous les contrôles OK) — vérifié le {stamp}")
+        return f"✅ Cohérent ({label}) — tous les contrôles OK — vérifié le {stamp}"
     ctx.log(f"❌ {len(diffs)} écart(s) — vérifié le {stamp}")
     return f"❌ Écart ({label}) sur {len(diffs)} compte(s) — vérifié le {stamp}"
 
