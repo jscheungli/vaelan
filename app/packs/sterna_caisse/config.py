@@ -175,9 +175,10 @@ def config_sections(cfg: dict) -> list:
         ]},
     ]
     for pfx, e in cfg["est"].items():
+        # KK (modèle facture) n'a pas de comptes de caisse -> on n'affiche que les champs présents
         sections.append({"title": f"Établissement {pfx}", "fields": [
             {"key": f"est:{pfx}:{k}", "label": lbl, "value": e[k]}
-            for k, lbl in JOURNAL_FIELDS + ACCOUNT_FIELDS
+            for k, lbl in JOURNAL_FIELDS + ACCOUNT_FIELDS if k in e
         ]})
     return sections
 
