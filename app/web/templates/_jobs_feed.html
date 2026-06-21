@@ -50,8 +50,7 @@
       <td class="text-nowrap">
         {% if 'input' in ak %}<a class="btn btn-sm btn-outline-secondary py-0 mb-1" href="/jobs/{{ r.id }}/artifact/input" title="Synthèse PDF fournie en entrée"><i class="bi bi-file-pdf"></i> Synthèse</a>{% endif %}
         {% if 'report' in ak %}<a class="btn btn-sm btn-outline-dark py-0 mb-1" href="/jobs/{{ r.id }}/artifact/report" title="Compte rendu de rapprochement (PDF)"><i class="bi bi-file-earmark-bar-graph"></i> CR</a>{% elif r.report %}<a class="btn btn-sm btn-outline-dark py-0 mb-1" href="/jobs/{{ r.id }}/report" title="Compte rendu de rapprochement"><i class="bi bi-file-text"></i> CR</a>{% endif %}
-        {% if 'csv' in ak %}<a class="btn btn-sm btn-outline-dark py-0 mb-1" href="/jobs/{{ r.id }}/artifact/csv" title="CSV Tickets (TOSLT)"><i class="bi bi-filetype-csv"></i> Tickets</a>{% endif %}
-        {% if 'csv_f' in ak %}<a class="btn btn-sm btn-outline-dark py-0 mb-1" href="/jobs/{{ r.id }}/artifact/csv_f" title="CSV Factures (TOSLF)"><i class="bi bi-filetype-csv"></i> Factures</a>{% endif %}
+        {% if 'csv' in ak %}<a class="btn btn-sm btn-outline-dark py-0 mb-1" href="/jobs/{{ r.id }}/artifact/csv" title="CSV d'import (caisse + factures)"><i class="bi bi-filetype-csv"></i> CSV</a>{% endif %}
       </td>
     </tr>
   {% else %}

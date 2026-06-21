@@ -82,11 +82,10 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
         raise RuntimeError(f"société {company_code} introuvable")
 
     code = _batch_code(company.id, pfx, "tickets")
-    fcode = _batch_code(company.id, pfx, "factures")
     now = _now_local()
     fpfx = _pfx(now)                                  # ex. « 20260620 2045 »
     executed_at = now.strftime("%d/%m/%Y %H:%M")
-    ctx.log(f"Lots {code} (tickets) + {fcode} (factures) · {establishment} · {date_from} → {date_to}")
+    ctx.log(f"Lot {code} · {establishment} · {date_from} → {date_to}")
     # on garde la synthèse d'entrée (re-téléchargeable depuis la tâche)
     ctx.add_artifact("input", f"{fpfx} {synthese_name}", synthese_bytes, "application/pdf")
 
@@ -103,7 +102,7 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     # 2) Construction TOSLT (un seul pull ; renvoie CA + paiements même si pré-vol bloque)
     ctx.progress(0, total, step="calcul TOSLT depuis les tickets…")
     res = csvgen.build_toslt(establishment, date_from, date_to, company.id, code,
-                             company_code, toslf_batch_code=fcode, on_progress=_prog)
+                             company_code, on_progress=_prog)
     ctx.log(f"Tickets : CA TTC {res['ca_ttc']:.2f} € ({res['n_tickets']} tickets) · "
             f"{res['n_factures']} factures (B2B {res['n_b2b']}/B2C {res['n_b2c']}) · "
             f"{res['n_reglements']} règlement(s) caisse")
@@ -139,9 +138,10 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
         _emit_report()
         return f"Cadré ✓ mais bloqué : {len(res['unresolved'])} créance(s) sans compte client à corriger"
 
-    # 5) Écriture du CSV (sur disque pour debug local + EN BASE comme artefact durable)
+    # 5) Écriture du CSV UNIQUE (caisse TOSLT + reclassement TOSLF dans un seul fichier ;
+    #    Pennylane sépare par la colonne « Code journal »). Sur disque + EN BASE (durable).
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    fname = f"{fpfx} import_TOSLT_{code}_{date_from}_{date_to}.csv"
+    fname = f"{fpfx} import_caisse_{code}_{date_from}_{date_to}.csv"
     path = EXPORT_DIR / fname
     buf = io.StringIO()
     w = _csv.writer(buf)
@@ -151,43 +151,25 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     path.write_text(csv_text, encoding="utf-8")
     ctx.add_artifact("csv", fname, csv_text.encode("utf-8"), "text/csv")
 
-    # TOSLF (factures) : 2e CSV, même tâche
-    ffname = f"{fpfx} import_TOSLF_{fcode}_{date_from}_{date_to}.csv"
-    fbuf = io.StringIO()
-    fw = _csv.writer(fbuf)
-    fw.writerow(res["toslf_header"])
-    fw.writerows(res["toslf_rows"])
-    ftext = "﻿" + fbuf.getvalue()
-    (EXPORT_DIR / ffname).write_text(ftext, encoding="utf-8")
-    ctx.add_artifact("csv_f", ffname, ftext.encode("utf-8"), "text/csv")
-
     with Session(_db_engine) as s:
         s.add(ImportBatch(
             company_id=company.id, run_id=ctx.run_id, establishment=pfx, code=code, kind="toslt",
             date_from=_date.fromisoformat(date_from), date_to=_date.fromisoformat(date_to),
             status="generated", n_entries=res["n_agg"] + res["n_factures"] + res["n_reglements"],
             amount=res["ca_ttc"], csv_path=str(path)))
-        if res["toslf_rows"]:
-            s.add(ImportBatch(
-                company_id=company.id, run_id=ctx.run_id, establishment=pfx, code=fcode, kind="toslf",
-                date_from=_date.fromisoformat(date_from), date_to=_date.fromisoformat(date_to),
-                status="generated", n_entries=res["n_factures"], amount=None,
-                csv_path=str(EXPORT_DIR / ffname)))
         s.commit()
 
     csv_agg = report.aggregate_rows(res["rows"], config.resolve(company_code))
     _emit_report(csv_agg=csv_agg, batch_code=code, balanced=res["balanced"])
 
     bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"
-    fbal = "équilibré ✓" if res["toslf_balanced"] else "⚠️ DÉSÉQUILIBRE"
-    ctx.log(f"TOSLT : {len(res['rows'])} lignes · {res['n_agg']} jour + {res['n_factures']} factures "
-            f"+ {res['n_reglements']} règlements · {bal}")
-    ctx.log(f"TOSLF : {len(res['toslf_rows'])} lignes · reclassement {res['n_factures']} factures · {fbal}")
+    ctx.log(f"CSV unique : {len(res['rows'])} lignes · TOSLT ({res['n_agg']} jour + {res['n_factures']} "
+            f"factures + {res['n_reglements']} règlements) + TOSLF ({res['n_toslf']} lignes reclass) · {bal}")
     ctx.log(f"CA TTC {res['ca_ttc']:.2f} € (HT {res['ca_ht']:.2f} + TVA {res['tva']:.2f}) · "
             f"encaissé {res['encaisse']:.2f} · 411 ouvert {res['creances']:.2f} · écart {res['ecart']:.2f}")
     warn = f" · ⚠ {len(warnings)} écart mode paiement (voir CR)" if warnings else ""
-    return (f"Cadré ✓ — lots {code}+{fcode} générés — CA TTC {res['ca_ttc']:.2f} € · "
-            f"{res['n_factures']} factures · {bal}{warn}")
+    return (f"Cadré ✓ — lot {code} généré (1 CSV : caisse + factures) — CA TTC {res['ca_ttc']:.2f} € · "
+            f"{res['n_factures']} factures{warn}")
 
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,

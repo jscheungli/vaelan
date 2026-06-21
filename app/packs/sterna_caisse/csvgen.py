@@ -331,14 +331,15 @@ def build_toslt(establishment, date_from, date_to, company_id,
     for f in sorted(factures, key=lambda x: (x["date"], x["fnum"])):
         toslf_emit(f)
 
+    # UN SEUL CSV : les écritures TOSLF (reclassement) rejoignent les TOSLT.
+    # Pennylane sépare les écritures par la colonne « Code journal ».
+    rows = rows + toslf_rows
     deb = sum(float(r[7]) for r in rows if r[7])
     cred = sum(float(r[8]) for r in rows if r[8])
-    fdeb = sum(float(r[7]) for r in toslf_rows if r[7])
-    fcred = sum(float(r[8]) for r in toslf_rows if r[8])
     n_b2b = sum(1 for f in factures if f["b2b"])
     return {
-        "header": HEADER, "rows": rows, "toslf_header": HEADER, "toslf_rows": toslf_rows,
-        "unresolved": [],
+        "header": HEADER, "rows": rows, "unresolved": [],
+        "n_toslf": len(toslf_rows),
         "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(factures),
         "n_factures": len(factures), "n_b2b": n_b2b, "n_b2c": len(factures) - n_b2b,
         "n_reglements": len(reglements),
@@ -348,5 +349,4 @@ def build_toslt(establishment, date_from, date_to, company_id,
         "encaisse": round(tot["enc"], 2), "creances": round(tot["creance"], 2),
         "ecart": round(tot["ecart"], 2),
         "balanced": abs(deb - cred) < 0.05, "debit": round(deb, 2), "credit": round(cred, 2),
-        "toslf_balanced": abs(fdeb - fcred) < 0.05, "toslf_debit": round(fdeb, 2), "toslf_credit": round(fcred, 2),
     }

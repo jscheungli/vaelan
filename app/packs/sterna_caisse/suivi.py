@@ -19,14 +19,11 @@ _TZ = timedelta(hours=4)   # La Réunion (affichage)
 # Les 9 étapes de la séquence de clôture (lignes du tableau).
 STEPS = [
     {"n": "1", "key": "clients", "label": "Synchronisation des clients", "kind": "clients"},
-    {"n": "2", "key": "gen_tickets", "label": "Génération du CSV — écritures Tickets", "kind": "gen", "bkind": "toslt"},
-    {"n": "3", "key": "import_tickets", "label": "Import des écritures Tickets dans Pennylane", "kind": "declare"},
-    {"n": "4", "key": "verify_tickets", "label": "Cadrage de l'import Tickets par Vaelan", "kind": "verify"},
-    {"n": "5", "key": "gen_factures", "label": "Génération du CSV — écritures Factures", "kind": "gen", "bkind": "toslf"},
-    {"n": "6", "key": "import_factures", "label": "Import des écritures Factures dans Pennylane", "kind": "declare"},
-    {"n": "7", "key": "verify_factures", "label": "Cadrage de l'import Factures par Vaelan", "kind": "soon"},
-    {"n": "8", "key": "justificatifs", "label": "Import des justificatifs (PDF factures) par Vaelan", "kind": "soon"},
-    {"n": "9", "key": "lettrage", "label": "Lettrage des comptes", "kind": "soon"},
+    {"n": "2", "key": "gen_tickets", "label": "Génération du CSV (caisse + factures)", "kind": "gen", "bkind": "toslt"},
+    {"n": "3", "key": "import_tickets", "label": "Import du CSV dans Pennylane", "kind": "declare"},
+    {"n": "4", "key": "verify_tickets", "label": "Cadrage de l'import par Vaelan", "kind": "verify"},
+    {"n": "5", "key": "justificatifs", "label": "Attache des justificatifs (PDF factures) par Vaelan", "kind": "soon"},
+    {"n": "6", "key": "lettrage", "label": "Lettrage des comptes", "kind": "soon"},
 ]
 
 

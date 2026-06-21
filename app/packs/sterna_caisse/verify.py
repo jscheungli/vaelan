@@ -58,24 +58,28 @@ def _expected_by_account(company_id, pfx, start, end):
     return {a: round(v, 2) for a, v in net.items()}, used, missing
 
 
-def _actual_by_account(pl, journal_id, start, end):
-    entries = pl.ledger_entries(journal_id, start.isoformat(), end.isoformat())
+def _actual_by_account(pl, journal_ids, start, end):
+    """Agrège le net par compte sur PLUSIEURS journaux (TOSLT + TOSLF du CSV unique)."""
     net = defaultdict(float)
-    for e in entries:
-        for l in pl.entry_lines(e["id"]):
-            acc = (l.get("ledger_account") or {}).get("number")
-            if not acc:
-                continue
-            net[acc] += float(l.get("credit") or 0) - float(l.get("debit") or 0)
-    return {a: round(v, 2) for a, v in net.items()}, len(entries)
+    n = 0
+    for jid in journal_ids:
+        entries = pl.ledger_entries(jid, start.isoformat(), end.isoformat())
+        n += len(entries)
+        for e in entries:
+            for l in pl.entry_lines(e["id"]):
+                acc = (l.get("ledger_account") or {}).get("number")
+                if not acc:
+                    continue
+                net[acc] += float(l.get("credit") or 0) - float(l.get("debit") or 0)
+    return {a: round(v, 2) for a, v in net.items()}, n
 
 
 def run_verify(ctx, company_code, pfx):
     establishment = next((n for n, e in config.ESTABLISHMENTS.items() if e["pfx"] == pfx), pfx)
     cfg = config.resolve(company_code)
     ecfg = cfg["est"][pfx]
-    journal_id = int(ecfg["journal_tickets_id"])
-    journal_label = ecfg["journal_tickets"]
+    journal_ids = [int(ecfg["journal_tickets_id"]), int(ecfg["journal_factures_id"])]
+    journal_label = f"{ecfg['journal_tickets']} + {ecfg['journal_factures']}"
     with Session(engine) as s:
         company = s.exec(select(Company).where(Company.code == company_code)).first()
         if not company:
@@ -104,7 +108,7 @@ def run_verify(ctx, company_code, pfx):
     ctx.log(f"Attendu : {len(expected)} comptes (lots {', '.join(used)})")
 
     ctx.progress(1, 3, step="lecture des écritures Pennylane…")
-    actual, n_entries = _actual_by_account(pl, journal_id, start, end)
+    actual, n_entries = _actual_by_account(pl, journal_ids, start, end)
     ctx.log(f"Pennylane : {n_entries} écritures, {len(actual)} comptes")
 
     ctx.progress(2, 3, step="rapprochement…")

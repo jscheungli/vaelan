@@ -7,11 +7,12 @@
   <li class="breadcrumb-item active">Import / cadrage</li>
 </ol></nav>
 
-<h1 class="h4 mb-1">Génération caisse — TOSLT + TOSLF</h1>
+<h1 class="h4 mb-1">Génération caisse (CSV unique)</h1>
 <p class="text-muted small">Une seule action : Vaelan recalcule le CA sur les tickets, le
-<strong>cadre</strong> avec le journal de synthèse, et ne produit les CSV <strong>que si le CA cadre</strong>.
-Il génère <strong>deux fichiers</strong> en une fois : <strong>TOSLT</strong> (caisse : CA + 411 factures +
-règlements) et <strong>TOSLF</strong> (reclassement du CA facturé 70101 → 7012/70102).</p>
+<strong>cadre</strong> avec le journal de synthèse, et ne produit le CSV <strong>que si le CA cadre</strong>.
+Il génère <strong>un seul fichier</strong> contenant les deux journaux : <strong>TOSLT</strong> (caisse :
+CA + 411 factures + règlements) et <strong>TOSLF</strong> (reclassement du CA facturé 70101 → 7012/70102) —
+Pennylane les sépare par la colonne « Code journal ».</p>
 <p class="text-muted small">Le CSV contient une écriture agrégée par jour (anonyme + payé comptant)
 + une écriture autonome par facture à crédit (créance 411, PJ = facture ; pré-vol : si une créance
 n'a pas de compte client, on bloque et on liste les clients à corriger). Chaque lot porte un

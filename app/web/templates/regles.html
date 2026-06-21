@@ -17,13 +17,13 @@
   </div>
   {% endmacro %}
 
-  {% call sec('s0', '0 · Séquence de clôture (9 étapes)', true) %}
+  {% call sec('s0', '0 · Séquence de clôture (6 étapes)', true) %}
     Ordre d'exécution, par établissement : <strong>1.</strong> Synchronisation des clients →
-    <strong>2.</strong> Génération CSV Tickets → <strong>3.</strong> Import Tickets dans Pennylane (manuel) →
-    <strong>4.</strong> Cadrage de l'import Tickets par Vaelan (vérification) →
-    <strong>5-7.</strong> Factures (génération / import / cadrage) →
-    <strong>8.</strong> Attache des justificatifs (PDF factures) →
-    <strong>9.</strong> Lettrage. Le tableau de suivi (page d'accueil société) trace « jusqu'à quelle date » et
+    <strong>2.</strong> Génération du CSV (caisse + factures, <strong>un seul fichier</strong>) →
+    <strong>3.</strong> Import du CSV dans Pennylane (manuel) →
+    <strong>4.</strong> Cadrage de l'import par Vaelan (vérification API) →
+    <strong>5.</strong> Attache des justificatifs (PDF factures) →
+    <strong>6.</strong> Lettrage. Le tableau de suivi (page d'accueil société) trace « jusqu'à quelle date » et
     « réalisé le… » par étape. <strong>Couleur</strong> : vert si couvert jusqu'au dernier mois TERMINÉ
     (fin du mois précédent), sinon orange « mois à clôturer ».
   {% endcall %}
@@ -37,8 +37,10 @@
     dans TopOrder/Pennylane puis on resynchronise. Les identifiants assignés (asso « ASDR ») sont gérés.
   {% endcall %}
 
-  {% call sec('s2', '2 · Génération CSV Tickets (TOSLT)') %}
-    Le ticket est la vérité fiscale ; tout le CA va au <strong>70101 (= le Z)</strong>.
+  {% call sec('s2', '2 · Génération du CSV (caisse + factures, fichier unique)') %}
+    <strong>Un seul CSV</strong> contenant deux journaux (Pennylane les sépare par la colonne « Code journal ») :
+    <strong>TOSLT</strong> (caisse) et <strong>TOSLF</strong> (reclassement). Le ticket est la vérité fiscale ;
+    tout le CA va au <strong>70101 (= le Z)</strong>.
     <ul class="mb-1">
       <li><strong>Tickets anonymes</strong> → 1 écriture agrégée par jour : crédit 70101/taux + TVA collectée ;
       débit encaissements (CB/Espèce/TR, rendu monnaie netté) ; écart de caisse résiduel.</li>
@@ -69,15 +71,18 @@
     cette date »). Compte rendu PDF par compte (Attendu | Pennylane | OK/Écart).
   {% endcall %}
 
-  {% call sec('s5', '5-7 · Factures (TOSLF) — à venir') %}
-    Reclassement HT du CA facturé : <strong>débit 70101 / crédit 7012 (B2B) ou 70102 (B2C)</strong> par facture
-    (net nul sur le CA total, pas de double comptage). Génération <strong>fusionnée</strong> avec les tickets
-    (1 synthèse → 2 CSV). <strong>Paiements décalés</strong> : une facture peut être réglée en caisse plus tard ;
-    deux flux par période — CA par date de ticket, règlements par date de paiement (liaison facture↔paiement via
-    <code>orderPaymentId</code>), lettrés par <code>F&lt;n°&gt;</code> à travers les périodes.
+  {% call sec('s2c', 'Factures (TOSLF) & règlements — dans le même CSV') %}
+    <strong>Reclassement</strong> (journal TOSLF, par facture) : <strong>débit 70101 / crédit 7012 (B2B) ou
+    70102 (B2C)</strong>, HT par taux (avoirs inversés) → le CA facturé sort du 70101, net nul sur le CA total,
+    <strong>pas de double comptage</strong>.<br>
+    <strong>Écriture facture</strong> (journal TOSLT) : CA 70101/TVA + <strong>débit 411 brut</strong> (la facture)
+    + paiements comptant (encaissement + crédit 411), lettrés <code>F&lt;n°&gt;</code>. Solde 411 = impayé.<br>
+    <strong>Paiements décalés</strong> : une facture peut être réglée en caisse plus tard. Deux flux par période —
+    CA par date de ticket ; règlements par date de paiement (liaison facture↔paiement via <code>orderPaymentId</code>),
+    débit encaissement / crédit 411 <code>F&lt;n°&gt;</code>, lettrés à travers les périodes.
   {% endcall %}
 
-  {% call sec('s8', '8-9 · Justificatifs & lettrage — à venir') %}
+  {% call sec('s8', '5-6 · Justificatifs & lettrage — à venir') %}
     Étapes <strong>distinctes par type de justificatif</strong> (ex. « Attacher les PDF factures aux écritures
     factures »), chacune finissant par un <strong>rapport de complétude</strong> (« toutes attachées, 0 écriture
     sans PDF »). Lettrage : soldes 411 par n° de facture, rapprochés avec les règlements (caisse, virements).
