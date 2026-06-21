@@ -30,30 +30,30 @@
   {% endfor %}
 </div>
 
-<h3 class="h6 text-uppercase text-muted">Compte client Pennylane — grand-livre complet</h3>
-<p class="text-muted" style="font-size:.75rem;">Chaque écriture peut être taguée :
-  <span class="badge text-bg-success">Saisi</span> = reportée / rapprochée dans TopOrder ·
-  <span class="badge text-bg-secondary">Ignoré</span> = non pertinente ou déjà traitée. On garde qui &amp; quand.</p>
+<h3 class="h6 text-uppercase text-muted">Grand-livre du compte client Pennylane</h3>
+<p class="text-muted" style="font-size:.75rem;">Reproduction du compte 411. La colonne <strong>Lett.</strong> reprend la lettre de lettrage
+  (même groupe = même lettre/couleur). Chaque écriture est tagable :
+  <span class="badge text-bg-success">Saisi</span> = reportée/rapprochée dans TopOrder ·
+  <span class="badge text-bg-secondary">Ignoré</span> = non pertinente / déjà traitée (qui &amp; quand gardés).</p>
 
 <div class="table-responsive">
-<table class="table table-sm align-middle">
-  <thead><tr class="small text-muted">
-    <th>Date</th><th>Libellé</th><th>Journal</th>
-    <th class="text-end">Débit</th><th class="text-end">Crédit</th>
-    <th class="text-center">Lettré</th><th class="text-end">Solde</th><th class="text-center">Tag</th>
+<table class="table table-sm table-bordered align-middle" style="font-size:.8rem;">
+  <thead class="table-light"><tr class="small text-muted">
+    <th>Date</th><th>Jour.</th><th>Libellé</th><th>Nº pièce</th><th class="text-center">Lett.</th>
+    <th class="text-end">Débit</th><th class="text-end">Crédit</th><th class="text-end">Solde</th><th class="text-center">Tag</th>
   </tr></thead>
   <tbody>
   {% for l in ledger.lines %}
     {% set tag = tags.get(l.id) %}
-    <tr class="small {{ 'table-success' if tag and tag.status=='saisi' else ('text-muted' if tag and tag.status=='ignore') }}">
+    <tr {% if tag and tag.status=='saisi' %}class="table-success"{% elif tag and tag.status=='ignore' %}class="text-muted"{% endif %}>
       <td class="text-nowrap">{{ l.date }}</td>
-      <td>{{ l.label[:48] }}
-        {% if l.is_virement %}<span class="badge text-bg-info">virement</span>{% endif %}</td>
-      <td><span class="text-muted" style="font-size:.7rem;">{{ l.journal or '' }}</span></td>
-      <td class="text-end">{{ eur(l.debit) }}</td>
-      <td class="text-end">{{ eur(l.credit) }}</td>
-      <td class="text-center">{% if l.lettered %}<i class="bi bi-link-45deg text-success" title="lettré"></i>{% endif %}</td>
-      <td class="text-end text-nowrap">{{ '%.2f'|format(l.balance) }}</td>
+      <td><span class="text-muted">{{ l.journal }}</span></td>
+      <td>{{ l.label[:52] }}</td>
+      <td><code style="font-size:.7rem;">{{ l.piece[:24] }}</code></td>
+      <td class="text-center">{% if l.letter %}<span class="badge" style="background:{{ l.lcolor }};font-weight:700;">{{ l.letter }}</span>{% endif %}</td>
+      <td class="text-end text-nowrap">{{ eur(l.debit) }}</td>
+      <td class="text-end text-nowrap">{{ eur(l.credit) }}</td>
+      <td class="text-end text-nowrap fw-semibold">{{ '%.2f'|format(l.balance) }}</td>
       <td class="text-center text-nowrap">
         <form method="post" action="/c/{{ company.code }}/paiements/{{ account }}/tag" class="d-inline">
           <input type="hidden" name="line_id" value="{{ l.id }}">
@@ -67,14 +67,14 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="8" class="text-muted small">Aucune écriture sur ce compte.</td></tr>
+    <tr><td colspan="9" class="text-muted small">Aucune écriture sur ce compte.</td></tr>
   {% endfor %}
   </tbody>
-  <tfoot><tr class="fw-semibold">
-    <td colspan="3" class="text-end small">Totaux</td>
+  <tfoot class="table-light"><tr class="fw-semibold">
+    <td colspan="5" class="text-end">TOTAL {{ account }} {{ ledger.name or '' }}</td>
     <td class="text-end">{{ '%.2f'|format(ledger.total_debit) }}</td>
     <td class="text-end">{{ '%.2f'|format(ledger.total_credit) }}</td>
-    <td></td><td class="text-end">{{ '%.2f'|format(ledger.solde) }}</td><td></td>
+    <td class="text-end">{{ '%.2f'|format(ledger.solde) }}</td><td></td>
   </tr></tfoot>
 </table>
 </div>

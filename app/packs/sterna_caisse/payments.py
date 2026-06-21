@@ -103,26 +103,72 @@ def pennylane_client(company_code, account, pl=None):
             "kimayo_open": kimayo_open, "kimayo_amount": round(kimayo_amount, 2)}
 
 
+# palette des lettres de lettrage (reprend l'esprit coloré du grand-livre Pennylane)
+_LCOLORS = ["#0d6efd", "#198754", "#d63384", "#fd7e14", "#6f42c1", "#0dcaf0",
+            "#dc3545", "#20c997", "#6610f2", "#ffc107"]
+
+
+def _letter(n):
+    """0->A, 1->B, … 25->Z, 26->AA, 27->AB … (comme la colonne Lett. de Pennylane)."""
+    s = ""
+    n += 1
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
 def account_ledger(company_code, account, pl=None):
-    """Reproduction INTÉGRALE du compte client 411 Pennylane : toutes les écritures
-    (date, libellé, journal, débit, crédit, lettrage) triées, avec SOLDE courant ligne
-    à ligne + totaux et solde final. Sert au grand-livre de la page paiements."""
+    """Reproduction FIDÈLE du grand-livre Pennylane d'un compte client 411 : toutes les
+    écritures (Date · Journal · Libellé · Nº pièce · Lettrage · Débit · Crédit · Solde),
+    avec la LETTRE de lettrage (A/B/C…, reconstituée par groupe) + couleur, et totaux."""
     pl = pl or pennylane.for_company(company_code)
     acc = pl.find_account(account)
     if not acc:
         return None
+    raw = pl.account_lines(acc["id"])
+
+    # enrichissement par écriture : n° de pièce + code journal (le list endpoint ne les donne pas)
+    try:
+        jmap = pl.journals_map()
+    except Exception:
+        jmap = {}
+    ecache = {}
+    for l in raw:
+        eid = (l.get("ledger_entry") or {}).get("id")
+        if eid and eid not in ecache:
+            try:
+                ecache[eid] = pl.get_entry(eid)
+            except Exception:
+                ecache[eid] = {}
+
+    # lettrage : grouper les lignes par groupe (frozenset des ids lettrés), assigner A,B,C…
+    gletter = {}
+    for l in sorted(raw, key=lambda x: (x.get("date") or "", x["id"])):
+        ids = (l.get("lettered_ledger_entry_lines") or {}).get("ids")
+        if ids:
+            key = frozenset(ids)
+            if key not in gletter:
+                gletter[key] = _letter(len(gletter))
+
     lines = []
-    for l in pl.account_lines(acc["id"]):
-        deb = round(float(l.get("debit") or 0), 2)
-        cred = round(float(l.get("credit") or 0), 2)
+    for l in raw:
+        eid = (l.get("ledger_entry") or {}).get("id")
+        ent = ecache.get(eid, {})
+        ids = (l.get("lettered_ledger_entry_lines") or {}).get("ids")
+        letter = gletter.get(frozenset(ids)) if ids else None
         jr = l.get("journal")
-        fnum = _fac_from_label(l.get("label"))
+        # le code journal est sur l'ÉCRITURE (journal.id -> code via /journals)
+        jcode = (jr.get("code") if isinstance(jr, dict) else None) \
+            or jmap.get((ent.get("journal") or {}).get("id"))
         lines.append({
-            "id": l["id"], "date": l.get("date"), "label": l.get("label") or "",
-            "journal": (jr.get("code") or jr.get("label")) if isinstance(jr, dict) else None,
-            "debit": deb, "credit": cred, "fnum": fnum,
-            "lettered": bool((l.get("lettered_ledger_entry_lines") or {}).get("ids")),
-            "is_virement": cred > deb and fnum is None,   # crédit sans réf. = virement banque
+            "id": l["id"], "date": l.get("date"),
+            "label": l.get("label") or ent.get("label") or "",   # repli sur le libellé d'écriture (lignes de banque)
+            "journal": jcode or "", "piece": ent.get("piece_number") or "",
+            "debit": round(float(l.get("debit") or 0), 2),
+            "credit": round(float(l.get("credit") or 0), 2),
+            "letter": letter,
+            "lcolor": _LCOLORS[(ord(letter[-1]) - 65) % len(_LCOLORS)] if letter else None,
         })
     lines.sort(key=lambda x: (x["date"] or "", x["id"]))
     bal = tot_d = tot_c = 0.0
@@ -132,7 +178,8 @@ def account_ledger(company_code, account, pl=None):
         tot_d += x["debit"]
         tot_c += x["credit"]
     return {"lines": lines, "total_debit": round(tot_d, 2), "total_credit": round(tot_c, 2),
-            "solde": round(tot_d - tot_c, 2), "letterable": bool(acc.get("letterable"))}
+            "solde": round(tot_d - tot_c, 2), "name": acc.get("label"), "number": account,
+            "letterable": bool(acc.get("letterable"))}
 
 
 def _pdate(d):

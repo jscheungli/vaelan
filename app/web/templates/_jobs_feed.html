@@ -5,6 +5,13 @@
   {% elif s == 'interrupted' %}<span class="badge text-bg-warning">interrompu</span>
   {% else %}<span class="badge text-bg-secondary">{{ s }}</span>{% endif %}
 {%- endmacro %}
+{# badge couleur établissement (même convention que le tableau de suivi) déduit du libellé #}
+{% macro etab_badge(label) -%}
+  {% set lbl = (label or '')|upper %}
+  {% set ec = [('SAINTE-MARIE','SM','#fff3cd','#664d03'), ('POSSESSION','LP','#d1e7dd','#0a3622'),
+               ('SAINT-LEU','SL','#e2d9f3','#341a66'), ('KOOKABURA','KK','#ffe5d0','#6b3410')] %}
+  {% for key, pfx, bg, fg in ec %}{% if key in lbl %}<span class="badge rounded-pill me-1" style="background:{{ bg }};color:{{ fg }};font-weight:600;">{{ pfx }}</span>{% endif %}{% endfor %}
+{%- endmacro %}
 
 {% if running %}
 <h2 class="h6 text-uppercase text-muted">En cours</h2>
@@ -14,7 +21,8 @@
     <div class="card-body py-2">
       <div class="d-flex small align-items-center">
         <span class="badge text-bg-light text-dark border">{{ cmap.get(r.company_id, '—') }}</span>
-        <span class="fw-semibold ms-2">{{ r.label or r.kind }}</span>
+        <span class="ms-2">{{ etab_badge(r.label) }}</span>
+        <span class="fw-semibold">{{ r.label or r.kind }}</span>
         <span class="ms-2 text-muted">· {{ r.step or '' }}</span>
         <span class="ms-auto text-muted me-2">{{ r.progress_current or 0 }}{% if r.progress_total %}/{{ r.progress_total }}{% endif %}</span>
         {% if r.cancel_requested %}
@@ -48,7 +56,7 @@
     <tr class="small">
       <td>{{ r.id }}</td>
       <td>{{ cmap.get(r.company_id, '—') }}</td>
-      <td>{{ r.label or r.kind }}</td>
+      <td>{{ etab_badge(r.label) }}{{ r.label or r.kind }}</td>
       <td>{{ statusbadge(r.status) }}</td>
       <td>{{ r.summary or '' }}</td>
       <td class="text-muted" title="{{ r.user_email or '' }}">{{ (r.user_email or '').split('@')[0] }}</td>

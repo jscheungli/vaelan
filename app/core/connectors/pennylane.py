@@ -49,6 +49,26 @@ class PennylaneClient:
         """Lignes détaillées d'une écriture (debit/credit + ledger_account.number)."""
         return self.get(f"/ledger_entries/{entry_id}").get("ledger_entry_lines") or []
 
+    def get_entry(self, entry_id):
+        """Écriture complète (pour le n° de pièce + le journal)."""
+        d = self.get(f"/ledger_entries/{entry_id}")
+        return d.get("ledger_entry", d) if isinstance(d, dict) else {}
+
+    def journals_map(self):
+        """{journal_id -> code} (ex. {78512312320: 'TOSLT', ...} + journaux de banque BQ…)."""
+        out, cur = {}, None
+        while True:
+            params = {"limit": 100}
+            if cur:
+                params["cursor"] = cur
+            d = self.get("/journals", **params)
+            for j in (d.get("items") or []):
+                out[j.get("id")] = j.get("code") or j.get("label")
+            if not d.get("has_more"):
+                break
+            cur = d.get("next_cursor")
+        return out
+
     def find_account(self, number: str):
         """Résout un compte par son NUMÉRO -> dict {id, number, letterable} ou None."""
         import json
