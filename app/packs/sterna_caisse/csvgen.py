@@ -117,6 +117,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
                                "pay": defaultdict(float)})
     factures = []       # CA facturé : créance par facture (TTC plein), par date de TICKET
     reglements = []     # règlements : 1 ligne par PAIEMENT de facture, par date de PAIEMENT
+    fac_client = {}     # fnum -> (compte 411, nom) des factures de la période (routage des règlements)
     unresolved = []
     n_tickets = 0
     tot_ttc = 0.0                    # CA TTC de TOUS les tickets (= Z, pour le cadrage)
@@ -157,10 +158,11 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 vat_total[r][1] += ttc_l
             tot_ttc += ttc
             fnum = tk2fac.get(tk.get("id")) or (tk.get("rootTicketId") and tk2fac.get(tk["rootTicketId"]))
-            if fnum:          # FACTURÉ -> créance (TTC plein) ; règlements en passe 2
-                coid, cid = tk.get("companyId"), tk.get("customerId")
+            coid, cid = tk.get("companyId"), tk.get("customerId")
+            has_client = (coid and coid != ZERO) or (cid and cid != ZERO)
+            if fnum and has_client:        # FACTURÉ avec client -> créance 411 (TTC plein)
                 a, nm = resolve(pfx, coid, cid)
-                if not a:
+                if not a:                  # client PRO connu mais sans compte 411 -> pré-vol bloquant
                     unresolved.append({"date": dd, "company_id": coid, "customer_id": cid,
                                        "facture": f"{int(fnum):07d}", "amount": round(ttc, 2),
                                        **diagnose(pfx, coid)})
@@ -168,7 +170,8 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 factures.append({"date": dd, "fnum": int(fnum), "acc": a, "nm": nm,
                                  "vat": dict(vat), "ttc": round(ttc, 2),
                                  "b2b": bool(coid and coid != ZERO)})
-            else:             # NON facturé : CA anonyme -> agrégat du jour (paiements en passe 2)
+                fac_client[int(fnum)] = (a, nm)
+            else:             # NON facturé OU facture SANS client (= vente comptoir) -> CA anonyme
                 d = agg[dd]
                 for r, (ht, t) in vat.items():
                     d["vat"][r][0] += ht
@@ -204,20 +207,25 @@ def build_toslt(establishment, date_from, date_to, company_id,
             pt = p.get("paymentType") or "?"
             pay_total[pt] += amt
             fnum = tk2fac.get(p.get("rootTicketId"))
-            if fnum:          # RÈGLEMENT de facture : 1 ligne par paiement, lettré F<n°>
+            a = nm = None
+            if fnum:
                 coid, cid = p.get("companyId"), p.get("customerId")
-                a, nm = resolve(pfx, coid, cid)
-                if not a:
-                    unresolved.append({"date": pdate, "company_id": coid, "customer_id": cid,
-                                       "facture": f"{int(fnum):07d}", "amount": round(amt, 2),
-                                       **diagnose(pfx, coid)})
-                    continue
+                if (coid and coid != ZERO) or (cid and cid != ZERO):
+                    a, nm = resolve(pfx, coid, cid)
+                    if not a:              # client PRO connu mais sans compte 411 -> pré-vol bloquant
+                        unresolved.append({"date": pdate, "company_id": coid, "customer_id": cid,
+                                           "facture": f"{int(fnum):07d}", "amount": round(amt, 2),
+                                           **diagnose(pfx, coid)})
+                        continue
+                elif int(fnum) in fac_client:   # paiement sans client mais facture connue (période)
+                    a, nm = fac_client[int(fnum)]
+            if fnum and a:    # RÈGLEMENT de facture : 1 ligne par paiement, lettré F<n°>
                 reglements.append({"date": pdate, "fnum": int(fnum), "acc": a, "nm": nm,
                                    "mode": pt, "amount": amt})
                 fac_pay[pt] += amt
                 fac_pay_detail.append({"date": pdate, "fnum": int(fnum), "nm": nm,
                                        "mode": pt, "amount": round(amt, 2)})
-            else:             # encaissement anonyme -> agrégat du jour (par date de paiement)
+            else:             # encaissement anonyme (incl. facture sans client) -> agrégat du jour
                 agg[pdate]["pay"][pt] += amt
         if on_progress:
             on_progress(n_tickets, f"pull paiements… {pages} pages")
