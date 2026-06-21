@@ -147,5 +147,22 @@
     et l'utilisateur. Tâches relançables ; suivi réinitialisable par établissement.
   {% endcall %}
 
+  {% call sec('roles', 'Accès par rôle & accueil société') %}
+    En entrant dans une société, l'utilisateur voit une page d'<strong>accueil en tuiles</strong> : seules les
+    fonctionnalités auxquelles son rôle donne accès s'affichent. Deux rôles : <strong>comptable</strong> = tout
+    (Suivi de clôture, Tâches, Configuration, Clients, Paiements) ; <strong>gestion</strong> (la personne TopOrder) =
+    <strong>Clients + Paiements uniquement</strong>. Le gating est appliqué côté serveur (les routes interdites
+    renvoient 403, même par URL directe) et la nav masque « Tâches » sans accès.
+  {% endcall %}
+
+  {% call sec('gl', 'Grand-livre client (Paiements)') %}
+    Le détail d'un client reproduit le <strong>grand-livre Pennylane</strong> du compte 411, <strong>par exercice
+    comptable (1<sup>er</sup> juillet → 30 juin)</strong> — sélecteur d'exercice, à-nouveaux du 1<sup>er</sup> juillet
+    + mouvements de l'année (pas de double comptage). Colonnes Date · Journal · Libellé · Nº pièce · Lettrage (lettre
+    colorée par groupe) · Débit · Crédit · Solde courant. <strong>Tag</strong> par écriture : <em>Saisi</em> (rapprochée
+    dans TopOrder) / <em>Ignoré</em>, avec traçabilité. <strong>Filtres</strong> : « à traiter » (masque les écritures
+    validées), « non / partiellement lettrées » (masque les lettrages soldés) ; et réinitialisation du rail de validation.
+  {% endcall %}
+
 </div>
 {% endblock %}

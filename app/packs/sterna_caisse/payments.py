@@ -173,13 +173,22 @@ def account_ledger(company_code, account, ex=None, pl=None):
         ids = (l.get("lettered_ledger_entry_lines") or {}).get("ids")
         if ids and frozenset(ids) not in gletter:
             gletter[frozenset(ids)] = _letter(len(gletter))
+    # net par groupe (sur TOUT le compte) -> distingue lettré COMPLET (net 0) vs PARTIEL
+    id2 = {l["id"]: l for l in raw}
+    gnet = {}
+    for l in raw:
+        ids = (l.get("lettered_ledger_entry_lines") or {}).get("ids")
+        if ids and frozenset(ids) not in gnet:
+            gnet[frozenset(ids)] = round(sum(float(id2[i].get("debit") or 0) - float(id2[i].get("credit") or 0)
+                                             for i in ids if i in id2), 2)
 
     lines = []
     for l in sub:
         eid = (l.get("ledger_entry") or {}).get("id")
         ent = ecache.get(eid, {})
         ids = (l.get("lettered_ledger_entry_lines") or {}).get("ids")
-        letter = gletter.get(frozenset(ids)) if ids else None
+        key = frozenset(ids) if ids else None
+        letter = gletter.get(key) if key else None
         jr = l.get("journal")
         jcode = (jr.get("code") if isinstance(jr, dict) else None) \
             or jmap.get((ent.get("journal") or {}).get("id"))
@@ -191,6 +200,8 @@ def account_ledger(company_code, account, ex=None, pl=None):
             "credit": round(float(l.get("credit") or 0), 2),
             "letter": letter,
             "lcolor": _LCOLORS[(ord(letter[-1]) - 65) % len(_LCOLORS)] if letter else None,
+            # lettré COMPLET (groupe soldé) vs PARTIEL (groupe non soldé) vs non lettré (letter None)
+            "letter_full": bool(letter) and abs(gnet.get(key, 0.0)) < TOL,
         })
     lines.sort(key=lambda x: (x["date"] or "", x["id"]))
     bal = tot_d = tot_c = 0.0

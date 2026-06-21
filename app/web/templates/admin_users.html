@@ -30,9 +30,8 @@
             <select name="role" class="form-select form-select-sm py-0" style="font-size:.75rem; width:auto; display:inline-block;" onchange="this.form.submit()">
               {% set cur = access.get((u.id, c.id), '') %}
               <option value="" {{ 'selected' if not cur }}>—</option>
-              <option value="viewer" {{ 'selected' if cur == 'viewer' }}>viewer</option>
-              <option value="operator" {{ 'selected' if cur == 'operator' }}>operator</option>
-              <option value="admin" {{ 'selected' if cur == 'admin' }}>admin</option>
+              <option value="comptable" {{ 'selected' if cur in ('comptable','admin','operator') }}>comptable (tout)</option>
+              <option value="gestion" {{ 'selected' if cur in ('gestion','viewer') }}>gestion (Clients + Paiements)</option>
             </select>
           </form>
           {% endif %}
@@ -59,5 +58,6 @@
   </div>
   <div class="col-12"><button class="btn btn-sm btn-dark"><i class="bi bi-person-plus"></i> Créer</button></div>
 </form>
-<p class="text-muted small mt-2">« — » = aucun accès. viewer = lecture ; operator = lance les tâches ; admin = tout. Le superadmin a accès à toutes les sociétés.</p>
+<p class="text-muted small mt-2">« — » = aucun accès. <strong>comptable</strong> = toutes les fonctionnalités (suivi, tâches, config, clients, paiements) ;
+  <strong>gestion</strong> (personne TopOrder) = Clients + Paiements uniquement. Le superadmin a accès à toutes les sociétés.</p>
 {% endblock %}

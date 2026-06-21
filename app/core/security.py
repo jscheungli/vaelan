@@ -67,6 +67,30 @@ def role_for(user: User, company: Company) -> Optional[str]:
         return a.role if a else None
 
 
+# ---- Permissions par fonctionnalité (rôle -> features) ----
+# Deux personas : « comptable » (tout) et « gestion » (= personne TopOrder : Clients + Paiements).
+_FULL = {"suivi", "jobs", "clients", "paiements", "config"}
+
+
+def features_for(role: Optional[str], is_superuser: bool = False) -> set:
+    if is_superuser:
+        return set(_FULL)
+    if role in ("gestion", "viewer"):
+        return {"clients", "paiements"}
+    if role in ("comptable", "admin", "operator"):
+        return set(_FULL)
+    return set()
+
+
+def can(user: Optional[User], company: Company, feature: str) -> bool:
+    """L'utilisateur a-t-il accès à cette fonctionnalité sur cette société ?"""
+    if not user:
+        return False
+    if user.is_superuser:
+        return True
+    return feature in features_for(role_for(user, company))
+
+
 def require_company(request: Request, code: str) -> Company:
     user = require_user(request)
     with Session(engine) as s:

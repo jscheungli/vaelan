@@ -63,7 +63,8 @@
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb small">
   <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
-  <li class="breadcrumb-item active">{{ company.name }}</li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Suivi de clôture</li>
 </ol></nav>
 
 <div class="d-flex align-items-center mb-1 flex-wrap gap-2">

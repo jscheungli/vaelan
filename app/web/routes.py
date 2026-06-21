@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.core.db import engine
 from app.core.config import APP_VERSION, APP_COMMIT
-from app.core.security import authenticate, current_user, user_companies, role_for
+from app.core.security import authenticate, current_user, user_companies, role_for, can, features_for
 from app.core import registry
 from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
@@ -27,8 +27,10 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 
 def _ctx(request: Request, **extra):
     # NB: la signature moderne de TemplateResponse injecte `request` elle-même.
+    u = current_user(request)
     base = {
-        "app_name": "Vaelan", "user": current_user(request),
+        "app_name": "Vaelan", "user": u,
+        "can_jobs": _can_jobs(u),       # pour masquer « Tâches » dans la nav selon le rôle
         "version": APP_VERSION, "commit": APP_COMMIT,
     }
     base.update(extra)
@@ -157,6 +159,21 @@ def companies(request: Request):
     return templates.TemplateResponse(request, "companies.html", _ctx(request, companies=user_companies(user)))
 
 
+# tuiles de l'accueil société : (feature, libellé, icône, href, description)
+_TILES = [
+    ("suivi", "Suivi de clôture", "bi-list-check", "/c/{code}/suivi",
+     "Génération des CSV, import, cadrage, justificatifs, lettrage — le déroulé mensuel."),
+    ("clients", "Clients", "bi-people", "/c/{code}/clients",
+     "Correspondance TopOrder ↔ Pennylane, statut de chaque client."),
+    ("paiements", "Paiements", "bi-cash-coin", "/c/{code}/paiements",
+     "Encours par client, grand-livre Pennylane, rapprochement des règlements."),
+    ("config", "Configuration", "bi-gear", "/c/{code}/config",
+     "Comptes, journaux et catégories analytiques de la société."),
+    ("jobs", "Tâches", "bi-list-task", "/jobs",
+     "Suivi en direct des exécutions (imports, calculs)."),
+]
+
+
 @router.get("/c/{code}", response_class=HTMLResponse)
 def dashboard(request: Request, code: str):
     user = current_user(request)
@@ -166,7 +183,20 @@ def dashboard(request: Request, code: str):
         company = s.exec(select(Company).where(Company.code == code)).first()
     if not company or role_for(user, company) is None:
         return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
+    feats = features_for(role_for(user, company), user.is_superuser)
+    tiles = [{"label": l, "icon": ic, "href": h.format(code=code), "desc": d}
+             for f, l, ic, h, d in _TILES if f in feats]
+    return templates.TemplateResponse(request, "company_home.html",
+                                      _ctx(request, company=company, tiles=tiles,
+                                           role=role_for(user, company)))
 
+
+@router.get("/c/{code}/suivi", response_class=HTMLResponse)
+def suivi_board(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code, feature="suivi")
+    if redir:
+        return redir
+    user = current_user(request)
     pl = pennylane.for_company(company.code)
     health = pl.health() if pl else {"ok": False, "error": "clé API non configurée"}
     board = caisse_suivi.build_board(company)
@@ -178,13 +208,29 @@ def dashboard(request: Request, code: str):
 
 
 # ----------------------------- Import / cadrage -----------------------------
-def _company_or_redirect(request: Request, code: str):
+def _feature_from_path(path: str):
+    """Déduit la fonctionnalité gardée d'après l'URL (gating automatique par rôle)."""
+    if "/config" in path:
+        return "config"
+    if "/paiements" in path:
+        return "paiements"
+    if "/clients" in path:
+        return "clients"
+    if any(s in path for s in ("/import", "/generate", "/batch", "/suivi")):
+        return "suivi"
+    return None
+
+
+def _company_or_redirect(request: Request, code: str, feature: str = None):
     user = current_user(request)
     if not user:
         return None, RedirectResponse("/login", status_code=303)
     with Session(engine) as s:
         company = s.exec(select(Company).where(Company.code == code)).first()
     if not company or role_for(user, company) is None:
+        return None, templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
+    feat = feature or _feature_from_path(request.url.path)
+    if feat and not can(user, company, feat):   # gating par fonctionnalité (rôle)
         return None, templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
     return company, None
 
@@ -312,12 +358,6 @@ async def config_save(request: Request, code: str):
 
 
 # ----------------------------- Suivi de clôture (tableau de bord) -----------------------------
-@router.get("/c/{code}/suivi")
-def suivi_page(request: Request, code: str):
-    # le tableau de suivi est désormais la page d'accueil de la société
-    return RedirectResponse(f"/c/{code}", status_code=303)
-
-
 @router.post("/c/{code}/suivi/declare")
 def suivi_declare(request: Request, code: str, establishment: str = Form(...),
                   step: str = Form(...), covered_to: str = Form(""), undo: str = Form("")):
@@ -407,7 +447,8 @@ def paiements_sync(request: Request, code: str):
 
 
 @router.get("/c/{code}/paiements/{account}", response_class=HTMLResponse)
-def paiements_client(request: Request, code: str, account: str, ex: str = ""):
+def paiements_client(request: Request, code: str, account: str, ex: str = "",
+                     show: str = "all", lett: str = "all"):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
@@ -423,7 +464,22 @@ def paiements_client(request: Request, code: str, account: str, ex: str = ""):
         err = str(e)[:200]
     return templates.TemplateResponse(request, "paiements_client.html",
                                       _ctx(request, company=company, account=account, cp=cp,
-                                           ledger=ledger, tags=tags, err=err))
+                                           ledger=ledger, tags=tags, err=err, show=show, lett=lett))
+
+
+@router.post("/c/{code}/paiements/{account}/reset-tags")
+def paiements_reset_tags(request: Request, code: str, account: str, ex: str = Form("")):
+    """Réinitialise le rail de validation : retire TOUS les tags du compte (on reprend à zéro)."""
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        for r in s.exec(select(PaymentReport).where(
+                PaymentReport.company_id == company.id, PaymentReport.account == account)).all():
+            s.delete(r)
+        s.commit()
+    suffix = f"?ex={ex}" if ex else ""
+    return RedirectResponse(f"/c/{code}/paiements/{account}{suffix}", status_code=303)
 
 
 @router.post("/c/{code}/paiements/{account}/tag")
@@ -524,16 +580,29 @@ def clients_sync_action(request: Request, code: str):
 
 
 # ----------------------------- Jobs (tâches) -----------------------------
+def _can_jobs(user) -> bool:
+    """L'utilisateur a-t-il accès aux Tâches (sur au moins une société) ?"""
+    if not user:
+        return False
+    if user.is_superuser:
+        return True
+    return any(can(user, c, "jobs") for c in user_companies(user))
+
+
 @router.get("/jobs", response_class=HTMLResponse)
 def jobs_page(request: Request):
-    if not current_user(request):
+    u = current_user(request)
+    if not u:
         return RedirectResponse("/login", status_code=303)
+    if not _can_jobs(u):
+        return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
     return templates.TemplateResponse(request, "jobs.html", _ctx(request))
 
 
 @router.post("/jobs/{run_id}/cancel")
 def jobs_cancel(request: Request, run_id: int):
-    if not current_user(request):
+    u = current_user(request)
+    if not u or not _can_jobs(u):
         return RedirectResponse("/login", status_code=303)
     from app.core.jobs import request_cancel
     request_cancel(run_id)
@@ -542,7 +611,8 @@ def jobs_cancel(request: Request, run_id: int):
 
 @router.get("/jobs/feed", response_class=HTMLResponse)
 def jobs_feed(request: Request, page: int = 1):
-    if not current_user(request):
+    u = current_user(request)
+    if not u or not _can_jobs(u):
         return RedirectResponse("/login", status_code=303)
     from sqlalchemy import func
     PER_PAGE = 10

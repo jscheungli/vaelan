@@ -52,6 +52,26 @@
   <span class="badge text-bg-success">Saisi</span> = reportée/rapprochée dans TopOrder ·
   <span class="badge text-bg-secondary">Ignoré</span> = non pertinente / déjà traitée (qui &amp; quand gardés).</p>
 
+{# barre de filtres : validation + lettrage (l'exercice est conservé) #}
+{% set q = base + '?ex=' + ledger.exercise|string %}
+<div class="d-flex flex-wrap align-items-center gap-3 mb-2 small">
+  <div class="btn-group btn-group-sm" role="group" aria-label="Validation">
+    <a href="{{ q }}&show=all&lett={{ lett }}" class="btn {{ 'btn-dark' if show != 'todo' else 'btn-outline-dark' }}">Toutes</a>
+    <a href="{{ q }}&show=todo&lett={{ lett }}" class="btn {{ 'btn-dark' if show == 'todo' else 'btn-outline-dark' }}">À traiter (non validées)</a>
+  </div>
+  <div class="btn-group btn-group-sm" role="group" aria-label="Lettrage">
+    <a href="{{ q }}&show={{ show }}&lett=all" class="btn {{ 'btn-dark' if lett != 'open' else 'btn-outline-dark' }}">Tout lettrage</a>
+    <a href="{{ q }}&show={{ show }}&lett=open" class="btn {{ 'btn-dark' if lett == 'open' else 'btn-outline-dark' }}">Non / partiellement lettrées</a>
+  </div>
+  {% if tags %}
+  <form method="post" action="{{ base }}/reset-tags" class="ms-auto"
+        onsubmit="return confirm('Réinitialiser le rail de validation (retirer tous les tags Saisi/Ignoré de ce compte) ?');">
+    <input type="hidden" name="ex" value="{{ ledger.exercise }}">
+    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-counterclockwise"></i> Réinitialiser la validation</button>
+  </form>
+  {% endif %}
+</div>
+
 <div class="table-responsive">
 <table class="table table-sm table-bordered align-middle" style="font-size:.8rem;">
   <thead class="table-light"><tr class="small text-muted">
@@ -59,8 +79,11 @@
     <th class="text-end">Débit</th><th class="text-end">Crédit</th><th class="text-end">Solde</th><th class="text-center">Tag</th>
   </tr></thead>
   <tbody>
+  {% set ns = namespace(shown=0) %}
   {% for l in ledger.lines %}
     {% set tag = tags.get(l.id) %}
+    {% set vis = (show != 'todo' or not tag) and (lett != 'open' or not l.letter_full) %}
+    {% if vis %}{% set ns.shown = ns.shown + 1 %}
     <tr {% if tag and tag.status=='saisi' %}class="table-success"{% elif tag and tag.status=='ignore' %}class="text-muted"{% endif %}>
       <td class="text-nowrap">{{ l.date }}</td>
       <td><span class="text-muted">{{ l.journal }}</span></td>
@@ -82,9 +105,11 @@
         {% if tag %}<div class="text-muted" style="font-size:.62rem;">{{ (tag.reported_by or '').split('@')[0] }} · {{ tag.reported_at.strftime('%d/%m %H:%M') }}</div>{% endif %}
       </td>
     </tr>
-  {% else %}
-    <tr><td colspan="9" class="text-muted small">Aucune écriture sur ce compte.</td></tr>
+    {% endif %}
   {% endfor %}
+  {% if ns.shown == 0 %}
+    <tr><td colspan="9" class="text-muted small">{% if ledger.lines %}Aucune écriture ne correspond aux filtres (tout est validé / lettré).{% else %}Aucune écriture sur cet exercice.{% endif %}</td></tr>
+  {% endif %}
   </tbody>
   <tfoot class="table-light"><tr class="fw-semibold">
     <td colspan="5" class="text-end">TOTAL {{ account }} {{ ledger.name or '' }}</td>
