@@ -17,6 +17,7 @@ from app.packs.sterna_caisse.jobs import run_cadrage, run_generate_toslt
 from app.packs.sterna_caisse.clients_sync import sync_clients
 from app.packs.sterna_caisse import suivi as caisse_suivi
 from app.packs.sterna_caisse.verify import run_verify
+from app.packs.sterna_caisse.justificatifs import run_justificatifs
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -345,6 +346,19 @@ def suivi_verify(request: Request, code: str, establishment: str = Form(...)):
               company_id=company.id, pack="sterna.caisse", label=label,
               user=current_user(request))
     return RedirectResponse("/jobs", status_code=303)   # -> page Tâches (suivi live)
+
+
+@router.post("/c/{code}/suivi/justificatifs")
+def suivi_justificatifs(request: Request, code: str, establishment: str = Form(...)):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    label = f"Justificatifs (PDF factures) · {establishment}"
+    start_job("justificatifs_pennylane",
+              lambda ctx: run_justificatifs(ctx, company.code, establishment),
+              company_id=company.id, pack="sterna.caisse", label=label,
+              user=current_user(request))
+    return RedirectResponse("/jobs", status_code=303)
 
 
 @router.post("/c/{code}/suivi/reset")

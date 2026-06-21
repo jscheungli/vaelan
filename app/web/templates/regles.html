@@ -88,10 +88,22 @@
     débit encaissement / crédit 411 <code>F&lt;n°&gt;</code>, lettrés à travers les périodes.
   {% endcall %}
 
-  {% call sec('s8', '5-6 · Justificatifs & lettrage — à venir') %}
-    Étapes <strong>distinctes par type de justificatif</strong> (ex. « Attacher les PDF factures aux écritures
-    factures »), chacune finissant par un <strong>rapport de complétude</strong> (« toutes attachées, 0 écriture
-    sans PDF »). Lettrage : soldes 411 par n° de facture, rapprochés avec les règlements (caisse, virements).
+  {% call sec('s8', '5 · Justificatifs (PDF factures) — par Vaelan via l\'API') %}
+    Les écritures sont créées par <strong>import CSV manuel</strong> (sans pièce jointe). À l'étape 5, Vaelan
+    relit les écritures <strong>« facture »</strong> dans Pennylane (pièce contenant <code>F&lt;n°&gt;</code>,
+    journaux TOSLT créance + TOSLF reclassement), télécharge le <strong>PDF officiel</strong> de chaque facture
+    depuis TopOrder (<code>pdf.toporder.fr/pdf?InvoiceId=…</code>, le GUID fait jeton, sans auth) et le
+    <strong>rattache à l'écriture existante</strong> via l'API (<code>POST /file_attachments</code> puis
+    <code>PUT /ledger_entries/{id}</code> avec <code>file_attachment_id</code>). C'est <strong>idempotent</strong> :
+    une écriture déjà pourvue d'une pièce est ignorée. L'étape finit par une <strong>vérification dans Pennylane</strong>
+    (champ <code>attachment</code> par écriture) et un <strong>rapport de complétude</strong> : nombre d'écritures
+    facture, déjà attachées, attachées ce passage, en échec (avec la raison), couvertes au final, et le détail
+    par facture. Vert <strong>« complet »</strong> uniquement si <strong>0 écriture facture sans PDF</strong>.
+  {% endcall %}
+
+  {% call sec('s9', '6 · Lettrage — à venir') %}
+    Soldes 411 par n° de facture, rapprochés avec les règlements (caisse, virements). Lettrage partiel possible
+    pour les factures à paiement partiel.
   {% endcall %}
 
   {% call sec('cfg', 'Configuration & traçabilité') %}

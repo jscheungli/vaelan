@@ -22,7 +22,7 @@ STEPS = [
     {"n": "2", "key": "gen_tickets", "label": "Génération du CSV (caisse + factures)", "kind": "gen", "bkind": "toslt"},
     {"n": "3", "key": "import_tickets", "label": "Import du CSV dans Pennylane", "kind": "declare"},
     {"n": "4", "key": "verify_tickets", "label": "Cadrage de l'import par Vaelan", "kind": "verify"},
-    {"n": "5", "key": "justificatifs", "label": "Attache des justificatifs (PDF factures) par Vaelan", "kind": "soon"},
+    {"n": "5", "key": "justificatifs", "label": "Attache des justificatifs (PDF factures) par Vaelan", "kind": "justif"},
     {"n": "6", "key": "lettrage", "label": "Lettrage des comptes", "kind": "soon"},
 ]
 
@@ -121,6 +121,22 @@ def _cell(stp, pfx, clients, batches, decls, last_sync, target):
         else:
             cell["state"] = "todo"
             cell["text"] = "à vérifier"
+        return cell
+
+    if kind == "justif":
+        d = decls.get((pfx, stp["key"]))
+        cell = {"act": "justif", "run_id": (d.verify_run_id if d else None)}
+        if d and d.verified_at is not None:
+            cell["coverage"] = _date(d.covered_to)
+            cell["realized"] = _dl(d.verified_at)
+            if not d.verify_ok:
+                cell["state"], cell["text"] = "error", "PDF manquant(s)"
+            else:
+                cell["state"] = _cov_state(d.covered_to, target)
+                cell["text"] = "complet" if cell["state"] == "done" else "à relancer (mois à clôturer)"
+        else:
+            cell["state"] = "todo"
+            cell["text"] = "à attacher"
         return cell
 
     return {"state": "soon", "text": "à venir"}

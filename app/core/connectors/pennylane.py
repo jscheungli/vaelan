@@ -49,6 +49,39 @@ class PennylaneClient:
         """Lignes détaillées d'une écriture (debit/credit + ledger_account.number)."""
         return self.get(f"/ledger_entries/{entry_id}").get("ledger_entry_lines") or []
 
+    def upload_attachment(self, filename: str, data: bytes) -> Optional[int]:
+        """Téléverse un fichier (PDF) comme pièce → renvoie l'id du file_attachment.
+        En v2, la pièce est une ressource autonome (POST /file_attachments)."""
+        for attempt in range(6):
+            with httpx.Client(timeout=90) as c:
+                r = c.post(self.base_url + "/file_attachments", headers=self._h,
+                           files={"file": (filename, data, "application/pdf")})
+            if r.status_code == 429 and attempt < 5:
+                wait = float(r.headers.get("Retry-After") or 0) or (1.5 * (attempt + 1))
+                time.sleep(min(wait, 10))
+                continue
+            r.raise_for_status()
+            d = r.json()
+            return d.get("id") if isinstance(d, dict) else None
+        return None
+
+    def attach_to_entry(self, entry_id, file_attachment_id) -> bool:
+        """Rattache une pièce déjà téléversée à une écriture EXISTANTE
+        (PUT /ledger_entries/{id} ; file_attachment_id remplace ledger_attachment_id)."""
+        import json
+        body = json.dumps({"file_attachment_id": file_attachment_id}).encode()
+        h = {**self._h, "Content-Type": "application/json"}
+        for attempt in range(6):
+            with httpx.Client(timeout=90) as c:
+                r = c.put(f"{self.base_url}/ledger_entries/{entry_id}", headers=h, content=body)
+            if r.status_code == 429 and attempt < 5:
+                wait = float(r.headers.get("Retry-After") or 0) or (1.5 * (attempt + 1))
+                time.sleep(min(wait, 10))
+                continue
+            r.raise_for_status()
+            return True
+        return False
+
     def health(self) -> dict:
         """Vérifie que le token répond (lecture d'une ressource légère)."""
         try:

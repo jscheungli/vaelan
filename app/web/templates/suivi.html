@@ -42,6 +42,14 @@
         </form>
         {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
       </div>
+    {% elif c.act == 'justif' %}
+      <div class="d-flex align-items-center gap-1 mt-1">
+        <form method="post" action="/c/{{ company.code }}/suivi/justificatifs" class="d-inline">
+          <input type="hidden" name="establishment" value="{{ est }}">
+          <button class="btn btn-outline-dark btn-sm py-0" style="font-size:.72rem;" title="Attacher les PDF factures aux écritures Pennylane et contrôler"><i class="bi bi-paperclip"></i> Attacher</button>
+        </form>
+        {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
+      </div>
     {% endif %}
   </div>
 {%- endmacro %}

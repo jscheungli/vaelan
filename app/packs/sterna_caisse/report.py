@@ -369,6 +369,106 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
                            batch_code, n_tickets, balanced, run_id, executed_at, fac_payments, fac_detail))
 
 
+def justif_pdf(establishment, journal, period_label, counts, detail, failed, coherent,
+               run_id=None, executed_at=None) -> bytes:
+    """Compte rendu PDF de l'étape 5 (justificatifs) : combien d'écritures facture,
+    déjà attachées, attachées maintenant, en échec, + détail par facture."""
+    def _ascii(s):
+        return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
+                .replace("œ", "oe").replace("…", "...").replace("⚠️", "!"))
+    doc = fitz.open()
+    page = doc.new_page()
+    W = page.rect.width
+    x0 = 40
+    state = {"y": 56, "page": page}
+    BX = 490
+
+    def left(x, s, size=9, font="helv", color=_DARK):
+        state["page"].insert_text((x, state["y"]), _ascii(s), fontsize=size, fontname=font, color=color)
+
+    def right(xr, s, size=9, font="cour", color=_DARK):
+        s = _ascii(s)
+        state["page"].insert_text((xr - fitz.get_text_length(s, fontname=font, fontsize=size), state["y"]),
+                                  s, fontsize=size, fontname=font, color=color)
+
+    def ensure(space=18):
+        if state["y"] + space > 800:
+            state["page"] = doc.new_page()
+            state["y"] = 56
+
+    def badge(ok, lbl_ok="OK", lbl_ko="MANQUE"):
+        col = _GREEN if ok else _RED
+        lbl = lbl_ok if ok else lbl_ko
+        w = fitz.get_text_length(lbl, fontname="hebo", fontsize=8) + 8
+        state["page"].draw_rect(fitz.Rect(BX, state["y"] - 8, BX + w, state["y"] + 2.5), fill=col, color=col)
+        state["page"].insert_text((BX + 4, state["y"]), lbl, fontsize=8, fontname="hebo", color=(1, 1, 1))
+
+    def section(name):
+        ensure(30)
+        state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, W - 40, state["y"] + 4), fill=_BAR, color=_BAR)
+        left(x0 + 3, name, 10, "hebo", (0.15, 0.15, 0.22)); nl_y(16)
+
+    def nl_y(d):
+        state["y"] += d
+
+    left(x0, "Compte rendu · Justificatifs (PDF factures rattachés à Pennylane)", 14, "hebo"); nl_y(18)
+    for m in [f"Établissement : {establishment}        Période couverte : {period_label}",
+              f"Journaux : {journal}"]:
+        left(x0, m, 9, "helv", (0.3, 0.3, 0.3)); nl_y(13)
+    trace = []
+    if run_id is not None:
+        trace.append(f"Tâche #{run_id}")
+    if executed_at:
+        trace.append(f"Vérifié le {executed_at}")
+    if trace:
+        left(x0, "        ".join(trace), 9, "helv", (0.3, 0.3, 0.3)); nl_y(13)
+    nl_y(8)
+
+    section("Synthèse")
+    rows = [("Écritures facture (besoin d'un justificatif)", counts["total"]),
+            ("Déjà attachées avant ce passage", counts["already"]),
+            ("Attachées par Vaelan ce passage", counts["attached"]),
+            ("En échec", counts["failed"]),
+            ("Couvertes (avec PDF au final)", f"{counts['covered']} / {counts['total']}")]
+    for lbl, v in rows:
+        ensure()
+        left(x0 + 4, lbl, 9); right(BX + 30, str(v)); nl_y(14)
+    nl_y(6)
+
+    if failed:
+        section("Échecs (à corriger)")
+        left(x0 + 4, "Facture", 8, "helv", _GREY); left(x0 + 80, "Journal", 8, "helv", _GREY)
+        left(x0 + 170, "Raison", 8, "helv", _GREY); nl_y(12)
+        for f in failed:
+            ensure(14)
+            left(x0 + 4, "F" + str(f["num"]), 8, "cour"); left(x0 + 80, f["journal"], 8, "helv")
+            left(x0 + 170, str(f.get("why", ""))[:48], 8, "helv", _RED); nl_y(12)
+        nl_y(6)
+
+    section("Détail par facture")
+    left(x0 + 4, "Facture", 8, "helv", _GREY); left(x0 + 90, "Journaux", 8, "helv", _GREY)
+    right(BX, "PDF", 8, "helv", _GREY); left(BX, "État", 8, "helv", _GREY); nl_y(12)
+    for d in detail:
+        ensure(14)
+        left(x0 + 4, "F" + str(d["num"]), 9, "cour"); left(x0 + 90, d["journaux"], 9, "helv")
+        right(BX, f"{d['pdf']}/{d['tot']}"); badge(d["ok"]); nl_y(14)
+    nl_y(8)
+
+    ensure(20)
+    col = _GREEN if coherent else _RED
+    msg = ("COMPLET — toutes les écritures facture portent leur PDF"
+           if coherent else
+           ("ÉCART — des écritures facture restent sans PDF" if counts["total"]
+            else "Aucune écriture facture à justifier"))
+    if not coherent and not counts["total"]:
+        col = _GREY
+    w = fitz.get_text_length(msg, fontname="hebo", fontsize=10) + 12
+    state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, x0 + w, state["y"] + 4), fill=col, color=col)
+    state["page"].insert_text((x0 + 6, state["y"]), _ascii(msg), fontsize=10, fontname="hebo", color=(1, 1, 1))
+    out = doc.tobytes(); doc.close()
+    return out
+
+
 def verify_pdf(establishment, journal, period_label, n_entries, used, summary, pay_rows,
                recon, cli_ok, fac_detail, accounts, coherent, run_id=None, executed_at=None) -> bytes:
     """Compte rendu PDF de vérification Pennylane DÉTAILLÉ : contrôles (CA/TVA/TTC/411),
