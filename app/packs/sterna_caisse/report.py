@@ -164,14 +164,21 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
                             "our_total": ot, "our_anon": oanon, "our_fac": ofac,
                             "ecart": round((ot or 0) - (st or 0), 2)})
         syn_modes = round(sum(v or 0 for v in syn.get("payments", {}).values()), 2)
+        our_modes = round(sum(v or 0 for v in (compta.get("payments", {}) or {}).values()), 2)
+        # bilan qui CADRE sur le CA Total des deux côtés (chaque nombre est vérifiable) :
+        #   encaissé au comptoir + part non encaissée = CA Total.
+        #   synthèse : part non encaissée = CA − Σmodes (déduite, pas un poste du PDF).
+        #   CSV : part non encaissée = solde des comptes clients 411 (sommable dans le CSV).
         paydetail = {
             "rows": rows_pd,
             "syn_modes_total": syn_modes,
+            "our_modes_total": our_modes,
             "entree_caisse": syn.get("entree_caisse"),
             "sortie_caisse": syn.get("sortie_caisse"),
             "ca_total": ca_total,
-            # ventes non encaissées au comptoir = CA − total des modes (= ventes à crédit / factures)
-            "credit_sales": round(ca_total - syn_modes, 2) if ca_total is not None else None,
+            "syn_noncaisse": round(ca_total - syn_modes, 2) if ca_total is not None else None,
+            "our_noncaisse": round(ca_total - our_modes, 2) if ca_total is not None else None,
+            "ecart_encaisse": round(our_modes - syn_modes, 2),
         }
 
     # créances non routées (pré-vol bloquant) -> regroupées par client, avec le diagnostic
@@ -247,12 +254,19 @@ def to_text(data) -> str:
         if p.get("entree_caisse") is not None or p.get("sortie_caisse") is not None:
             L.append(f"  Opérations de caisse (synthèse, hors ventes) : entrée {_fmt(p.get('entree_caisse'))} € · "
                      f"sortie {_fmt(p.get('sortie_caisse'))} €")
-        L.append(f"  CA Total {_fmt(p.get('ca_total'))} € − total encaissé au comptoir {_fmt(p.get('syn_modes_total'))} € "
-                 f"= {_fmt(p.get('credit_sales'))} € de VENTES NON ENCAISSÉES (factures à crédit).")
-        L.append("  Dans le CSV, ces ventes non réglées deviennent des créances clients (411), à solder au")
-        L.append("  règlement (lettrage / suivi des paiements). Les petits écarts par mode = mouvements de caisse")
-        L.append("  + moment de saisie des règlements ; la synthèse ne donnant que des totaux, ils ne se")
-        L.append("  décomposent pas au centime. Le contrôle reste le CA Total.")
+        L.append("")
+        L.append("  BILAN — tout cadre sur le CA Total (chaque montant est vérifiable) :")
+        L.append(f"    {'':<14}{'Encaissé comptoir':>20}{'+ Non encaissé':>18}{'= CA Total':>14}")
+        L.append(f"    {'Synthèse':<14}{_fmt(p['syn_modes_total']):>20}{_fmt(p['syn_noncaisse']):>18}{_fmt(p['ca_total']):>14}")
+        L.append(f"    {'Notre CSV':<14}{_fmt(p['our_modes_total']):>20}{_fmt(p['our_noncaisse']):>18}{_fmt(p['ca_total']):>14}")
+        L.append(f"    Synthèse « non encaissé » = CA − total des modes (déduit, pas un poste du PDF).")
+        L.append(f"    CSV « non encaissé » = solde des comptes clients 411 (sommable dans le CSV).")
+        L.append(f"  → On encaisse {_fmt(abs(p['ecart_encaisse']))} € de {'moins' if p['ecart_encaisse'] < 0 else 'plus'} "
+                 f"que la synthèse ; ce même montant est en créances 411 en plus chez nous.")
+        L.append("    = des factures que la caisse a enregistrées comme réglées, mais dont notre flux tickets")
+        L.append("    n'a pas (encore) capté le paiement → elles restent en créances, soldées au lettrage / paiements.")
+        L.append("    Le découpage CB/Espèce de cet écart vient des mouvements de caisse (rendu) et du mode de")
+        L.append("    paiement enregistré ; la synthèse ne donnant que des totaux, il n'est pas décomposable au centime.")
         L.append("")
     if data["balance"]:
         b = data["balance"]
@@ -410,12 +424,24 @@ def to_pdf(data) -> bytes:
         nl(3)
         if p.get("entree_caisse") is not None or p.get("sortie_caisse") is not None:
             left(x0 + 2, f"Opérations de caisse (synthèse, hors ventes) : entrée {_fmt(p.get('entree_caisse'))} EUR · "
-                         f"sortie {_fmt(p.get('sortie_caisse'))} EUR", 8, "helv", _GREY); nl(11)
-        left(x0 + 2, f"CA Total {_fmt(p.get('ca_total'))} − encaissé comptoir {_fmt(p.get('syn_modes_total'))} = "
-                     f"{_fmt(p.get('credit_sales'))} EUR de ventes NON encaissées (factures a credit).", 8, "helv", _DARK); nl(11)
-        for ln in ["Ces ventes non reglees deviennent des creances clients (411) dans le CSV, a solder au reglement",
-                   "(lettrage / suivi des paiements). Les petits ecarts par mode = mouvements de caisse + moment de saisie",
-                   "des reglements ; la synthese ne donne que des totaux -> non decomposable au centime. Controle = CA Total."]:
+                         f"sortie {_fmt(p.get('sortie_caisse'))} EUR", 8, "helv", _GREY); nl(13)
+        # bilan qui cadre sur le CA Total des deux côtés
+        B1, B2, B3 = 360, 460, 520
+        right(B1, "Encaissé comptoir", 8, "helv", _GREY); right(B2, "+ Non encaissé", 8, "helv", _GREY)
+        right(B3, "= CA Total", 8, "helv", _GREY); nl(12)
+        for lbl, enc, nc in [("Synthèse", p["syn_modes_total"], p["syn_noncaisse"]),
+                             ("Notre CSV", p["our_modes_total"], p["our_noncaisse"])]:
+            ensure(13); left(x0 + 4, lbl, 9)
+            right(B1, _fmt(enc), 8, "cour"); right(B2, _fmt(nc), 8, "cour"); right(B3, _fmt(p["ca_total"]), 8, "cour"); nl(12)
+        left(x0 + 2, "Synthèse « non encaissé » = CA − total des modes (déduit). CSV « non encaissé » = comptes 411 (sommables).",
+             8, "helv", _GREY); nl(12)
+        sens = "moins" if p["ecart_encaisse"] < 0 else "plus"
+        left(x0 + 2, f"-> On encaisse {_fmt(abs(p['ecart_encaisse']))} EUR de {sens} que la synthese ; autant en creances 411 en plus.",
+             8, "helv", _DARK); nl(10)
+        for ln in ["= des factures que la caisse a enregistrees comme reglees mais dont notre flux tickets n'a pas (encore)",
+                   "capte le paiement -> elles restent en creances, soldees au lettrage / suivi des paiements.",
+                   "Le decoupage CB/Espece de cet ecart vient des mouvements de caisse (rendu) et du mode enregistre ;",
+                   "la synthese ne donnant que des totaux, il n'est pas decomposable au centime. Controle = CA Total."]:
             ensure(11); left(x0 + 2, ln, 8, "helv", _GREY); nl(10)
         nl(8)
 
