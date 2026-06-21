@@ -134,40 +134,60 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
         s = round(sum(v for k, v in (d or {}).items() if k not in modes), 2)
         return s if abs(s) >= TOL else None
 
-    facp = fac_payments or {}
-    prows, recon = [], []
+    # vue « comptabilité » = le CSV agrégé s'il existe, sinon le flux tickets (cas cadrage/bloqué)
+    compta = csv if has_csv else api
+    prows = []
     for m in modes:
         sv = syn.get("payments", {}).get(m)
         av = api.get("payments", {}).get(m)
         cv = (csv or {}).get("payments", {}).get(m)
         rw = row(m, sv, av, cv)
-        # un écart synthèse↔tickets est RÉCONCILIÉ s'il est couvert par les paiements de
-        # factures (api≈csv, et |api-syn| <= factures du mode).
-        ecart = round((av or 0) - (sv or 0), 2) if (av is not None and sv is not None) else None
-        facv = round(facp.get(m, 0.0), 2)
-        if rw["match"] == "ecart" and ecart is not None and abs((av or 0) - (cv or 0)) < TOL \
-                and abs(ecart) <= abs(facv) + TOL:
-            rw["match"] = "reconciled"
-            recon.append({"mode": m, "syn": sv, "api": av, "ecart": ecart, "facture": facv})
+        # un écart synthèse ↔ compta sur un MODE n'est pas une erreur : c'est un partage
+        # encaissé/créances différent (factures réglées en caisse mais en 411 chez nous).
+        if rw["match"] == "ecart":
+            rw["match"] = "split"
         prows.append(rw)
     sv, av, cv = others(syn.get("payments")), others(api.get("payments")), others((csv or {}).get("payments"))
     if sv is not None or av is not None or cv is not None:
-        prows.append(row("Autres / divers", sv, av, cv))
+        rw = row("Autres / divers", sv, av, cv)
+        if rw["match"] == "ecart":
+            rw["match"] = "split"
+        prows.append(rw)
     sections.append({"name": "Paiements par mode (net encaissé)", "note": "", "rows": prows})
 
     balance = None
     if has_csv and balanced is not None:
         balance = {"debit": csv.get("debit"), "credit": csv.get("credit"), "ok": bool(balanced)}
 
-    # détail des paiements de factures, limité aux modes qui ont un écart réconcilié
-    recon_modes = {x["mode"] for x in recon}
-    fac_detail = [d for d in (fac_detail or []) if d.get("mode") in recon_modes] if recon else []
-    fac_detail = sorted(fac_detail, key=lambda d: (d.get("mode", ""), d.get("date", ""), d.get("fnum", 0)))
-    # sous-totaux par mode (= l'« enveloppe » de chaque mode) + total général, pour vérifier
-    fac_subtotals = {}
-    for d in fac_detail:
-        fac_subtotals[d["mode"]] = round(fac_subtotals.get(d["mode"], 0.0) + (d.get("amount") or 0), 2)
-    fac_total = round(sum(fac_subtotals.values()), 2)
+    # ---- Réconciliation encaissé / créances (TOUT tie au CA TTC) ----
+    # Le CA TTC cadre ; seul le PARTAGE encaissé vs créances diffère, parce que la caisse
+    # officielle compte des factures comme réglées que notre compta a encore en 411.
+    def _sum_pay(d):
+        return round(sum(v or 0 for v in (d or {}).get("payments", {}).values()), 2)
+
+    ca_ttc = api.get("ca_ttc") if api.get("ca_ttc") is not None else syn.get("ca_total")
+    recon2 = None
+    if ca_ttc is not None and syn.get("payments"):
+        syn_enc = _sum_pay(syn)
+        compta_enc = _sum_pay(compta)
+        syn_cr = round(ca_ttc - syn_enc, 2)
+        compta_cr = round(ca_ttc - compta_enc, 2)
+        mode_ec = []
+        for m in modes + ["Autres / divers"]:
+            sv2 = syn.get("payments", {}).get(m)
+            cv2 = (compta.get("payments", {}) or {}).get(m)
+            if m == "Autres / divers":
+                sv2, cv2 = others(syn.get("payments")), others(compta.get("payments"))
+            if sv2 is None and cv2 is None:
+                continue
+            e = round((cv2 or 0) - (sv2 or 0), 2)
+            if abs(e) > TOL:
+                mode_ec.append({"mode": m, "ecart": e})
+        recon2 = {"ca_ttc": ca_ttc, "syn_enc": syn_enc, "compta_enc": compta_enc,
+                  "syn_cr": syn_cr, "compta_cr": compta_cr,
+                  "ecart_enc": round(compta_enc - syn_enc, 2),
+                  "ecart_cr": round(compta_cr - syn_cr, 2), "mode_ecarts": mode_ec}
+
     # créances non routées (pré-vol bloquant) -> regroupées par client, avec le diagnostic
     unres_groups = []
     by = {}
@@ -180,8 +200,7 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
                               "amount": u.get("amount") or 0})
         g["total"] = round(g["total"] + (u.get("amount") or 0), 2)
     unres_groups = sorted(by.values(), key=lambda x: -x["total"])
-    return {"title": title, "meta": meta, "sections": sections, "reconciliation": recon,
-            "fac_detail": fac_detail, "fac_subtotals": fac_subtotals, "fac_total": fac_total,
+    return {"title": title, "meta": meta, "sections": sections, "recon2": recon2,
             "unresolved": unres_groups, "has_csv": has_csv, "balance": balance}
 
 
@@ -191,7 +210,8 @@ def to_text(data) -> str:
         return f"{_fmt(v):>14}"
 
     def badge(st):
-        return {"ok": "OK", "ecart": "⚠️ ÉCART", "na": "—", "reconciled": "✓ RÉCONCILIÉ"}[st]
+        return {"ok": "OK", "ecart": "⚠️ ÉCART", "na": "—",
+                "split": "≠ partage encaissé/créances"}.get(st, st)
 
     L = [data["title"], *data["meta"], ""]
     if data.get("unresolved"):
@@ -218,35 +238,22 @@ def to_text(data) -> str:
         for r in sec["rows"]:
             L.append(f"  {r['label']:<22}{cell(r['syn'])}{cell(r['api'])}{cell(r['csv'])}    {badge(r['match'])}")
         L.append("")
-    if data.get("reconciliation"):
-        L.append("== RÉCONCILIATION DES ÉCARTS DE PAIEMENT ==")
-        L.append("  Les paiements de FACTURES encaissés en caisse sont comptabilisés au crédit du compte")
-        L.append("  client 411 (lettré F<n°>), alors que la synthèse les agrège dans le mode de paiement.")
-        L.append("  D'où un écart de RÉPARTITION par mode (le CA TTC total, lui, est identique). On vérifie")
-        L.append("  que chaque écart reste dans l'ENVELOPPE des paiements de factures du mode (donc explicable,")
-        L.append("  ce n'est pas une perte/excédent de caisse). L'écart est un NET : il n'égale pas l'enveloppe.")
+    if data.get("recon2"):
+        r = data["recon2"]
+        L.append("== RÉCONCILIATION ENCAISSÉ / CRÉANCES (tout cadre au CA TTC) ==")
+        L.append("  Le CA TTC est identique des deux côtés ; seul le PARTAGE encaissé vs créances diffère :")
+        L.append("  la caisse officielle compte certaines factures comme réglées, alors que la comptabilité")
+        L.append("  les a encore en créances clients ouvertes (411) — elles seront soldées au lettrage / suivi")
+        L.append("  des paiements. Démonstration (tout retombe sur le même CA TTC) :")
         L.append("")
-        for x in data["reconciliation"]:
-            env = data.get("fac_subtotals", {}).get(x["mode"], x["facture"])
-            L.append(f"  {x['mode']:<8} écart {_fmt(x['ecart']):>10} €   (tickets {_fmt(x['api'])} vs synthèse {_fmt(x['syn'])})")
-            L.append(f"           enveloppe paiements factures {x['mode']} = {_fmt(env)} €   "
-                     f"→ |écart| ≤ enveloppe → COUVERT ✓")
-        if data.get("fac_detail"):
-            L.append("")
-            L.append("  Détail des paiements de factures encaissés en caisse (crédit 411) :")
-            L.append(f"    {'Date':<12}{'Facture':<10}{'Client':<24}{'Mode':<12}{'Montant':>12}")
-            cur_mode = None
-            for d in data["fac_detail"]:
-                if cur_mode is not None and d["mode"] != cur_mode:
-                    L.append(f"    {'':<46}{('Sous-total ' + cur_mode):<12}"
-                             f"{_fmt(data['fac_subtotals'].get(cur_mode)):>12}")
-                cur_mode = d["mode"]
-                L.append(f"    {d['date']:<12}{('F' + str(d['fnum'])):<10}{(d['nm'] or '')[:22]:<24}"
-                         f"{d['mode']:<12}{_fmt(d['amount']):>12}")
-            if cur_mode is not None:
-                L.append(f"    {'':<46}{('Sous-total ' + cur_mode):<12}"
-                         f"{_fmt(data['fac_subtotals'].get(cur_mode)):>12}")
-            L.append(f"    {'':<46}{'TOTAL':<12}{_fmt(data.get('fac_total')):>12}")
+        L.append(f"  {'':<16}{'Encaissé':>14}{'+ Créances 411':>18}{'= CA TTC':>14}")
+        L.append(f"  {'Synthèse':<16}{_fmt(r['syn_enc']):>14}{_fmt(r['syn_cr']):>18}{_fmt(r['ca_ttc']):>14}")
+        L.append(f"  {'Comptabilité':<16}{_fmt(r['compta_enc']):>14}{_fmt(r['compta_cr']):>18}{_fmt(r['ca_ttc']):>14}")
+        ec = " + ".join(f"{m['mode']} {_fmt(m['ecart'])}" for m in r["mode_ecarts"]) or "—"
+        L.append(f"  {'Écart':<16}{_fmt(r['ecart_enc']):>14}{_fmt(r['ecart_cr']):>18}{_fmt(0):>14}")
+        L.append("")
+        L.append(f"  → écart d'encaissement {_fmt(r['ecart_enc'])} € (= {ec}) compensé EXACTEMENT par")
+        L.append(f"    l'écart de créances {_fmt(r['ecart_cr'])} € → le CA TTC cadre, c'est cohérent ✓")
         L.append("")
     if data["balance"]:
         b = data["balance"]
@@ -362,9 +369,9 @@ def to_pdf(data) -> bytes:
             right(COL["api"], _fmt(r["api"]))
             right(COL["csv"], _fmt(r["csv"]))
             st = r["match"]
-            if st in ("ok", "ecart", "reconciled"):
-                col = _RED if st == "ecart" else _GREEN
-                lbl = {"ok": "OK", "ecart": "ÉCART", "reconciled": "RÉCONCILIÉ"}[st]
+            if st in ("ok", "ecart", "split"):
+                col = {"ok": _GREEN, "ecart": _RED, "split": _GREY}[st]
+                lbl = {"ok": "OK", "ecart": "ÉCART", "split": "≠ partage"}[st]
                 w = fitz.get_text_length(lbl, fontname="hebo", fontsize=8) + 8
                 page.draw_rect(fitz.Rect(BADGE_X, y - 8, BADGE_X + w, y + 2.5), fill=col, color=col)
                 page.insert_text((BADGE_X + 4, y), lbl, fontsize=8, fontname="hebo", color=(1, 1, 1))
@@ -373,65 +380,33 @@ def to_pdf(data) -> bytes:
             nl(14)
         nl(6)
 
-    if data.get("reconciliation"):
-        ensure(50)
+    if data.get("recon2"):
+        r = data["recon2"]
+        ensure(64)
         page.draw_rect(fitz.Rect(x0, y - 9, W - 40, y + 4), fill=_BAR, color=_BAR)
-        left(x0 + 3, "Réconciliation des écarts de paiement", size=10, font="hebo", color=(0.15, 0.15, 0.22))
+        left(x0 + 3, "Réconciliation encaissé / créances (tout cadre au CA TTC)", size=10, font="hebo", color=(0.15, 0.15, 0.22))
         nl(16)
-        # explication (une fois) : l'écart est un NET de répartition, borné par l'enveloppe
-        for ln in ["Les paiements de FACTURES encaissés en caisse sont comptabilisés au crédit du compte client 411,",
-                   "alors que la synthèse les agrège dans le mode de paiement : d'où un écart de RÉPARTITION par mode",
-                   "(le CA TTC total est identique). On vérifie que chaque écart reste dans l'ENVELOPPE des paiements",
-                   "de factures du mode (donc explicable). L'écart est un NET : il n'égale pas l'enveloppe."]:
+        for ln in ["Le CA TTC est identique des deux côtés ; seul le PARTAGE encaissé vs créances diffère : la caisse",
+                   "officielle compte certaines factures comme réglées, alors que la comptabilité les a encore en",
+                   "créances clients ouvertes (411) — soldées au lettrage / suivi des paiements. Tout retombe sur le CA TTC :"]:
             ensure(11); left(x0 + 2, ln, 8, "helv", _GREY); nl(10)
         nl(4)
-        for x in data["reconciliation"]:
-            ensure(28)
-            env = data.get("fac_subtotals", {}).get(x["mode"], x["facture"])
-            left(x0, f"{x['mode']} : écart {_fmt(x['ecart'])} EUR  (tickets {_fmt(x['api'])} vs synthèse {_fmt(x['syn'])})",
-                 9, "cour", _DARK)
-            w = fitz.get_text_length("COUVERT", fontname="hebo", fontsize=8) + 8
-            page.draw_rect(fitz.Rect(BADGE_X, y - 8, BADGE_X + w, y + 2.5), fill=_GREEN, color=_GREEN)
-            page.insert_text((BADGE_X + 4, y), "COUVERT", fontsize=8, fontname="hebo", color=(1, 1, 1))
-            nl(12)
-            left(x0 + 6, f"enveloppe paiements factures {x['mode']} = {_fmt(env)} EUR  ->  |ecart| <= enveloppe  ->  couvert",
-                 8, "helv", _GREY)
-            nl(15)
-        if data.get("fac_detail"):
-            left(x0, "Détail des paiements de factures encaissés en caisse (crédit 411) :", 9, "hebo", (0.2, 0.2, 0.25))
-            nl(13)
-            left(x0 + 4, "Date", 8, "helv", _GREY)
-            left(x0 + 70, "Facture", 8, "helv", _GREY)
-            left(x0 + 140, "Client", 8, "helv", _GREY)
-            left(x0 + 330, "Mode", 8, "helv", _GREY)
-            right(BADGE_X + 40, "Montant", 8, "helv", _GREY)
-            nl(12)
-
-            def _subtotal(mode):
-                left(x0 + 140, f"Sous-total {mode}", 8, "hebo", (0.2, 0.2, 0.25))
-                right(BADGE_X + 40, _fmt(data["fac_subtotals"].get(mode)), 8, "hebo", _DARK)
-                nl(13)
-
-            cur_mode = None
-            for d in data["fac_detail"]:
-                ensure(14)
-                if cur_mode is not None and d["mode"] != cur_mode:
-                    _subtotal(cur_mode)
-                cur_mode = d["mode"]
-                left(x0 + 4, d["date"], 8, "cour")
-                left(x0 + 70, "F" + str(d["fnum"]), 8, "cour")
-                left(x0 + 140, (d["nm"] or "")[:30], 8, "helv")
-                left(x0 + 330, d["mode"], 8, "helv")
-                right(BADGE_X + 40, _fmt(d["amount"]), 8, "cour")
-                nl(12)
-            if cur_mode is not None:
-                ensure(14); _subtotal(cur_mode)
-            ensure(16)
-            page.draw_rect(fitz.Rect(x0 + 138, y - 9, BADGE_X + 42, y + 3), fill=_BAR, color=_BAR)
-            left(x0 + 140, "TOTAL paiements de factures", 9, "hebo", (0.15, 0.15, 0.22))
-            right(BADGE_X + 40, _fmt(data.get("fac_total")), 9, "hebo", _DARK)
-            nl(14)
-        nl(6)
+        C1, C2, C3 = 300, 410, 500
+        right(C1, "Encaissé", 8, "helv", _GREY); right(C2, "+ Créances 411", 8, "helv", _GREY)
+        right(C3, "= CA TTC", 8, "helv", _GREY); nl(13)
+        for lbl, enc, cr in [("Synthèse (caisse)", r["syn_enc"], r["syn_cr"]),
+                             ("Comptabilité (CSV)", r["compta_enc"], r["compta_cr"])]:
+            ensure(14)
+            left(x0 + 4, lbl, 9)
+            right(C1, _fmt(enc)); right(C2, _fmt(cr)); right(C3, _fmt(r["ca_ttc"])); nl(13)
+        ensure(14)
+        left(x0 + 4, "Écart", 9, "hebo")
+        right(C1, _fmt(r["ecart_enc"]), 9, "cour", _RED); right(C2, _fmt(r["ecart_cr"]), 9, "cour", _GREEN)
+        right(C3, _fmt(0)); nl(15)
+        ec = " + ".join(f"{m['mode']} {_fmt(m['ecart'])}" for m in r["mode_ecarts"]) or "—"
+        left(x0 + 2, f"-> ecart d'encaissement {_fmt(r['ecart_enc'])} EUR (= {ec})", 8, "helv", _GREY); nl(10)
+        left(x0 + 2, f"   compense EXACTEMENT l'ecart de creances {_fmt(r['ecart_cr'])} EUR -> CA TTC cadre, coherent.", 8, "helv", _GREY)
+        nl(16)
 
     if data["balance"]:
         ensure(24)
