@@ -1,0 +1,73 @@
+{# Cellule du tableau de suivi (réutilisée en direct par /suivi/cell pour le rafraîchissement HTMX). #}
+{% macro wrap_id(step, est) %}cell-{{ step.key }}-{{ est or 'co' }}{% endmacro %}
+
+{% macro cell(company, step, est, c) -%}
+  {% set st = c.state %}
+  {% set wid = 'cell-' ~ step.key ~ '-' ~ (est or 'co') %}
+  <div class="d-flex flex-column align-items-start" style="gap:2px;">
+    {% if st == 'done' %}
+      <span class="text-success"><i class="bi bi-check-circle-fill"></i> {{ c.text or 'fait' }}</span>
+    {% elif st == 'error' %}
+      <span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> {{ c.text }}</span>
+    {% elif st == 'declared' %}
+      <span class="text-info-emphasis"><i class="bi bi-flag-fill"></i> déclaré</span>
+    {% elif st == 'todo' %}
+      <span class="text-warning-emphasis"><i class="bi bi-circle"></i> {{ c.text or 'à faire' }}</span>
+    {% else %}
+      <span class="text-muted"><i class="bi bi-clock"></i> {{ c.text or 'à venir' }}</span>
+    {% endif %}
+
+    {% if c.coverage %}<span class="text-dark" style="font-size:.72rem;">jusqu'au <strong>{{ c.coverage }}</strong></span>{% endif %}
+    {% if c.realized %}<span class="text-muted" style="font-size:.7rem;">réalisé {{ c.realized }}{% if c.by %} · par {{ c.by.split('@')[0] }}{% endif %}</span>{% endif %}
+
+    {% if c.act == 'link' %}
+      {% set href = '/c/' + company.code + ('/clients' if step.key == 'clients' else '/import?est=' + est) %}
+      <a href="{{ href }}" class="btn btn-outline-dark btn-sm py-0 mt-1" style="font-size:.72rem;">
+        {{ 'Synchroniser' if step.key == 'clients' else 'Générer' }} <i class="bi bi-arrow-right"></i></a>
+    {% elif c.act == 'declare' %}
+      <form method="post" action="/c/{{ company.code }}/suivi/declare" class="d-flex align-items-center gap-1 mt-1">
+        <input type="hidden" name="establishment" value="{{ est }}"><input type="hidden" name="step" value="{{ step.key }}">
+        <input type="date" name="covered_to" class="form-control form-control-sm py-0" style="font-size:.72rem; width:120px;" required>
+        <button class="btn btn-outline-dark btn-sm py-0" style="font-size:.72rem;">{{ 'Maj' if c.coverage else 'Déclarer' }}</button>
+      </form>
+      {% if c.coverage %}
+        <form method="post" action="/c/{{ company.code }}/suivi/declare" class="d-inline">
+          <input type="hidden" name="establishment" value="{{ est }}"><input type="hidden" name="step" value="{{ step.key }}"><input type="hidden" name="undo" value="1">
+          <button class="btn btn-link btn-sm p-0 text-muted" style="font-size:.7rem;">annuler</button>
+        </form>
+      {% endif %}
+    {% elif c.act == 'verify' %}
+      <div class="d-flex align-items-center gap-1 mt-1">
+        <button class="btn btn-outline-dark btn-sm py-0" style="font-size:.72rem;" title="Relire Pennylane et confirmer (sans quitter la page)"
+                hx-post="/c/{{ company.code }}/suivi/verify" hx-vals='{"establishment": "{{ est }}"}'
+                hx-target="#{{ wid }}" hx-swap="innerHTML"><i class="bi bi-shield-check"></i> Vérifier</button>
+        {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
+      </div>
+    {% elif c.act == 'justif' %}
+      <div class="d-flex align-items-center gap-1 mt-1">
+        <button class="btn btn-outline-dark btn-sm py-0" style="font-size:.72rem;" title="Attacher les PDF factures aux écritures Pennylane et contrôler (sans quitter la page)"
+                hx-post="/c/{{ company.code }}/suivi/justificatifs" hx-vals='{"establishment": "{{ est }}"}'
+                hx-target="#{{ wid }}" hx-swap="innerHTML"><i class="bi bi-paperclip"></i> Attacher</button>
+        {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
+      </div>
+    {% elif c.act == 'lettrage' %}
+      <form hx-post="/c/{{ company.code }}/suivi/lettrage" hx-target="#{{ wid }}" hx-swap="innerHTML"
+            class="d-flex align-items-center gap-1 mt-1">
+        <span class="text-muted" style="font-size:.72rem;">arrêté au</span>
+        <input type="date" name="as_of" value="{{ c.coverage_iso or c.today }}" class="form-control form-control-sm py-0" style="font-size:.72rem; width:130px;" required>
+        <button class="btn btn-outline-dark btn-sm py-0" style="font-size:.72rem;" title="Lettrer les comptes 411 jusqu'à cette date (sans quitter la page)"><i class="bi bi-link-45deg"></i> Lettrer</button>
+        {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small ms-1" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
+      </form>
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{# Fragment « en cours » : roue qui tourne + auto-rafraîchissement de la cellule jusqu'à la fin du job. #}
+{% macro running(company, step, est, run_id) -%}
+  <div class="d-flex align-items-center gap-1 py-2"
+       hx-get="/c/{{ company.code }}/suivi/cell?step={{ step.key }}&est={{ est }}&run={{ run_id }}"
+       hx-trigger="load delay:1200ms, every 2s" hx-target="#cell-{{ step.key }}-{{ est or 'co' }}" hx-swap="innerHTML">
+    <span class="spinner-border spinner-border-sm text-secondary" role="status" aria-hidden="true"></span>
+    <span class="text-muted" style="font-size:.72rem;">en cours…</span>
+  </div>
+{%- endmacro %}

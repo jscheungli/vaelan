@@ -390,17 +390,34 @@ def suivi_declare(request: Request, code: str, establishment: str = Form(...),
     return RedirectResponse(f"/c/{code}/suivi", status_code=303)
 
 
+_SUIVI_STEPS = {s["key"]: s for s in caisse_suivi.STEPS}
+
+
+def _suivi_fragment(macro, company, step_key, est, *args):
+    """Rend un fragment de cellule (macro `running`/`cell` de _suivi_cell.html)."""
+    m = templates.env.get_template("_suivi_cell.html").module
+    return HTMLResponse(getattr(m, macro)(company, _SUIVI_STEPS[step_key], est, *args))
+
+
+def _suivi_inplace(request, company, step_key, est, run_id, redirect="/jobs"):
+    """Réponse à un lancement d'étape : fragment « roue qui tourne » si HTMX
+    (la cellule se rafraîchira seule), sinon redirection classique vers les Tâches."""
+    if request.headers.get("HX-Request"):
+        return _suivi_fragment("running", company, step_key, est, run_id)
+    return RedirectResponse(redirect, status_code=303)
+
+
 @router.post("/c/{code}/suivi/verify")
 def suivi_verify(request: Request, code: str, establishment: str = Form(...)):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
     label = f"Vérif Pennylane (Tickets) · {establishment}"
-    start_job("verify_pennylane",
-              lambda ctx: run_verify(ctx, company.code, establishment),
-              company_id=company.id, pack="sterna.caisse", label=label,
-              user=current_user(request))
-    return RedirectResponse("/jobs", status_code=303)   # -> page Tâches (suivi live)
+    run_id = start_job("verify_pennylane",
+                       lambda ctx: run_verify(ctx, company.code, establishment),
+                       company_id=company.id, pack="sterna.caisse", label=label,
+                       user=current_user(request))
+    return _suivi_inplace(request, company, "verify_tickets", establishment, run_id)
 
 
 @router.post("/c/{code}/suivi/justificatifs")
@@ -409,11 +426,41 @@ def suivi_justificatifs(request: Request, code: str, establishment: str = Form(.
     if redir:
         return redir
     label = f"Justificatifs (PDF factures) · {establishment}"
-    start_job("justificatifs_pennylane",
-              lambda ctx: run_justificatifs(ctx, company.code, establishment),
-              company_id=company.id, pack="sterna.caisse", label=label,
-              user=current_user(request))
-    return RedirectResponse("/jobs", status_code=303)
+    run_id = start_job("justificatifs_pennylane",
+                       lambda ctx: run_justificatifs(ctx, company.code, establishment),
+                       company_id=company.id, pack="sterna.caisse", label=label,
+                       user=current_user(request))
+    return _suivi_inplace(request, company, "justificatifs", establishment, run_id)
+
+
+@router.get("/c/{code}/suivi/cell", response_class=HTMLResponse)
+def suivi_cell(request: Request, code: str, step: str, run: str = "", est: str = ""):
+    """Rafraîchissement HTMX d'une cellule : roue tant que le job tourne, cellule
+    finale (cohérent / écart + lien CR) une fois terminé."""
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    r = None
+    if run:
+        with Session(engine) as s:
+            r = s.get(Run, int(run))
+    if r and r.status == "running":
+        return _suivi_fragment("running", company, step, est, run)
+    board = caisse_suivi.build_board(company)
+    c = None
+    for row in board["steps"]:
+        if row["step"]["key"] == step:
+            c = row["cell"] if row.get("company") else (row.get("cells") or {}).get(est)
+            break
+    if c is None:
+        return HTMLResponse("")
+    m = templates.env.get_template("_suivi_cell.html").module
+    html = m.cell(company, _SUIVI_STEPS[step], est, c)
+    if r and r.status in ("error", "interrupted"):   # le job a échoué -> on le signale dans la cellule
+        why = "interrompu" if r.status == "interrupted" else "échec"
+        html += (f'<div class="text-danger mt-1" style="font-size:.68rem;">'
+                 f'<i class="bi bi-exclamation-triangle"></i> {why} — voir <a href="/jobs">Tâches</a></div>')
+    return HTMLResponse(html)
 
 
 @router.post("/c/{code}/suivi/lettrage")
@@ -427,11 +474,11 @@ def suivi_lettrage(request: Request, code: str, as_of: str = Form("")):
     except ValueError:
         asof = (datetime.utcnow() + timedelta(hours=4)).date()
     label = f"Lettrage 411 · {company.name} · arrêté au {asof.strftime('%d/%m/%Y')}"
-    start_job("lettrage_411",
-              lambda ctx: run_lettrage(ctx, company.code, asof),
-              company_id=company.id, pack="sterna.caisse", label=label,
-              user=current_user(request))
-    return RedirectResponse("/jobs", status_code=303)
+    run_id = start_job("lettrage_411",
+                       lambda ctx: run_lettrage(ctx, company.code, asof),
+                       company_id=company.id, pack="sterna.caisse", label=label,
+                       user=current_user(request))
+    return _suivi_inplace(request, company, "lettrage", "", run_id)
 
 
 # ----------------------------- Suivi des paiements (étape 7) -----------------------------
