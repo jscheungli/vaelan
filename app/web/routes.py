@@ -269,10 +269,13 @@ def generate_run(request: Request, code: str,
     if redir:
         return redir
     short = establishment.replace("OCOPAIN ", "")
-    if caisse_config.is_facture_model(company.code):     # KOOKABURA : modèle facture, pas de synthèse
-        label = f"Génération KK · {short} · {date_from}→{date_to}"
+    if caisse_config.is_facture_model(company.code):     # KOOKABURA : modèle facture (pas de caisse)
+        syn_data = synthese.file.read() if synthese is not None else None
+        syn_name = (synthese.filename or "synthese.pdf") if synthese is not None else None
+        label = f"Cadrage + génération KK · {short} · {date_from}→{date_to}"
         start_job("generate_kk",
-                  lambda ctx: run_generate_kk(ctx, company.code, establishment, date_from, date_to),
+                  lambda ctx: run_generate_kk(ctx, company.code, establishment, date_from, date_to,
+                                              synthese_bytes=syn_data, synthese_name=syn_name),
                   company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
         return RedirectResponse("/jobs", status_code=303)
     if synthese is None:

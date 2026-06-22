@@ -95,6 +95,7 @@
 <div class="table-responsive">
 <table class="table table-sm table-bordered align-middle" style="font-size:.8rem;">
   <thead class="table-light"><tr class="small text-muted">
+    <th class="text-center" style="width:28px;"><input type="checkbox" id="sel-all" title="Tout (dé)sélectionner (lignes visibles)" onchange="selectAll(this.checked)"></th>
     <th>Date</th><th>Jour.</th><th>Libellé</th><th>Nº pièce</th><th class="text-center">Lett.</th>
     <th class="text-end">Débit</th><th class="text-end">Crédit</th><th class="text-end">Solde</th><th class="text-center">Tag</th>
   </tr></thead>
@@ -106,6 +107,7 @@
         data-text="{{ (l.label ~ ' ' ~ l.piece)|lower }}" data-status="{{ status }}"
         data-journal="{{ l.journal }}" data-tagged="{{ '1' if tag else '0' }}"
         data-debit="{{ '%.2f'|format(l.debit) }}" data-credit="{{ '%.2f'|format(l.credit) }}">
+      <td class="text-center"><input type="checkbox" class="row-check" onchange="updateSel()"></td>
       <td class="text-nowrap">{{ l.date }}</td>
       <td><span class="text-muted">{{ l.journal }}</span></td>
       <td>{{ l.label[:52] }}</td>
@@ -127,23 +129,37 @@
       </td>
     </tr>
   {% endfor %}
-  <tr id="ledger-empty"{% if ledger.lines %} class="d-none"{% endif %}><td colspan="9" class="text-muted small">{% if ledger.lines %}Aucune écriture ne correspond aux filtres.{% else %}Aucune écriture sur cet exercice.{% endif %}</td></tr>
+  <tr id="ledger-empty"{% if ledger.lines %} class="d-none"{% endif %}><td colspan="10" class="text-muted small">{% if ledger.lines %}Aucune écriture ne correspond aux filtres.{% else %}Aucune écriture sur cet exercice.{% endif %}</td></tr>
   </tbody>
   <tfoot class="table-light">
     <tr id="filter-foot" class="fw-semibold table-warning d-none">
-      <td colspan="5" class="text-end">Résultat du filtre · <span id="fr-n">0</span> ligne(s)</td>
+      <td colspan="6" class="text-end">Résultat du filtre · <span id="fr-n">0</span> ligne(s)</td>
       <td class="text-end" id="fr-deb">0.00</td>
       <td class="text-end" id="fr-cred">0.00</td>
       <td class="text-end" id="fr-sol">0.00</td><td></td>
     </tr>
     <tr class="fw-semibold">
-      <td colspan="5" class="text-end">TOTAL {{ account }} {{ ledger.name or '' }} (exercice {{ ledger.exercise_label }})</td>
+      <td colspan="6" class="text-end">TOTAL {{ account }} {{ ledger.name or '' }} (exercice {{ ledger.exercise_label }})</td>
       <td class="text-end">{{ '%.2f'|format(ledger.total_debit) }}</td>
       <td class="text-end">{{ '%.2f'|format(ledger.total_credit) }}</td>
       <td class="text-end">{{ '%.2f'|format(ledger.solde) }}</td><td></td>
     </tr>
   </tfoot>
 </table>
+</div>
+
+{# barre flottante de sélection (live, comme Pennylane) : totaux des lignes cochées #}
+<div id="sel-bar" class="d-none" style="position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:1040;">
+  <div class="shadow-lg rounded-3 px-3 py-2 d-flex align-items-center gap-3"
+       style="background:#1f2430; color:#fff; font-size:.82rem; white-space:nowrap;">
+    <span><strong id="sel-n">0</strong> ligne(s) sélectionnée(s)</span>
+    <span class="opacity-50">|</span>
+    <span>Débit <strong id="sel-deb" class="text-info-emphasis">0,00</strong></span>
+    <span>Crédit <strong id="sel-cred" class="text-info-emphasis">0,00</strong></span>
+    <span>Solde <strong id="sel-sol">0,00</strong></span>
+    <span class="opacity-50">|</span>
+    <button class="btn btn-sm btn-outline-light py-0" onclick="clearSel()"><i class="bi bi-x-lg"></i> Tout décocher</button>
+  </div>
 </div>
 
 <script>
@@ -158,6 +174,7 @@ function applyFilters(){
     var vis=(!q||d.text.indexOf(q)>=0)&&(!lett.length||lett.indexOf(d.status)>=0)
             &&(!jr.length||jr.indexOf(d.journal)>=0)&&(!todo||d.tagged!=='1');
     tr.classList.toggle('d-none',!vis);
+    if(!vis){var cb=tr.querySelector('.row-check'); if(cb) cb.checked=false;}  // ligne masquée -> décochée
     if(vis){shown++;deb+=parseFloat(d.debit||0);cred+=parseFloat(d.credit||0);}
   });
   var filtered=!!(q||lett.length||jr.length||todo);
@@ -170,11 +187,40 @@ function applyFilters(){
     document.getElementById('fr-sol').textContent=(deb-cred).toFixed(2);}
   badge('f-lett-n',lett.length);badge('f-jr-n',jr.length);
   document.getElementById('f-clear').classList.toggle('d-none',!filtered);
+  var sa=document.getElementById('sel-all'); if(sa) sa.checked=false;
+  updateSel();
 }
 function badge(id,n){var b=document.getElementById(id);if(!b)return;if(n){b.textContent=n;b.classList.remove('d-none');}else{b.classList.add('d-none');}}
 function clearFilters(){document.getElementById('f-q').value='';
   document.querySelectorAll('.f-lett,.f-jr').forEach(function(c){c.checked=false;});
   document.getElementById('f-todo').checked=false;applyFilters();}
+
+// --- sélection multi-lignes (totaux live, façon Pennylane) ---
+function _fmt(v){return v.toFixed(2).replace('.',',');}
+function updateSel(){
+  var n=0,deb=0,cred=0;
+  document.querySelectorAll('#ledger-body tr.ledger-row .row-check:checked').forEach(function(cb){
+    var d=cb.closest('tr').dataset; n++;
+    deb+=parseFloat(d.debit||0); cred+=parseFloat(d.credit||0);
+  });
+  document.getElementById('sel-bar').classList.toggle('d-none',n===0);
+  if(n){document.getElementById('sel-n').textContent=n;
+    document.getElementById('sel-deb').textContent=_fmt(deb);
+    document.getElementById('sel-cred').textContent=_fmt(cred);
+    document.getElementById('sel-sol').textContent=_fmt(deb-cred);}
+}
+function selectAll(on){
+  document.querySelectorAll('#ledger-body tr.ledger-row').forEach(function(tr){
+    if(tr.classList.contains('d-none')) return;          // seulement les lignes visibles
+    var cb=tr.querySelector('.row-check'); if(cb) cb.checked=on;
+  });
+  updateSel();
+}
+function clearSel(){
+  document.querySelectorAll('.row-check').forEach(function(cb){cb.checked=false;});
+  var sa=document.getElementById('sel-all'); if(sa) sa.checked=false;
+  updateSel();
+}
 </script>
 {% endif %}
 {% endblock %}

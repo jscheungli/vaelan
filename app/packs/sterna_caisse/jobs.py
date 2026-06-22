@@ -189,10 +189,13 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
             f"{res['n_factures']} factures{warn}")
 
 
-def run_generate_kk(ctx, company_code, establishment, date_from, date_to):
-    """Génération KOOKABURA (modèle FACTURE B2B, pas de caisse, pas de synthèse) :
-    pull des factures dont le ticket est dans la période -> TOKKT (CA + 411 créance) +
-    TOKKF (reclass HT 70101->7012), dans un seul CSV. Pré-vol : boulangeries clientes mappées."""
+def run_generate_kk(ctx, company_code, establishment, date_from, date_to,
+                    synthese_bytes=None, synthese_name="synthese.pdf"):
+    """Génération KOOKABURA (modèle FACTURE B2B, pas de caisse) : pull des factures dont
+    le ticket est dans la période -> TOKKT (CA + 411 créance) + TOKKF (reclass HT 70101->7012),
+    dans un seul CSV. Pré-vol : boulangeries clientes mappées. KK n'encaisse pas en caisse
+    (les 3 boulangeries paient par virement) mais TopOrder sort un journal de synthèse au même
+    format -> on cadre le CA (HT/TVA/TTC) contre ce Z si la synthèse est fournie."""
     from datetime import date as _date
     pfx = config.establishments(company_code)[establishment]["pfx"]
     with Session(_db_engine) as s:
@@ -210,8 +213,17 @@ def run_generate_kk(ctx, company_code, establishment, date_from, date_to):
     ctx.log(f"Factures KK : {res['n_factures']} en période · CA TTC {res['ca_ttc']:.2f} € "
             f"(HT {res['ca_ht']:.2f} + TVA {res['tva']:.2f})")
 
-    syn = {"ca_total": res["ca_ttc"], "ca_ht": res["ca_ht"], "payments": {},
-           "period": {"date_from": date_from, "date_to": date_to}}
+    if synthese_bytes:
+        ctx.add_artifact("input", f"{fpfx} {synthese_name or 'synthese.pdf'}", synthese_bytes, "application/pdf")
+        syn = synthese.parse(synthese_bytes)
+        syn.setdefault("payments", {})
+        ctx.log(f"Synthèse KK : CA Total {syn.get('ca_total')} € · CA HT {syn.get('ca_ht')} € · "
+                f"{int(syn['nb_clients']) if syn.get('nb_clients') else '?'} clients · "
+                f"période {syn.get('period')}")
+    else:
+        ctx.log("⚠️ Aucune synthèse fournie — cadrage sur le CSV seul (CA non confronté au Z).")
+        syn = {"ca_total": res["ca_ttc"], "ca_ht": res["ca_ht"], "payments": {},
+               "period": {"date_from": date_from, "date_to": date_to}}
 
     def _emit(csv_agg=None, balanced=None):
         args = dict(batch_code=code, n_tickets=res["n_tickets"], balanced=balanced,
@@ -220,6 +232,15 @@ def run_generate_kk(ctx, company_code, establishment, date_from, date_to):
         ctx.add_artifact("report", f"{fpfx} compte_rendu_KK_{code}_{date_from}_{date_to}.pdf",
                          report.build_pdf("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args),
                          "application/pdf")
+
+    # verrou cadrage : si une synthèse est fournie, on ne génère QUE si le CA cadre avec le Z
+    if synthese_bytes:
+        blocking, _ = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to)
+        if blocking:
+            ctx.log("❌ ÉCART CA — CSV NON généré : " + " ; ".join(blocking))
+            _emit()
+            return "Écart CA (CSV non généré) : " + " ; ".join(blocking[:3])
+        ctx.log("✅ Cadrage CA OK.")
 
     if res.get("unresolved"):
         ctx.log(f"⛔ {len(res['unresolved'])} facture(s) sans boulangerie cliente mappée :")
