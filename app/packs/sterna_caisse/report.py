@@ -17,6 +17,18 @@ def _rate_from_label(taux: str) -> str:
     return taux.replace("%", "").replace(",", ".").strip()
 
 
+# Normalisation des libellés de mode de paiement vers les libellés de la synthèse
+# (gère les variantes TopOrder : « Carte »→CB, « Espece »→Espèce, etc.). Tout libellé
+# inconnu est conservé tel quel — ainsi un mode non mappé (ex. Chèque) cadre quand même.
+_MODE_LABEL = {
+    "CB": "CB", "Carte": "CB", "Carte bancaire": "CB", "Carte Bancaire": "CB",
+    "Espèce": "Espèce", "Espece": "Espèce", "Espèces": "Espèce", "Especes": "Espèce",
+    "Chèque": "Chèque", "Cheque": "Chèque", "Chèques": "Chèque",
+    "Ticket restaurant": "Ticket restaurant", "Titre restaurant": "Ticket restaurant",
+    "Ticket Restaurant": "Ticket restaurant",
+}
+
+
 def aggregate_rows(rows, cfg, journal=None, pay_journal=None) -> dict:
     """Relit les lignes du CSV généré et reconstitue les totaux par poste.
 
@@ -31,12 +43,11 @@ def aggregate_rows(rows, cfg, journal=None, pay_journal=None) -> dict:
     ht_by_rate, tva_by_rate, pay = defaultdict(float), defaultdict(float), defaultdict(float)
     deb = cred = 0.0
     pay_journals = {j for j in (journal, pay_journal) if j} or None
-    pay_lbl = {}
-    for a in cfg["est"].values():       # comptes de caisse absents (ex. KK facture) -> ignorés
-        for k, lbl in (("cb", "CB"), ("especes", "Espèce"),
-                       ("ticket_resto", "Ticket restaurant"), ("autres", "Autres")):
+    pay_accs = set()                    # comptes d'encaissement (caisse) ; KK facture -> aucun
+    for a in cfg["est"].values():
+        for k in ("cb", "especes", "ticket_resto", "cheque", "autres"):
             if a.get(k):
-                pay_lbl[a[k]] = lbl
+                pay_accs.add(a[k])
     for r in rows:
         rj, acc, taux, d, c = r[1], r[2], r[5], float(r[7] or 0), float(r[8] or 0)
         if not journal or rj == journal:        # CA/TVA/équilibre : journal de ventes seul
@@ -46,8 +57,11 @@ def aggregate_rows(rows, cfg, journal=None, pay_journal=None) -> dict:
                 ht_by_rate[_rate_from_label(taux)] += c - d
             elif acc in rev_tva:                # TVA = crédit - débit (avoir)
                 tva_by_rate[rev_tva[acc]] += c - d
-        if acc in pay_lbl and (not pay_journals or rj in pay_journals):
-            pay[pay_lbl[acc]] += d - c          # encaissement = débit - crédit (rendu)
+        if acc in pay_accs and (not pay_journals or rj in pay_journals):
+            # mode = libellé de la ligne (= le paymentType écrit par le moteur), normalisé
+            # vers le libellé de la synthèse -> un chèque (compte « autres ») cadre quand même.
+            mode = _MODE_LABEL.get(r[3], r[3])
+            pay[mode] += d - c                  # encaissement = débit - crédit (rendu)
     return {
         "ht_by_rate": {k: round(v, 2) for k, v in ht_by_rate.items()},
         "tva_by_rate": {k: round(v, 2) for k, v in tva_by_rate.items()},
@@ -131,7 +145,7 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     sections.append({"name": "TVA par taux", "note": "synthèse : n/a", "rows": trows})
 
     # paiements
-    modes = ["CB", "Espèce", "Ticket restaurant"]
+    modes = ["CB", "Espèce", "Chèque", "Ticket restaurant"]
 
     def others(d):
         s = round(sum(v for k, v in (d or {}).items() if k not in modes), 2)
