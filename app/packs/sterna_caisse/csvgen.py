@@ -44,7 +44,33 @@ def _rate_label(r: str) -> str:
 
 # moyen de paiement TopOrder -> clé de compte d'encaissement
 _PAYKEY = {"CB": "cb", "Carte": "cb", "Espèce": "especes", "Espece": "especes",
-           "Ticket restaurant": "ticket_resto", "Titre restaurant": "ticket_resto"}
+           "Ticket restaurant": "ticket_resto", "Titre restaurant": "ticket_resto",
+           "Chèque": "autres", "Cheque": "autres"}   # chèques comptabilisés dans le compte AUTRES (41125X04)
+
+# Modes de paiement dont CHAQUE encaissement doit être une ligne dédiée (pas d'agrégat
+# journalier) : on garde le détail (n° de chèque, client…) dans le libellé pour le rapprochement.
+_DETAIL_MODES = {"Chèque", "Cheque"}
+
+
+def _cheque_no(p):
+    """N° de chèque (ou réf. utile) d'un paiement ticketpaymentdata, si l'API l'expose
+    (les noms de champ varient). None si rien d'exploitable."""
+    for k in ("checkNumber", "chequeNumber", "checkNum", "chequeNum", "checkReference",
+              "chequeReference", "paymentReference", "checkRef"):
+        v = p.get(k)
+        if v not in (None, "", 0, "0"):
+            return str(v).strip()[:24]
+    return None
+
+
+def _detail_label(mode, no, client, prefix=""):
+    """Libellé enrichi d'un encaissement détaillé : « Chèque n°1234 · DUPONT »."""
+    s = (prefix + mode) if prefix else mode
+    if no:
+        s += f" n°{no}"
+    if client:
+        s += f" · {client}"
+    return s
 
 
 def _resolver(company_id: int, cfg: dict):
@@ -114,7 +140,7 @@ def build_toslt(establishment, date_from, date_to, company_id,
     to = int(time.mktime(time.strptime(date_to, "%Y-%m-%d"))) + 4 * 3600 + 24 * 3600
 
     agg = defaultdict(lambda: {"vat": defaultdict(lambda: [0.0, 0.0]),
-                               "pay": defaultdict(float)})
+                               "pay": defaultdict(float), "detail": []})
     factures = []       # CA facturé : créance par facture (TTC plein), par date de TICKET
     reglements = []     # règlements : 1 ligne par PAIEMENT de facture, par date de PAIEMENT
     fac_client = {}     # fnum -> (compte 411, nom) des factures de la période (routage des règlements)
@@ -219,12 +245,24 @@ def build_toslt(establishment, date_from, date_to, company_id,
                         continue
                 elif int(fnum) in fac_client:   # paiement sans client mais facture connue (période)
                     a, nm = fac_client[int(fnum)]
+            # chèques (et modes « détaillés ») : on garde n° de chèque + client pour le libellé
+            det = None
+            if pt in _DETAIL_MODES:
+                cli = nm
+                if not cli:
+                    coid, cid = p.get("companyId"), p.get("customerId")
+                    if (coid and coid != ZERO) or (cid and cid != ZERO):
+                        _, cli = resolve(pfx, coid, cid)
+                det = {"no": _cheque_no(p), "client": cli}
             if fnum and a:    # RÈGLEMENT de facture : 1 ligne par paiement, lettré F<n°>
                 reglements.append({"date": pdate, "fnum": int(fnum), "acc": a, "nm": nm,
-                                   "mode": pt, "amount": amt})
+                                   "mode": pt, "amount": amt, "detail": det})
                 fac_pay[pt] += amt
                 fac_pay_detail.append({"date": pdate, "fnum": int(fnum), "nm": nm,
                                        "mode": pt, "amount": round(amt, 2)})
+            elif det is not None:   # chèque anonyme -> ligne DÉDIÉE dans l'écriture du jour
+                agg[pdate]["detail"].append({"mode": pt, "amount": amt,
+                                             "no": det["no"], "client": det["client"]})
             else:             # encaissement anonyme (incl. facture sans client) -> agrégat du jour
                 agg[pdate]["pay"][pt] += amt
         if on_progress:
@@ -290,8 +328,10 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 ttcsum += tva
         return round(ttcsum, 2)
 
-    def emit_agg(date, piece, vat, pay):
-        """Écriture journalière ANONYME : CA + encaissements + écart de caisse."""
+    def emit_agg(date, piece, vat, pay, detail=()):
+        """Écriture journalière ANONYME : CA + encaissements + écart de caisse.
+        Les modes « détaillés » (chèques) sont une LIGNE PAR PAIEMENT (n° + client au
+        libellé) au lieu d'un agrégat, pour le rapprochement."""
         ttcsum = _ca_lines(date, piece, vat)
         enc = 0.0
         for pt, amt_raw in sorted(pay.items()):
@@ -303,6 +343,17 @@ def build_toslt(establishment, date_from, date_to, company_id,
                 rows.append([date, journal, pacc, pt, pt, "", piece, f"{amt:.2f}", "", cat_family, cat_label, ""])
             else:
                 rows.append([date, journal, pacc, pt, pt + " (rendu)", "", piece, "", f"{-amt:.2f}", cat_family, cat_label, ""])
+            enc += amt
+        for dd in detail:                    # chèques : 1 ligne dédiée, libellé enrichi
+            amt = round(dd["amount"], 2)
+            if abs(amt) < 0.005:
+                continue
+            pacc = acc.get(_PAYKEY.get(dd["mode"], ""), acc["autres"])
+            lbl = _detail_label(dd["mode"], dd.get("no"), dd.get("client"))
+            if amt > 0:
+                rows.append([date, journal, pacc, dd["mode"], lbl, "", piece, f"{amt:.2f}", "", cat_family, cat_label, ""])
+            else:
+                rows.append([date, journal, pacc, dd["mode"], lbl + " (rendu)", "", piece, "", f"{-amt:.2f}", cat_family, cat_label, ""])
             enc += amt
         tot["enc"] += enc
         ec = round(ttcsum - enc, 2)
@@ -338,17 +389,19 @@ def build_toslt(establishment, date_from, date_to, company_id,
         crédit 411 (libellé « Règlement … F<n°> » -> lettré complet/partiel à l'étape 6).
         Réduit le solde 411 de la facture (de la période OU antérieure)."""
         d, fnum, amt, pt = reg["date"], reg["fnum"], reg["amount"], reg["mode"]
+        det = reg.get("detail")          # chèque : n° de chèque pour le rapprochement
+        treso = _detail_label(pt, (det or {}).get("no"), None, prefix="Règlement ") + f" F{fnum:07d}"
         lettr = f"F{fnum}"
         piece = f"{pfx}{d[8:10]}{d[5:7]}{d[2:4]}-R{fnum:07d} #{pay_batch}"
         pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
         if amt >= 0:
-            rows.append([d, jp, pacc, pt, f"Règlement {pt} F{fnum:07d}", "", piece,
+            rows.append([d, jp, pacc, pt, treso, "", piece,
                          f"{amt:.2f}", "", cat_family, cat_label, ""])
             rows.append([d, jp, str(reg["acc"]), "Règlement client",
                          f"Règlement F{fnum:07d} · {reg['nm']}", "", piece, "", f"{amt:.2f}",
                          cat_family, cat_label, lettr])
         else:   # solde net négatif (trop-perçu / avoir réglé) -> sens inversé
-            rows.append([d, jp, pacc, pt, f"Règlement {pt} F{fnum:07d}", "", piece,
+            rows.append([d, jp, pacc, pt, treso, "", piece,
                          "", f"{-amt:.2f}", cat_family, cat_label, ""])
             rows.append([d, jp, str(reg["acc"]), "Règlement client",
                          f"Règlement F{fnum:07d} · {reg['nm']}", "", piece, f"{-amt:.2f}", "",
@@ -362,14 +415,18 @@ def build_toslt(establishment, date_from, date_to, company_id,
         return f"{pfx}{date[8:10]}{date[5:7]}{date[2:4]}{suffix} #{batch_code}"
 
     for dt in sorted(agg):
-        emit_agg(dt, piece_for(dt), agg[dt]["vat"], agg[dt]["pay"])
+        emit_agg(dt, piece_for(dt), agg[dt]["vat"], agg[dt]["pay"], agg[dt]["detail"])
     for f in sorted(factures, key=lambda x: (x["date"], x["fnum"])):
         emit_facture(f["date"], piece_for(f["date"], f"-F{f['fnum']:07d}"),
                      f["fnum"], f["acc"], f["nm"], f["vat"])
     # encaissements NETS : regroupés par (jour, facture, compte 411, mode) -> 1 ligne nette
     # (le rendu monnaie d'un paiement espèces est absorbé : +50 / -23 = +27).
     reg_net, reg_nm = defaultdict(float), {}
+    reg_detail = []                  # chèques : 1 ligne par paiement (n° conservé), non nettés
     for r in reglements:
+        if r["mode"] in _DETAIL_MODES:
+            reg_detail.append(r)
+            continue
         k = (r["date"], r["fnum"], r["acc"], r["mode"])
         reg_net[k] += r["amount"]
         reg_nm[k] = r["nm"]
@@ -378,6 +435,10 @@ def build_toslt(establishment, date_from, date_to, company_id,
             continue
         emit_reglement({"date": d, "fnum": fnum, "acc": a, "nm": reg_nm[(d, fnum, a, pt)],
                         "mode": pt, "amount": round(amt, 2)})
+    for r in sorted(reg_detail, key=lambda x: (x["date"], x["fnum"])):
+        if abs(round(r["amount"], 2)) < 0.005:
+            continue
+        emit_reglement({**r, "amount": round(r["amount"], 2)})
 
     # ----- TOSLF : reclassement HT 70101 -> 7012 (B2B) / 70102 (B2C) par facture -----
     jf = ecfg["journal_factures"]
