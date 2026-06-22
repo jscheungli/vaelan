@@ -86,6 +86,7 @@ def run_lettrage(ctx, company_code, as_of):
     full, partial, vir_ok = [], [], []
     ambiguous, open_creances, orphans, errors = [], [], [], []
     n_acc = 0
+    kimayo_skipped = 0      # lignes ouvertes antérieures à la bascule TopOrder (hors périmètre)
     items = list(accounts.items())
     for idx, (num, nm) in enumerate(items):
         ctx.progress(idx, len(items), step=f"compte {num} ({idx + 1}/{len(items)})…")
@@ -102,6 +103,21 @@ def run_lettrage(ctx, company_code, as_of):
             continue
         lines = pl.account_lines(acc["id"], asof_iso)
         opens = [l for l in lines if not ((l.get("lettered_ledger_entry_lines") or {}).get("ids"))]
+        # BASCULE Kimayo -> TopOrder : on ne lettre QUE l'ère TopOrder. cutover = date de la
+        # 1re écriture TopOrder sur ce compte = 1re ligne d'un JOURNAL TopOrder (TO**T/F/P, via
+        # j2p). On NE se fie PAS au libellé « Facture <n°> » : les écritures Kimayo en portent
+        # aussi (ex. « PSR Facture 2300266 ») et fausseraient le cutover. Les lignes antérieures
+        # (créances/virements Kimayo encore ouverts) sont hors périmètre -> sinon un vieux
+        # virement Kimayo est pris pour un virement TopOrder ambigu.
+        to_dates = [l.get("date") for l in lines
+                    if l.get("date") and j2p.get((l.get("journal") or {}).get("id"))]
+        cutover = min(to_dates) if to_dates else None
+        if cutover is None:
+            continue                          # aucune facture TopOrder -> rien à lettrer ici (pur Kimayo)
+        n_pre = sum(1 for l in opens if (l.get("date") or "") < cutover)
+        if n_pre:
+            kimayo_skipped += n_pre
+        opens = [l for l in opens if (l.get("date") or "") >= cutover]
         # regroupe par facture ; crédits sans réf = virements
         groups = defaultdict(lambda: {"deb": [], "cred": [], "ds": 0.0, "cs": 0.0})
         virements = []
@@ -184,6 +200,9 @@ def run_lettrage(ctx, company_code, as_of):
     ctx.log(f"{len(full)} factures soldées lettrées · {len(partial)} partielles · "
             f"{len(vir_ok)} virements rapprochés · {len(ambiguous)} ambigus · "
             f"{len(open_creances)} créances ouvertes")
+    if kimayo_skipped:
+        ctx.log(f"ℹ️ {kimayo_skipped} ligne(s) antérieure(s) à la bascule TopOrder ignorée(s) "
+                f"(ère Kimayo, hors périmètre du lettrage TopOrder).")
 
     # ---- compte rendu texte ----
     L = [f"LETTRAGE DES COMPTES 411 — {company.name} — {label}",

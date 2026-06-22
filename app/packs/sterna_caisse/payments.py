@@ -19,7 +19,7 @@ from app.core.db import engine
 from app.core.connectors import pennylane, toporder
 from app.models import Company, ClientPayment, PaymentReport
 from . import config
-from .lettrage import _client_accounts, _fac_from_label
+from .lettrage import _client_accounts, _fac_from_label, _journal_to_pfx
 
 _TZ = timedelta(hours=4)
 TOL = 0.01
@@ -46,16 +46,16 @@ def pennylane_client(company_code, account, pl=None):
     lines = pl.account_lines(acc["id"])
     today = (datetime.utcnow() + _TZ).date()
 
-    # CUTOVER = bascule Kimayo -> TopOrder = date de la 1re FACTURE TopOrder du client.
-    # Une facture TopOrder = une créance (débit) avec une réf. F<n°> (qu'on a bookée
-    # depuis TopOrder). Avant cette date, c'est l'ère Kimayo (ancien logiciel) : on
-    # ignore ces créances ET les virements antérieurs (on ne peut pas régler une
-    # facture TopOrder pas encore émise). Règle métier : après bascule, plus de Kimayo.
-    fac_dates = [_pdate(l.get("date")) for l in lines
-                 if float(l.get("debit") or 0) > float(l.get("credit") or 0)
-                 and _fac_from_label(l.get("label")) is not None]
-    fac_dates = [d for d in fac_dates if d]
-    cutover = min(fac_dates) if fac_dates else None
+    # CUTOVER = bascule Kimayo -> TopOrder = date de la 1re écriture TopOrder du client =
+    # 1re ligne d'un JOURNAL TopOrder (TO**T/F/P, via j2p). On NE se fie PAS au libellé
+    # « Facture <n°> » : les écritures Kimayo en portent aussi (ex. « PSR Facture 2300266 »)
+    # et fausseraient le cutover. Avant cette date = ère Kimayo (ancien logiciel) : on ignore
+    # ces créances ET les virements antérieurs. Règle métier : après bascule, plus de Kimayo.
+    j2p = _journal_to_pfx(company_code)
+    to_dates = [_pdate(l.get("date")) for l in lines
+                if j2p.get((l.get("journal") or {}).get("id"))]
+    to_dates = [d for d in to_dates if d]
+    cutover = min(to_dates) if to_dates else None
 
     open_creances, payments = [], []
     net = 0.0
