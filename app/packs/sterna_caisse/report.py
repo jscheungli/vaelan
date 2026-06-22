@@ -110,18 +110,22 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     if trace:
         meta.append("        ".join(trace))
 
-    def row(label, sv, av, cv):
-        return {"label": label, "syn": sv, "api": av, "csv": cv,
-                "match": _match(sv, av, cv)}
+    def row(label, sv, av, cv, cmp_syn=True):
+        # cmp_syn=False : on ne cadre QUE API↔CSV (la synthèse, ventilée par famille, est
+        # indicative pour HT/TVA — seul le CA TTC est strictement comparé à la synthèse).
+        m = _match(sv, av, cv) if cmp_syn else _match(av, cv)
+        return {"label": label, "syn": sv, "api": av, "csv": cv, "match": m}
 
     sections = []
 
     # CA global
     syn_ttc, syn_ht = syn.get("ca_total"), syn.get("ca_ht")
     syn_tva = round(syn_ttc - syn_ht, 2) if (syn_ttc is not None and syn_ht is not None) else None
-    sections.append({"name": "Chiffre d'affaires", "note": "", "rows": [
-        row("CA HT total", syn_ht, api.get("ca_ht"), (csv or {}).get("ca_ht")),
-        row("TVA total", syn_tva, api.get("tva"), (csv or {}).get("tva")),
+    sections.append({"name": "Chiffre d'affaires",
+                     "note": "HT/TVA : synthèse ventilée par famille (arrondi ≠) → cadrage API↔CSV ; le CA TTC fait foi face à la synthèse.",
+                     "rows": [
+        row("CA HT total", syn_ht, api.get("ca_ht"), (csv or {}).get("ca_ht"), cmp_syn=False),
+        row("TVA total", syn_tva, api.get("tva"), (csv or {}).get("tva"), cmp_syn=False),
         row("CA TTC total", syn_ttc, api.get("ca_ttc"), (csv or {}).get("ca_ttc")),
     ]})
 
@@ -210,8 +214,15 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
                               "amount": u.get("amount") or 0})
         g["total"] = round(g["total"] + (u.get("amount") or 0), 2)
     unres_groups = sorted(by.values(), key=lambda x: -x["total"])
+    # cohérence GLOBALE : tous les rapprochements OK (ou n/a) + tous les modes cadrent +
+    # CSV équilibré + aucune créance non routée. Sert au VERDICT du résumé de tâche.
+    coherent = (all(r["match"] in ("ok", "na") for s in sections for r in s["rows"])
+                and (paydetail is None or paydetail.get("all_match", True))
+                and (balance is None or balance.get("ok", True))
+                and not unres_groups)
     return {"title": title, "meta": meta, "sections": sections, "paydetail": paydetail,
-            "unresolved": unres_groups, "has_csv": has_csv, "balance": balance}
+            "unresolved": unres_groups, "has_csv": has_csv, "balance": balance,
+            "coherent": coherent}
 
 
 # ---------------------------------------------------------------- rendu TEXTE
@@ -461,6 +472,14 @@ def to_pdf(data) -> bytes:
 
 
 # ---------------------------------------------------------------- API publique
+def compute(kind, establishment, date_from, date_to, syn, api, csv=None, *,
+            batch_code=None, n_tickets=None, balanced=None, run_id=None, executed_at=None,
+            fac_payments=None, fac_detail=None) -> dict:
+    """Données du compte rendu (dont `coherent` = verdict global). À rendre via to_text/to_pdf."""
+    return _compute(kind, establishment, date_from, date_to, syn, api, csv,
+                    batch_code, n_tickets, balanced, run_id, executed_at, fac_payments, fac_detail)
+
+
 def build(kind, establishment, date_from, date_to, syn, api, csv=None, *,
           batch_code=None, n_tickets=None, balanced=None, run_id=None, executed_at=None,
           fac_payments=None, fac_detail=None) -> str:

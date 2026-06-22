@@ -112,21 +112,24 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     # 3) VERROU cadrage : on ne génère QUE si ça cadre avec la synthèse
     ctx.progress(total or res["n_tickets"], total or res["n_tickets"], step="cadrage…")
     def _emit_report(csv_agg=None, batch_code=None, balanced=None):
+        """Calcule le compte rendu UNE fois (texte + PDF) et renvoie son verdict global
+        `coherent` -> le résumé de tâche colle EXACTEMENT à ce que montre le rapport."""
         args = dict(batch_code=batch_code, n_tickets=res["n_tickets"], balanced=balanced,
                     run_id=ctx.run_id, executed_at=executed_at, fac_payments=res.get("fac_payments"),
                     fac_detail=res.get("fac_payment_detail"))
-        ctx.set_report(report.build("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args))
+        rdata = report.compute("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args)
+        ctx.set_report(report.to_text(rdata))
         ctx.add_artifact("report",
                          f"{fpfx} compte_rendu_TOSLT_{code}_{date_from}_{date_to}.pdf",
-                         report.build_pdf("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args),
-                         "application/pdf")
+                         report.to_pdf(rdata), "application/pdf")
+        return bool(rdata.get("coherent"))
 
     blocking, warnings = _cadrage_issues(ctx, res["ca_ttc"], res.get("payments"), syn, date_from, date_to,
                                          fac_payments=res.get("fac_payments"))
     if blocking:
         ctx.log("❌ ÉCART CA — CSV NON généré : " + " ; ".join(blocking))
         _emit_report()
-        return "Écart CA (CSV non généré) : " + " ; ".join(blocking[:3])
+        return "❌ ÉCART CA — CSV NON généré : " + " ; ".join(blocking[:3])
     if warnings:
         ctx.log("⚠️ Écart(s) de mode de paiement (non bloquant — voir le compte rendu) : "
                 + " ; ".join(warnings))
@@ -149,8 +152,8 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
                     f"SIRET {g['siret'] or '— (absent)'} · {g['total']:.2f} € · {len(g['factures'])} facture(s)")
             ctx.log(f"       ⚠ {g['reason'] or 'à vérifier'}")
         _emit_report()
-        return (f"Cadré ✓ mais bloqué : {len(res['unresolved'])} créance(s) sur {len(byc)} client(s) "
-                "sans compte 411 (voir compte rendu)")
+        return (f"❌ BLOQUÉ — {len(res['unresolved'])} créance(s) sur {len(byc)} client(s) "
+                "sans compte 411 (CSV non généré, voir compte rendu)")
 
     # 5) Écriture du CSV UNIQUE (caisse TOSLT + reclassement TOSLF dans un seul fichier ;
     #    Pennylane sépare par la colonne « Code journal »). Sur disque + EN BASE (durable).
@@ -177,16 +180,21 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
     _jtoslt = _rcfg["est"][pfx]["journal_tickets"]      # CA : caisse seule (pas le reclass TOSLF)
     _jpay = _rcfg["est"][pfx].get("journal_payments")   # encaissements : caisse + règlements
     csv_agg = report.aggregate_rows(res["rows"], _rcfg, journal=_jtoslt, pay_journal=_jpay)
-    _emit_report(csv_agg=csv_agg, batch_code=code, balanced=res["balanced"])
+    coherent = _emit_report(csv_agg=csv_agg, batch_code=code, balanced=res["balanced"])
 
     bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"
     ctx.log(f"CSV unique : {len(res['rows'])} lignes · TOSLT ({res['n_agg']} jour + {res['n_factures']} "
             f"factures + {res['n_reglements']} règlements) + TOSLF ({res['n_toslf']} lignes reclass) · {bal}")
     ctx.log(f"CA TTC {res['ca_ttc']:.2f} € (HT {res['ca_ht']:.2f} + TVA {res['tva']:.2f}) · "
             f"encaissé {res['encaisse']:.2f} · 411 ouvert {res['creances']:.2f} · écart {res['ecart']:.2f}")
-    warn = f" · ⚠ {len(warnings)} écart mode paiement (voir CR)" if warnings else ""
-    return (f"Cadré ✓ — lot {code} généré (1 CSV : caisse + factures) — CA TTC {res['ca_ttc']:.2f} € · "
-            f"{res['n_factures']} factures{warn}")
+    head = f"lot {code} généré — CA TTC {res['ca_ttc']:.2f} € · {res['n_factures']} factures"
+    if coherent:
+        ctx.log("✅ Rapprochement complet : tout cadre.")
+        return f"✅ Cadré — {head}"
+    # CSV généré MAIS le rapport montre des écarts -> résumé SANS ambiguïté (le user ne doit
+    # JAMAIS croire que c'est bon sans lire le compte rendu).
+    ctx.log("❌ Le CSV est généré mais le rapprochement N'EST PAS cohérent — voir le compte rendu AVANT d'importer.")
+    return f"❌ ÉCART au cadrage — {head} — NE PAS importer sans vérifier le compte rendu"
 
 
 def run_generate_kk(ctx, company_code, establishment, date_from, date_to,
@@ -228,10 +236,11 @@ def run_generate_kk(ctx, company_code, establishment, date_from, date_to,
     def _emit(csv_agg=None, balanced=None):
         args = dict(batch_code=code, n_tickets=res["n_tickets"], balanced=balanced,
                     run_id=ctx.run_id, executed_at=executed_at)
-        ctx.set_report(report.build("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args))
+        rdata = report.compute("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args)
+        ctx.set_report(report.to_text(rdata))
         ctx.add_artifact("report", f"{fpfx} compte_rendu_KK_{code}_{date_from}_{date_to}.pdf",
-                         report.build_pdf("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args),
-                         "application/pdf")
+                         report.to_pdf(rdata), "application/pdf")
+        return bool(rdata.get("coherent"))
 
     # verrou cadrage : si une synthèse est fournie, on ne génère QUE si le CA cadre avec le Z
     if synthese_bytes:
@@ -247,7 +256,7 @@ def run_generate_kk(ctx, company_code, establishment, date_from, date_to,
         for u in res["unresolved"][:15]:
             ctx.log(f"   • facture F{u['facture']} · companyId {u['company_id']} · {u['reason']}")
         _emit()
-        return f"Bloqué : {len(res['unresolved'])} facture(s) sans boulangerie cliente mappée (voir compte rendu)"
+        return f"❌ BLOQUÉ — {len(res['unresolved'])} facture(s) sans boulangerie cliente mappée (CSV non généré, voir compte rendu)"
 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     fname = f"{fpfx} import_KK_{code}_{date_from}_{date_to}.csv"
@@ -267,12 +276,14 @@ def run_generate_kk(ctx, company_code, establishment, date_from, date_to,
         s.commit()
     _rcfg = config.resolve(company_code)
     csv_agg = report.aggregate_rows(res["rows"], _rcfg, journal=_rcfg["est"][pfx]["journal_tickets"])
-    _emit(csv_agg=csv_agg, balanced=res["balanced"])
+    coherent = _emit(csv_agg=csv_agg, balanced=res["balanced"])
     bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"
     ctx.log(f"CSV KK : {len(res['rows'])} lignes (TOKKT + TOKKF) · {bal} · CA TTC {res['ca_ttc']:.2f} € · "
             f"411 créances {res['creances']:.2f} €")
-    return (f"Lot KK {code} généré — CA TTC {res['ca_ttc']:.2f} € · {res['n_factures']} factures "
-            f"(70101 → 7012, créances 411 boulangeries)")
+    head = f"lot KK {code} généré — CA TTC {res['ca_ttc']:.2f} € · {res['n_factures']} factures"
+    if coherent:
+        return f"✅ Cadré — {head}"
+    return f"❌ ÉCART au cadrage — {head} — NE PAS importer sans vérifier le compte rendu"
 
 
 def run_cadrage(ctx, establishment, date_from, date_to, synthese_bytes,
