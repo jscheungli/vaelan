@@ -495,7 +495,8 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
 
 
 def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
-                 ambiguous, open_creances, errors, coherent, run_id=None, executed_at=None) -> bytes:
+                 ambiguous, open_creances, errors, coherent, unmatched_vir=None,
+                 run_id=None, executed_at=None) -> bytes:
     """Compte rendu PDF de l'étape 6 (lettrage des comptes 411)."""
     def _ascii(s):
         return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
@@ -542,12 +543,23 @@ def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
                    ("Lettrages partiels (acomptes)", counts["partial"]),
                    ("Virements rapprochés (certains)", counts["vir"]),
                    ("Ambigus (à traiter à la main)", counts["ambiguous"]),
+                   ("Virements non rapprochés (info)", counts.get("unmatched", 0)),
                    ("Créances ouvertes (impayées)", counts["open"]),
                    ("Erreurs API", counts["errors"]),
                    ("Comptes clients analysés", counts["accounts"])]:
         ensure()
         left(x0 + 4, lbl, 9); right(W - 60, str(v)); ny(14)
     ny(6)
+
+    if unmatched_vir:
+        section("Virements non rapprochés (informatif - pas une erreur)")
+        left(x0 + 4, "aucune créance TopOrder du même montant : ancienne facture Kimayo réglée", 8, "helv", _GREY); ny(11)
+        left(x0 + 4, "après la bascule, acompte, ou facture pas encore générée - laissés ouverts.", 8, "helv", _GREY); ny(15)
+        for v in sorted(unmatched_vir, key=lambda x: (x.get("date") or "")):
+            ensure(13)
+            left(x0 + 4, str(v.get("date") or ""), 8, "cour"); left(x0 + 90, v["nm"][:30], 9)
+            right(W - 60, f"{v['amount']:.2f}"); ny(13)
+        ny(6)
 
     if partial:
         section("Lettrages partiels (reste dû)")

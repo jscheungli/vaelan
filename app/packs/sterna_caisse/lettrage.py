@@ -85,6 +85,7 @@ def run_lettrage(ctx, company_code, as_of):
 
     full, partial, vir_ok = [], [], []
     ambiguous, open_creances, orphans, errors = [], [], [], []
+    unmatched_vir = []      # virements sans créance TopOrder du même montant (Kimayo/acompte/à venir)
     n_acc = 0
     kimayo_skipped = 0      # lignes ouvertes antérieures à la bascule TopOrder (hors périmètre)
     items = list(accounts.items())
@@ -186,15 +187,21 @@ def run_lettrage(ctx, company_code, as_of):
                 except Exception as e:
                     errors.append({"acc": num, "nm": nm, "why": f"virement {v['amount']}: {str(e)[:40]}"})
                 time.sleep(0.05)
+            elif not cands:
+                # AUCUNE créance TopOrder du même montant -> on NE flague PAS en erreur :
+                # ce virement peut régler une ancienne facture KIMAYO mise en terme à la bascule
+                # (donc payée APRÈS la 1re facture TopOrder), être un acompte, ou concerner une
+                # facture pas encore générée. On le laisse simplement ouvert (informatif).
+                unmatched_vir.append({"acc": num, "nm": nm, "amount": v["amount"], "date": v["date"]})
             else:
+                # vraie ambiguïté : plusieurs créances TopOrder du même montant -> choix manuel
                 ambiguous.append({"acc": num, "nm": nm, "fnum": None, "amount": v["amount"],
-                                  "date": v["date"], "why": ("aucune créance du même montant" if not cands
-                                                             else f"{len(cands)} créances possibles")})
+                                  "date": v["date"], "why": f"{len(cands)} créances possibles"})
 
     now = datetime.utcnow() + _TZ
     stamp = now.strftime("%d/%m/%Y %H:%M")
     counts = {"accounts": n_acc, "full": len(full), "partial": len(partial),
-              "vir": len(vir_ok), "ambiguous": len(ambiguous),
+              "vir": len(vir_ok), "ambiguous": len(ambiguous), "unmatched": len(unmatched_vir),
               "open": len(open_creances), "errors": len(errors)}
     coherent = not errors and not ambiguous
     ctx.log(f"{len(full)} factures soldées lettrées · {len(partial)} partielles · "
@@ -203,6 +210,9 @@ def run_lettrage(ctx, company_code, as_of):
     if kimayo_skipped:
         ctx.log(f"ℹ️ {kimayo_skipped} ligne(s) antérieure(s) à la bascule TopOrder ignorée(s) "
                 f"(ère Kimayo, hors périmètre du lettrage TopOrder).")
+    if unmatched_vir:
+        ctx.log(f"ℹ️ {len(unmatched_vir)} virement(s) sans créance TopOrder du même montant — "
+                f"laissés ouverts (ancienne facture Kimayo, acompte, ou facture à venir).")
 
     # ---- compte rendu texte ----
     L = [f"LETTRAGE DES COMPTES 411 — {company.name} — {label}",
@@ -212,8 +222,16 @@ def run_lettrage(ctx, company_code, as_of):
          f"  Lettrages partiels (acomptes)  : {len(partial)}",
          f"  Virements rapprochés (certains): {len(vir_ok)}",
          f"  Ambigus (à traiter à la main)  : {len(ambiguous)}",
+         f"  Virements non rapprochés (info): {len(unmatched_vir)}",
          f"  Créances ouvertes (impayées)   : {len(open_creances)}",
          f"  Erreurs API                    : {len(errors)}", ""]
+    if unmatched_vir:
+        L += ["== VIREMENTS NON RAPPROCHÉS (informatif — pas une erreur) ==",
+              "   (aucune créance TopOrder du même montant : ancienne facture Kimayo réglée",
+              "    après la bascule, acompte, ou facture pas encore générée — laissés ouverts)"]
+        for v in sorted(unmatched_vir, key=lambda x: (x.get("date") or "")):
+            L.append(f"  {v['date']}  {v['nm'][:28]:<30} {v['amount']:>10.2f}")
+        L.append("")
     if partial:
         L += ["== LETTRAGES PARTIELS (reste dû) =="]
         for p in partial:
@@ -244,6 +262,7 @@ def run_lettrage(ctx, company_code, as_of):
     ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} compte_rendu_lettrage.pdf",
                      report.lettrage_pdf(company.name, label, counts, full, partial, vir_ok,
                                          ambiguous, open_creances, errors, coherent,
+                                         unmatched_vir=unmatched_vir,
                                          run_id=ctx.run_id, executed_at=stamp),
                      "application/pdf")
     _record(company.id, coherent, as_of, now, ctx.run_id)
