@@ -33,11 +33,12 @@ def _expected_by_account(company_id, pfx, start, end):
             ImportBatch.company_id == company_id, ImportBatch.kind == "toslt",
             ImportBatch.establishment == pfx)).all()
             if not (b.date_to < start or b.date_from > end)]
+        # on ne vérifie QUE le dernier lot généré (le plus récent) : un ancien lot
+        # couvrant une autre période ne doit plus polluer le cadrage.
         keep = {}
-        for b in batches:
-            k = (b.date_from, b.date_to)
-            if k not in keep or b.id > keep[k].id:
-                keep[k] = b
+        if batches:
+            latest = max(batches, key=lambda b: (b.created_at or datetime.min, b.id))
+            keep[latest.id] = latest
         net = defaultdict(float)
         used, missing = [], []
         for b in keep.values():
@@ -132,8 +133,8 @@ def run_verify(ctx, company_code, pfx):
         ctx.log("Aucun lot caisse généré pour cet établissement → rien à vérifier.")
         return "Rien à vérifier — aucun lot caisse"
 
-    start = min(b.date_from for b in batches)
-    end = max(b.date_to for b in batches)
+    latest = max(batches, key=lambda b: (b.created_at or datetime.min, b.id))
+    start, end = latest.date_from, latest.date_to
     label = f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
     ctx.log(f"Vérification Pennylane · {establishment} · {label} (journaux {journal_label})")
     ctx.progress(0, 3, step="lecture de l'attendu (CSV générés)…")

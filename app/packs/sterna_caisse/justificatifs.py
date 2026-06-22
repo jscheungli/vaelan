@@ -99,8 +99,9 @@ def run_justificatifs(ctx, company_code, pfx):
     if not pl:
         raise RuntimeError("clé Pennylane absente")
 
-    start = min(b.date_from for b in batches)
-    end = max(b.date_to for b in batches)
+    # on ne traite QUE le dernier lot généré (cohérent avec le tableau et le cadrage)
+    latest = max(batches, key=lambda b: (b.created_at or datetime.min, b.id))
+    start, end = latest.date_from, latest.date_to
     label = f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
     ctx.log(f"Justificatifs · {establishment} · {label} (journaux {journal_label})")
 
