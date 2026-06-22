@@ -101,8 +101,11 @@ def _cell(stp, pfx, clients, batches, decls, last_sync, target):
         bs = [b for b in batches if b.establishment == pfx and b.kind == stp.get("bkind", "toslt")]
         if not bs:
             return {"state": "todo", "text": "à générer", "act": "link"}
-        covered = max(b.date_to for b in bs)
-        realized = _d(max((b.created_at for b in bs), default=None))
+        # couverture = celle du DERNIER lot généré (pas le max sur tous les lots : un
+        # ancien lot couvrant une période plus longue ne doit pas masquer la re-génération).
+        latest = max(bs, key=lambda b: (b.created_at or datetime.min, b.id))
+        covered = latest.date_to
+        realized = _d(latest.created_at)
         st = _cov_state(covered, target)
         return {"state": st, "coverage": _date(covered), "realized": realized, "act": "link",
                 "text": (None if st == "done" else "mois à clôturer")}
