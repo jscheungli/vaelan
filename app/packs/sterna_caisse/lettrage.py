@@ -52,6 +52,21 @@ def _client_accounts(company_code):
     return out
 
 
+def _journal_to_pfx(company_code):
+    """id de journal Pennylane -> préfixe établissement (SL/LP/SM/KK). Sert à
+    désambiguïser le n° de facture au lettrage : la numérotation des factures est
+    PARALLÈLE entre établissements (F50 existe à SL ET à LP) ; comme chaque
+    établissement a ses propres journaux (ventes + encaissements), le couple
+    (établissement, n° facture) est unique même sur un compte 411 partagé."""
+    cfg = config.resolve(company_code)
+    out = {}
+    for pfx, e in cfg["est"].items():
+        for key in ("journal_tickets_id", "journal_factures_id", "journal_payments_id"):
+            if e.get(key):
+                out[int(e[key])] = pfx
+    return out
+
+
 def run_lettrage(ctx, company_code, as_of):
     """as_of : date d'arrêté (datetime.date). Lettre tout l'ouvert jusqu'à cette date."""
     pl = pennylane.for_company(company_code)
@@ -63,6 +78,7 @@ def run_lettrage(ctx, company_code, as_of):
             raise RuntimeError(f"société {company_code} introuvable")
 
     accounts = _client_accounts(company_code)
+    j2p = _journal_to_pfx(company_code)        # id journal -> établissement (anti-collision F<n°>)
     asof_iso = as_of.isoformat()
     label = f"arrêté au {as_of.strftime('%d/%m/%Y')}"
     ctx.log(f"Lettrage des comptes 411 · {company.name} · {label} · {len(accounts)} comptes clients")
@@ -99,13 +115,16 @@ def run_lettrage(ctx, company_code, as_of):
                 continue
             if fnum is None:
                 continue                      # débit sans réf (rare) : on n'y touche pas
-            g = groups[fnum]
+            # clé = (établissement, n° facture) : les n° sont parallèles entre établissements
+            pfx_l = j2p.get((l.get("journal") or {}).get("id"))
+            g = groups[(pfx_l, fnum)]
             (g["deb"] if deb > cred else g["cred"]).append(l["id"])
             g["ds"] += deb
             g["cs"] += cred
 
         remaining_creance = []   # créances encore ouvertes après lettrage par facture (pour virements)
-        for fnum, g in groups.items():
+        for (gpfx, fnum), g in groups.items():
+            fref = f"{gpfx} F{fnum}" if gpfx else f"F{fnum}"   # libellé sans ambiguïté
             ids = g["deb"] + g["cred"]
             bal = round(g["ds"] - g["cs"], 2)
             paid = g["cs"] > TOL
@@ -113,9 +132,10 @@ def run_lettrage(ctx, company_code, as_of):
                 # créance pure non payée -> on laisse ouvert (et candidate aux virements)
                 if g["ds"] > TOL:
                     age = _age(g, as_of, opens)
-                    open_creances.append({"acc": num, "nm": nm, "fnum": fnum,
+                    open_creances.append({"acc": num, "nm": nm, "fnum": fnum, "pfx": gpfx, "fref": fref,
                                           "amount": round(g["ds"], 2), "age": age, "ids": g["deb"]})
-                    remaining_creance.append({"fnum": fnum, "amount": round(g["ds"], 2), "ids": g["deb"]})
+                    remaining_creance.append({"fnum": fnum, "pfx": gpfx, "fref": fref,
+                                              "amount": round(g["ds"], 2), "ids": g["deb"]})
                 else:
                     orphans.append({"acc": num, "nm": nm, "fnum": fnum, "why": "crédit sans créance ouverte"})
                 continue
@@ -125,15 +145,16 @@ def run_lettrage(ctx, company_code, as_of):
             try:
                 if abs(bal) < TOL:
                     pl.letter_lines(ids, "none"); full.append({"acc": num, "nm": nm, "fnum": fnum,
-                                                               "amount": round(g["cs"], 2)})
+                                                               "pfx": gpfx, "fref": fref, "amount": round(g["cs"], 2)})
                 elif 0 < bal:
                     pl.letter_lines(ids, "partial"); partial.append({"acc": num, "nm": nm, "fnum": fnum,
+                                                                    "pfx": gpfx, "fref": fref,
                                                                     "paid": round(g["cs"], 2), "due": bal})
                 else:
-                    ambiguous.append({"acc": num, "nm": nm, "fnum": fnum,
+                    ambiguous.append({"acc": num, "nm": nm, "fnum": fnum, "pfx": gpfx, "fref": fref,
                                       "why": f"trop-perçu {-bal:.2f}"})
             except Exception as e:
-                errors.append({"acc": num, "nm": nm, "why": f"F{fnum}: {str(e)[:50]}"})
+                errors.append({"acc": num, "nm": nm, "why": f"{fref}: {str(e)[:50]}"})
             time.sleep(0.05)
 
         # virements : rapprochement certain (1 créance ouverte de même montant)
@@ -143,8 +164,8 @@ def run_lettrage(ctx, company_code, as_of):
                 c = cands[0]
                 try:
                     pl.letter_lines([v["id"]] + c["ids"], "none")
-                    vir_ok.append({"acc": num, "nm": nm, "fnum": c["fnum"],
-                                   "amount": v["amount"], "date": v["date"]})
+                    vir_ok.append({"acc": num, "nm": nm, "fnum": c["fnum"], "pfx": c.get("pfx"),
+                                   "fref": c.get("fref"), "amount": v["amount"], "date": v["date"]})
                     remaining_creance.remove(c)
                 except Exception as e:
                     errors.append({"acc": num, "nm": nm, "why": f"virement {v['amount']}: {str(e)[:40]}"})
@@ -177,23 +198,23 @@ def run_lettrage(ctx, company_code, as_of):
     if partial:
         L += ["== LETTRAGES PARTIELS (reste dû) =="]
         for p in partial:
-            L.append(f"  F{p['fnum']:<8} {p['nm'][:28]:<30} payé {p['paid']:>10.2f}  reste {p['due']:>10.2f}")
+            L.append(f"  {p.get('fref', 'F'+str(p['fnum'])):<11} {p['nm'][:28]:<30} payé {p['paid']:>10.2f}  reste {p['due']:>10.2f}")
         L.append("")
     if vir_ok:
         L += ["== VIREMENTS RAPPROCHÉS =="]
         for v in vir_ok:
-            L.append(f"  {v['date']}  F{v['fnum']:<8} {v['nm'][:28]:<30} {v['amount']:>10.2f}")
+            L.append(f"  {v['date']}  {v.get('fref', 'F'+str(v['fnum'])):<11} {v['nm'][:28]:<30} {v['amount']:>10.2f}")
         L.append("")
     if ambiguous:
         L += ["== À TRAITER MANUELLEMENT (ambigus) =="]
         for a in ambiguous:
-            ref = f"F{a['fnum']}" if a.get("fnum") else f"virement {a.get('amount', 0):.2f}"
+            ref = a.get("fref") or (f"F{a['fnum']}" if a.get("fnum") else f"virement {a.get('amount', 0):.2f}")
             L.append(f"  {a['nm'][:28]:<30} {ref:<16} {a['why']}")
         L.append("")
     if open_creances:
         L += ["== CRÉANCES OUVERTES (impayées) =="]
         for c in sorted(open_creances, key=lambda x: -x["age"]):
-            L.append(f"  F{c['fnum']:<8} {c['nm'][:28]:<30} {c['amount']:>10.2f}  ({c['age']} j)")
+            L.append(f"  {c.get('fref', 'F'+str(c['fnum'])):<11} {c['nm'][:28]:<30} {c['amount']:>10.2f}  ({c['age']} j)")
         L.append("")
     L += [("✅ COMPLET — toutes les factures soldables ont été lettrées."
            if coherent else

@@ -520,21 +520,21 @@ def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
         section("Lettrages partiels (reste dû)")
         for p in partial:
             ensure(13)
-            left(x0 + 4, f"F{p['fnum']}", 9, "cour"); left(x0 + 80, p["nm"][:30], 9)
+            left(x0 + 4, p.get("fref") or f"F{p['fnum']}", 9, "cour"); left(x0 + 80, p["nm"][:30], 9)
             right(W - 150, f"payé {p['paid']:.2f}"); right(W - 60, f"reste {p['due']:.2f}", color=_RED); ny(13)
         ny(6)
     if vir_ok:
         section("Virements rapprochés", _GREEN)
         for v in vir_ok:
             ensure(13)
-            left(x0 + 4, str(v["date"]), 8, "cour"); left(x0 + 90, f"F{v['fnum']}", 9, "cour")
+            left(x0 + 4, str(v["date"]), 8, "cour"); left(x0 + 90, v.get("fref") or f"F{v['fnum']}", 9, "cour")
             left(x0 + 160, v["nm"][:30], 9); right(W - 60, f"{v['amount']:.2f}"); ny(13)
         ny(6)
     if ambiguous:
         section("À traiter manuellement (ambigus)", _RED)
         for a in ambiguous:
             ensure(13)
-            ref = f"F{a['fnum']}" if a.get("fnum") else f"virement {a.get('amount', 0):.2f}"
+            ref = a.get("fref") or (f"F{a['fnum']}" if a.get("fnum") else f"virement {a.get('amount', 0):.2f}")
             left(x0 + 4, a["nm"][:28], 9); left(x0 + 200, ref, 9, "cour")
             left(x0 + 290, str(a["why"])[:34], 8, "helv", _RED); ny(13)
         ny(6)
@@ -542,7 +542,7 @@ def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
         section("Créances ouvertes (impayées)")
         for c in sorted(open_creances, key=lambda x: -x["age"]):
             ensure(13)
-            left(x0 + 4, f"F{c['fnum']}", 9, "cour"); left(x0 + 80, c["nm"][:30], 9)
+            left(x0 + 4, c.get("fref") or f"F{c['fnum']}", 9, "cour"); left(x0 + 80, c["nm"][:30], 9)
             right(W - 110, f"{c['amount']:.2f}")
             left(W - 95, f"{c['age']} j", 8, "helv", (_RED if c["age"] > 60 else _GREY)); ny(13)
         ny(6)
