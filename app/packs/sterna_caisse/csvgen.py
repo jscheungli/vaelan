@@ -329,25 +329,29 @@ def build_toslt(establishment, date_from, date_to, company_id,
                          "", f"{-ttcsum:.2f}", cat_family, cat_label, lettr])
         tot["creance"] += ttcsum
 
+    jp = ecfg["journal_payments"]      # journal d'encaissements dédié (TOSLP/TOSMP/TOLPP)
+    pay_batch = f"{pfx}P{batch_code[len(pfx) + 1:]}"   # lot encaissements (ex. SLT09 -> SLP09)
+
     def emit_reglement(reg):
-        """Règlement de facture (1 ligne par paiement) : débit encaissement + crédit 411
-        (lettré F<n°>), par date de paiement. Réduit le solde 411 de la facture (émise
-        dans cette période OU avant = antérieure). Lettrable (partiellement) à l'étape 6."""
+        """Encaissement NET d'une facture (regroupé par facture+mode+jour, rendu monnaie
+        déjà netté) dans le JOURNAL DE PAIEMENT dédié : débit trésorerie (espèces/CB/…) +
+        crédit 411 (libellé « Règlement … F<n°> » -> lettré complet/partiel à l'étape 6).
+        Réduit le solde 411 de la facture (de la période OU antérieure)."""
         d, fnum, amt, pt = reg["date"], reg["fnum"], reg["amount"], reg["mode"]
         lettr = f"F{fnum}"
-        piece = f"{pfx}{d[8:10]}{d[5:7]}{d[2:4]}-R{fnum:07d} #{batch_code}"
+        piece = f"{pfx}{d[8:10]}{d[5:7]}{d[2:4]}-R{fnum:07d} #{pay_batch}"
         pacc = acc.get(_PAYKEY.get(pt, ""), acc["autres"])
-        if amt > 0:
-            rows.append([d, journal, pacc, pt, f"Règlement {pt} F{fnum:07d}", "", piece,
+        if amt >= 0:
+            rows.append([d, jp, pacc, pt, f"Règlement {pt} F{fnum:07d}", "", piece,
                          f"{amt:.2f}", "", cat_family, cat_label, ""])
-            rows.append([d, journal, str(reg["acc"]), "Règlement client",
+            rows.append([d, jp, str(reg["acc"]), "Règlement client",
                          f"Règlement F{fnum:07d} · {reg['nm']}", "", piece, "", f"{amt:.2f}",
                          cat_family, cat_label, lettr])
-        else:
-            rows.append([d, journal, pacc, pt, f"Règlement {pt} F{fnum:07d} (rendu)", "", piece,
+        else:   # solde net négatif (trop-perçu / avoir réglé) -> sens inversé
+            rows.append([d, jp, pacc, pt, f"Règlement {pt} F{fnum:07d}", "", piece,
                          "", f"{-amt:.2f}", cat_family, cat_label, ""])
-            rows.append([d, journal, str(reg["acc"]), "Règlement client",
-                         f"Règlement F{fnum:07d} (rendu) · {reg['nm']}", "", piece, f"{-amt:.2f}", "",
+            rows.append([d, jp, str(reg["acc"]), "Règlement client",
+                         f"Règlement F{fnum:07d} · {reg['nm']}", "", piece, f"{-amt:.2f}", "",
                          cat_family, cat_label, lettr])
         tot["enc"] += amt
         tot["creance"] -= amt          # le règlement réduit le solde 411 ouvert
@@ -362,8 +366,18 @@ def build_toslt(establishment, date_from, date_to, company_id,
     for f in sorted(factures, key=lambda x: (x["date"], x["fnum"])):
         emit_facture(f["date"], piece_for(f["date"], f"-F{f['fnum']:07d}"),
                      f["fnum"], f["acc"], f["nm"], f["vat"])
-    for reg in sorted(reglements, key=lambda x: (x["date"], x["fnum"])):
-        emit_reglement(reg)
+    # encaissements NETS : regroupés par (jour, facture, compte 411, mode) -> 1 ligne nette
+    # (le rendu monnaie d'un paiement espèces est absorbé : +50 / -23 = +27).
+    reg_net, reg_nm = defaultdict(float), {}
+    for r in reglements:
+        k = (r["date"], r["fnum"], r["acc"], r["mode"])
+        reg_net[k] += r["amount"]
+        reg_nm[k] = r["nm"]
+    for (d, fnum, a, pt), amt in sorted(reg_net.items()):
+        if abs(round(amt, 2)) < 0.005:
+            continue
+        emit_reglement({"date": d, "fnum": fnum, "acc": a, "nm": reg_nm[(d, fnum, a, pt)],
+                        "mode": pt, "amount": round(amt, 2)})
 
     # ----- TOSLF : reclassement HT 70101 -> 7012 (B2B) / 70102 (B2C) par facture -----
     jf = ecfg["journal_factures"]
@@ -401,9 +415,10 @@ def build_toslt(establishment, date_from, date_to, company_id,
     deb = sum(float(r[7]) for r in rows if r[7])
     cred = sum(float(r[8]) for r in rows if r[8])
     n_b2b = sum(1 for f in factures if f["b2b"])
+    n_toslp = sum(1 for r in rows if r[1] == jp)
     return {
         "header": HEADER, "rows": rows, "unresolved": [],
-        "n_toslf": len(toslf_rows),
+        "n_toslf": len(toslf_rows), "n_toslp": n_toslp, "journal_payments": jp,
         "n_tickets": n_tickets, "n_agg": len(agg), "n_creances": len(factures),
         "n_factures": len(factures), "n_b2b": n_b2b, "n_b2c": len(factures) - n_b2b,
         "n_reglements": len(reglements),

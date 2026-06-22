@@ -17,17 +17,20 @@ def _rate_from_label(taux: str) -> str:
     return taux.replace("%", "").replace(",", ".").strip()
 
 
-def aggregate_rows(rows, cfg, journal=None) -> dict:
+def aggregate_rows(rows, cfg, journal=None, pay_journal=None) -> dict:
     """Relit les lignes du CSV généré et reconstitue les totaux par poste.
 
-    `journal` : si fourni, on n'agrège QUE ce journal (le CSV unique contient
-    TOSLT + TOSLF ; pour comparer le CA au Z, on ne prend que la caisse TOSLT où
-    le 70101 porte tout le CA avant reclassement — sinon les reclass d'avoirs sont
-    comptés en double)."""
+    `journal` : CA/TVA/équilibre agrégés sur CE journal seulement (le CSV unique
+    contient TOSLT + TOSLF + TOSLP ; pour comparer le CA au Z on ne prend que la
+    caisse TOSLT, sinon le reclassement TOSLF compterait en double).
+    `pay_journal` : les ENCAISSEMENTS sont agrégés sur le journal de ventes (caisse
+    anonyme) ET le journal de paiement (règlements de factures), pour totaliser tout
+    ce qui a été encaissé (= le Z)."""
     ca_acc = cfg["ca_anonyme"]
     rev_tva = {v: k for k, v in cfg["tva"].items()}
     ht_by_rate, tva_by_rate, pay = defaultdict(float), defaultdict(float), defaultdict(float)
     deb = cred = 0.0
+    pay_journals = {j for j in (journal, pay_journal) if j} or None
     pay_lbl = {}
     for a in cfg["est"].values():       # comptes de caisse absents (ex. KK facture) -> ignorés
         for k, lbl in (("cb", "CB"), ("especes", "Espèce"),
@@ -35,17 +38,16 @@ def aggregate_rows(rows, cfg, journal=None) -> dict:
             if a.get(k):
                 pay_lbl[a[k]] = lbl
     for r in rows:
-        if journal and r[1] != journal:
-            continue
-        acc, taux, d, c = r[2], r[5], float(r[7] or 0), float(r[8] or 0)
-        deb += d
-        cred += c
-        if acc == ca_acc:                       # CA = crédit (vente) - débit (avoir)
-            ht_by_rate[_rate_from_label(taux)] += c - d
-        elif acc in rev_tva:                    # TVA = crédit - débit (avoir)
-            tva_by_rate[rev_tva[acc]] += c - d
-        elif acc in pay_lbl:                    # encaissement = débit - crédit (rendu)
-            pay[pay_lbl[acc]] += d - c
+        rj, acc, taux, d, c = r[1], r[2], r[5], float(r[7] or 0), float(r[8] or 0)
+        if not journal or rj == journal:        # CA/TVA/équilibre : journal de ventes seul
+            deb += d
+            cred += c
+            if acc == ca_acc:                   # CA = crédit (vente) - débit (avoir)
+                ht_by_rate[_rate_from_label(taux)] += c - d
+            elif acc in rev_tva:                # TVA = crédit - débit (avoir)
+                tva_by_rate[rev_tva[acc]] += c - d
+        if acc in pay_lbl and (not pay_journals or rj in pay_journals):
+            pay[pay_lbl[acc]] += d - c          # encaissement = débit - crédit (rendu)
     return {
         "ht_by_rate": {k: round(v, 2) for k, v in ht_by_rate.items()},
         "tva_by_rate": {k: round(v, 2) for k, v in tva_by_rate.items()},
@@ -243,6 +245,10 @@ def to_text(data) -> str:
                      f"{'OK' if r['match'] else '⚠️ ÉCART ' + _fmt(r['ecart'])}")
         L.append("  " + ("✅ Encaissements cadrés (tous les modes = synthèse)."
                          if ok else "❌ ÉCART D'ENCAISSEMENT — ne cadre pas avec la synthèse (à corriger)."))
+        fac_tot = round(sum(r.get("our_fac") or 0 for r in p["rows"]), 2)
+        if abs(fac_tot) > TOL:
+            L.append(f"  dont RÈGLEMENTS DE FACTURES (journal d'encaissements dédié, à lettrer au 411) : "
+                     f"{_fmt(fac_tot)} EUR")
         L.append("")
         L.append("  BILAN — répartition encaissé / créances (cadre sur le CA Total) :")
         L.append(f"    {'':<14}{'Encaissé comptoir':>20}{'+ Créances 411':>18}{'= CA Total':>14}")
@@ -405,6 +411,10 @@ def to_pdf(data) -> bytes:
         w = fitz.get_text_length(vmsg, fontname="hebo", fontsize=9) + 12
         page.draw_rect(fitz.Rect(x0, y - 8, x0 + w, y + 3), fill=vcol, color=vcol)
         page.insert_text((x0 + 6, y), _ascii(vmsg), fontsize=9, fontname="hebo", color=(1, 1, 1)); nl(16)
+        fac_tot = round(sum(r.get("our_fac") or 0 for r in p["rows"]), 2)
+        if abs(fac_tot) > TOL:
+            left(x0 + 2, _ascii(f"dont reglements de factures (journal d'encaissements dedie, a lettrer au 411) : "
+                                f"{_fmt(fac_tot)} EUR"), 8, "helv", _GREY); nl(14)
         # bilan répartition encaissé / créances (cadre sur le CA Total)
         left(x0 + 3, "Répartition encaissé / créances (cadre sur le CA Total)", 9, "hebo", (0.2, 0.2, 0.25)); nl(13)
         B1, B2, B3 = 360, 460, 520

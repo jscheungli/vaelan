@@ -66,7 +66,8 @@ def clients(company_code: str) -> dict:
 def _kk_defaults() -> dict:
     est = {"KK": {"category": None,
                   "journal_tickets": "TOKKT", "journal_tickets_id": "84717481984",
-                  "journal_factures": "TOKKF", "journal_factures_id": "84717486080"}}
+                  "journal_factures": "TOKKF", "journal_factures_id": "84717486080",
+                  "journal_payments": "TOKKP", "journal_payments_id": "84756439040"}}
     return {"ca_anonyme": "70101", "ca_b2c": None, "ca_b2b": "7012",
             "analytic_family": None, "tva": dict(TVA_ACCOUNT), "est": est}
 
@@ -85,15 +86,18 @@ def resolve_411(pfx: str, company_id, customer_id):
 # Les ids numériques servent à l'API ; le CSV d'import manuel référence le journal
 # par son CODE (TOSLT/TOSLF) -> voir journal_code().
 JOURNALS = {
-    "SL": {"tickets": 78512312320, "factures": 84363386880, "analytic": 10174227},
-    "LP": {"tickets": 84391071744, "factures": 84391256064, "analytic": 10174226},
-    "SM": {"tickets": 84392247296, "factures": 84392374272, "analytic": 10174225},
+    "SL": {"tickets": 78512312320, "factures": 84363386880, "payments": 84756430848, "analytic": 10174227},
+    "LP": {"tickets": 84391071744, "factures": 84391256064, "payments": 84756426752, "analytic": 10174226},
+    "SM": {"tickets": 84392247296, "factures": 84392374272, "payments": 84756422656, "analytic": 10174225},
 }
+
+_JSUFFIX = {"tickets": "T", "factures": "F", "payments": "P"}
 
 
 def journal_code(pfx: str, kind: str) -> str:
-    """Code journal Pennylane (pour le CSV) : tickets -> TO<PFX>T, factures -> TO<PFX>F."""
-    return f"TO{pfx}{'T' if kind == 'tickets' else 'F'}"
+    """Code journal Pennylane (pour le CSV) : tickets -> TO<PFX>T, factures -> TO<PFX>F,
+    payments (encaissements de factures) -> TO<PFX>P."""
+    return f"TO{pfx}{_JSUFFIX.get(kind, 'T')}"
 
 
 def caisse_accounts(pfx: str) -> dict:
@@ -119,6 +123,8 @@ def _defaults() -> dict:
             "journal_tickets_id": str(j["tickets"]),
             "journal_factures": journal_code(pfx, "factures"),
             "journal_factures_id": str(j["factures"]),
+            "journal_payments": journal_code(pfx, "payments"),
+            "journal_payments_id": str(j["payments"]),
             **caisse_accounts(pfx),
         }
     return {"ca_anonyme": CA_ANONYME, "ca_b2c": CA_B2C, "ca_b2b": CA_B2B,
@@ -133,6 +139,8 @@ JOURNAL_FIELDS = [("journal_tickets", "Code journal Tickets (CSV)"),
                   ("journal_tickets_id", "ID journal Tickets (API)"),
                   ("journal_factures", "Code journal Factures (CSV)"),
                   ("journal_factures_id", "ID journal Factures (API)"),
+                  ("journal_payments", "Code journal Encaissements (CSV)"),
+                  ("journal_payments_id", "ID journal Encaissements (API)"),
                   ("category", "Catégorie analytique")]
 
 

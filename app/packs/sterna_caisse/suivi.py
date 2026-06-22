@@ -24,6 +24,7 @@ STEPS = [
     {"n": "4", "key": "verify_tickets", "label": "Cadrage de l'import par Vaelan", "kind": "verify"},
     {"n": "5", "key": "justificatifs", "label": "Attache des justificatifs (PDF factures) par Vaelan", "kind": "justif"},
     {"n": "6", "key": "lettrage", "label": "Lettrage des comptes 411 (niveau société)", "kind": "lettrage", "scope": "company"},
+    {"n": "7", "key": "recon_caisse", "label": "Lettrage caisse/CB ↔ dépôts bancaires (à venir)", "kind": "soon"},
 ]
 
 

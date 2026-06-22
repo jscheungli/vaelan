@@ -113,7 +113,11 @@ def run_verify(ctx, company_code, pfx):
     cfg = config.resolve(company_code)
     ecfg = cfg["est"][pfx]
     journal_ids = [int(ecfg["journal_tickets_id"]), int(ecfg["journal_factures_id"])]
-    journal_label = f"{ecfg['journal_tickets']} + {ecfg['journal_factures']}"
+    jcodes = [ecfg["journal_tickets"], ecfg["journal_factures"]]
+    if ecfg.get("journal_payments_id"):        # journal d'encaissements (règlements de factures)
+        journal_ids.append(int(ecfg["journal_payments_id"]))
+        jcodes.append(ecfg["journal_payments"])
+    journal_label = " + ".join(jcodes)
     with Session(engine) as s:
         company = s.exec(select(Company).where(Company.code == company_code)).first()
         if not company:

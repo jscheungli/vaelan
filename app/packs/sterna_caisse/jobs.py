@@ -174,8 +174,9 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
         s.commit()
 
     _rcfg = config.resolve(company_code)
-    _jtoslt = _rcfg["est"][pfx]["journal_tickets"]      # n'agréger que la caisse (pas le reclass TOSLF)
-    csv_agg = report.aggregate_rows(res["rows"], _rcfg, journal=_jtoslt)
+    _jtoslt = _rcfg["est"][pfx]["journal_tickets"]      # CA : caisse seule (pas le reclass TOSLF)
+    _jpay = _rcfg["est"][pfx].get("journal_payments")   # encaissements : caisse + règlements
+    csv_agg = report.aggregate_rows(res["rows"], _rcfg, journal=_jtoslt, pay_journal=_jpay)
     _emit_report(csv_agg=csv_agg, batch_code=code, balanced=res["balanced"])
 
     bal = "équilibré ✓" if res["balanced"] else f"⚠️ DÉSÉQUILIBRE (D {res['debit']} ≠ C {res['credit']})"
