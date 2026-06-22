@@ -269,24 +269,25 @@ def generate_run(request: Request, code: str,
     if redir:
         return redir
     short = establishment.replace("OCOPAIN ", "")
+    htmx = bool(request.headers.get("HX-Request"))
     if caisse_config.is_facture_model(company.code):     # KOOKABURA : modèle facture (pas de caisse)
         syn_data = synthese.file.read() if synthese is not None else None
         syn_name = (synthese.filename or "synthese.pdf") if synthese is not None else None
         label = f"Cadrage + génération KK · {short} · {date_from}→{date_to}"
-        start_job("generate_kk",
-                  lambda ctx: run_generate_kk(ctx, company.code, establishment, date_from, date_to,
-                                              synthese_bytes=syn_data, synthese_name=syn_name),
-                  company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
-        return RedirectResponse("/jobs", status_code=303)
+        run_id = start_job("generate_kk",
+                           lambda ctx: run_generate_kk(ctx, company.code, establishment, date_from, date_to,
+                                                       synthese_bytes=syn_data, synthese_name=syn_name),
+                           company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
+        return _watch_fragment(run_id) if htmx else RedirectResponse("/jobs", status_code=303)
     if synthese is None:
         return RedirectResponse(f"/c/{code}/import?est={establishment}", status_code=303)
     data = synthese.file.read()
     fname = synthese.filename or "synthese.pdf"
     label = f"Cadrage + génération TOSLT · {short} · {date_from}→{date_to}"
-    start_job("generate_toslt",
-              lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data, fname),
-              company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
-    return RedirectResponse("/jobs", status_code=303)
+    run_id = start_job("generate_toslt",
+                       lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data, fname),
+                       company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))
+    return _watch_fragment(run_id) if htmx else RedirectResponse("/jobs", status_code=303)
 
 
 @router.get("/c/{code}/batch/{batch_id}/download")
@@ -387,6 +388,15 @@ def suivi_declare(request: Request, code: str, establishment: str = Form(...),
     u = current_user(request)
     caisse_suivi.declare(company.id, establishment, step, cov, undo=bool(undo),
                          user_email=(u.email if u else None))
+    if request.headers.get("HX-Request"):
+        board = caisse_suivi.build_board(company)
+        c = None
+        for row in board["steps"]:
+            if row["step"]["key"] == step:
+                c = row["cell"] if row.get("company") else (row.get("cells") or {}).get(establishment)
+                break
+        if c is not None:
+            return _suivi_fragment("cell", company, step, establishment, c)
     return RedirectResponse(f"/c/{code}/suivi", status_code=303)
 
 
@@ -635,9 +645,11 @@ def clients_sync_action(request: Request, code: str):
     company, redir = _company_or_redirect(request, code)
     if redir:
         return redir
-    start_job("sync_clients", lambda ctx: sync_clients(ctx, company.code),
-              company_id=company.id, pack="sterna.caisse", label="Synchronisation comptes clients",
-              user=current_user(request))
+    run_id = start_job("sync_clients", lambda ctx: sync_clients(ctx, company.code),
+                       company_id=company.id, pack="sterna.caisse", label="Synchronisation comptes clients",
+                       user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
     return RedirectResponse("/jobs", status_code=303)
 
 
@@ -717,6 +729,29 @@ def job_report(request: Request, run_id: int):
     fname = f"compte_rendu_{run.kind}_{run_id}.txt"
     return PlainTextResponse(run.report, headers={
         "Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+def _watch_fragment(run_id):
+    """Fragment HTMX de suivi en place d'une tâche (roue puis résultat + liens)."""
+    with Session(engine) as s:
+        run = s.get(Run, int(run_id)) if run_id else None
+        arts = set()
+        if run:
+            arts = {a.kind for a in s.exec(select(JobArtifact).where(
+                JobArtifact.run_id == run.id)).all()}
+    # job « réussi » mais qui n'a rien produit d'utile (cadrage bloqué, pré-vol) -> avertissement
+    summary = (run.summary or "") if run else ""
+    warn = bool(run and run.status == "ok"
+                and any(w in summary for w in ("non généré", "bloqué", "Bloqué", "Écart CA", "à corriger")))
+    m = templates.env.get_template("_job_watch.html").module
+    return HTMLResponse(m.watch(run, "report" in arts, "csv" in arts, warn))
+
+
+@router.get("/jobs/{run_id}/watch", response_class=HTMLResponse)
+def job_watch(request: Request, run_id: int):
+    if not current_user(request):
+        return HTMLResponse("")
+    return _watch_fragment(run_id)
 
 
 @router.get("/jobs/{run_id}/artifact/{kind}")

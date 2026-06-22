@@ -29,7 +29,9 @@ identifiant (ex. <code>SMT01</code>) en tête de pièce → supprimable d'un blo
 
 <div class="card shadow-sm" style="max-width:640px;">
   <div class="card-body">
-    <form method="post" action="/c/{{ company.code }}/generate" enctype="multipart/form-data">
+    <form method="post" action="/c/{{ company.code }}/generate" enctype="multipart/form-data"
+          hx-post="/c/{{ company.code }}/generate" hx-encoding="multipart/form-data"
+          hx-target="#gen-result" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]">
       <div class="mb-3">
         <label class="form-label small">Établissement</label>
         <select name="establishment" class="form-select" required>
@@ -52,13 +54,14 @@ identifiant (ex. <code>SMT01</code>) en tête de pièce → supprimable d'un blo
         <input type="file" name="synthese" accept="application/pdf" class="form-control" required>
         <div class="form-text" style="font-size:.7rem;">le CA généré est cadré contre ce journal de synthèse</div>
       </div>
-      <button class="btn btn-dark"><i class="bi bi-shield-check"></i>
+      <button type="submit" class="btn btn-dark"><i class="bi bi-shield-check"></i>
         {% if facture_model %}Cadrer puis générer le CSV Kookabura{% else %}Cadrer puis générer le CSV TOSLT{% endif %}</button>
       <a href="/c/{{ company.code }}" class="btn btn-outline-secondary">Annuler</a>
     </form>
+    <div id="gen-result"></div>
   </div>
 </div>
-<p class="text-muted small mt-2">La tâche tourne en arrière-plan — suis-la sur la page <a href="/jobs">Tâches</a>.</p>
+<p class="text-muted small mt-2">Le cadrage et la génération tournent ici même (le résultat s'affiche ci-dessus) ; l'historique reste sur la page <a href="/jobs">Tâches</a>.</p>
 
 {% if batches %}
 <h3 class="h6 text-uppercase text-muted mt-4">Lots générés</h3>

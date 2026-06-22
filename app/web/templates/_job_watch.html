@@ -1,0 +1,26 @@
+{# Suivi en place d'une tâche lancée depuis une page (génération, synchro…) :
+   roue qui tourne tant que ça tourne, puis résultat + liens (CR / CSV), sans aller aux Tâches. #}
+{% macro watch(run, has_report, has_csv, warn=False) -%}
+{% if (not run) or run.status == 'running' %}
+  <div class="d-flex align-items-center gap-2 p-2 border rounded bg-light mt-2"
+       hx-get="/jobs/{{ run.id }}/watch" hx-trigger="load delay:1200ms, every 2s" hx-swap="outerHTML">
+    <span class="spinner-border spinner-border-sm text-secondary" role="status" aria-hidden="true"></span>
+    <span class="small text-muted">{{ run.step or 'en cours…' }}{% if run.progress_total %} · {{ run.progress_current or 0 }}/{{ run.progress_total }}{% endif %}</span>
+  </div>
+{% else %}
+  {% set ko = run.status != 'ok' or warn %}
+  <div class="p-2 border rounded mt-2 {{ 'border-success bg-success-subtle' if not ko else ('border-danger bg-danger-subtle' if run.status=='error' else 'border-warning bg-warning-subtle') }}">
+    <div class="small">
+      {% if not ko %}<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>
+      {% elif run.status == 'error' %}<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i></span>
+      {% else %}<span class="text-warning-emphasis"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
+      {{ run.summary or run.status }}
+    </div>
+    <div class="mt-1 d-flex flex-wrap gap-2">
+      {% if has_report %}<a class="btn btn-sm btn-outline-dark py-0" href="/jobs/{{ run.id }}/artifact/report"><i class="bi bi-file-earmark-bar-graph"></i> Compte rendu</a>{% endif %}
+      {% if has_csv %}<a class="btn btn-sm btn-outline-dark py-0" href="/jobs/{{ run.id }}/artifact/csv"><i class="bi bi-filetype-csv"></i> CSV</a>{% endif %}
+      <a class="btn btn-sm btn-link py-0 text-muted" href="/jobs">détails</a>
+    </div>
+  </div>
+{% endif %}
+{%- endmacro %}

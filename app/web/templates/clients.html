@@ -27,12 +27,15 @@
 
 <div class="d-flex align-items-center mb-3">
   <h1 class="h4 mb-0">Comptes clients (pro)</h1>
-  <form method="post" action="/c/{{ company.code }}/clients/sync" class="ms-auto">
+  <form method="post" action="/c/{{ company.code }}/clients/sync" class="ms-auto"
+        hx-post="/c/{{ company.code }}/clients/sync" hx-target="#sync-result" hx-swap="innerHTML"
+        hx-disabled-elt="find button">
     <button class="btn btn-sm btn-dark"><i class="bi bi-arrow-repeat"></i> Synchroniser</button>
   </form>
 </div>
 <p class="text-muted small">Correspondance TopOrder ↔ Pennylane par SIRET. Vaelan détecte les anomalies ;
 la correction se fait dans TopOrder / Pennylane, puis on resynchronise.</p>
+<div id="sync-result" class="mb-2"></div>
 
 {% set base = '/c/' + company.code + '/clients' %}
 <div class="mb-3">
