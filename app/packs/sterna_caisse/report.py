@@ -91,8 +91,7 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
              batch_code, n_tickets, balanced, run_id=None, executed_at=None, fac_payments=None,
              fac_detail=None):
     has_csv = csv is not None
-    jcode = "TOKKT" if establishment in config.ESTABLISHMENTS_KK else "TOSLT"
-    title = (f"Compte rendu — Génération {jcode} (cadrage + CSV)"
+    title = ("Compte rendu — Cadrage + génération du CSV"
              if kind == "generate" else "Compte rendu — Cadrage caisse")
     meta = [f"Établissement : {establishment}        Période : {date_from} → {date_to}"]
     bits = []

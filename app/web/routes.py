@@ -283,7 +283,7 @@ def generate_run(request: Request, code: str,
         return RedirectResponse(f"/c/{code}/import?est={establishment}", status_code=303)
     data = synthese.file.read()
     fname = synthese.filename or "synthese.pdf"
-    label = f"Cadrage + génération TOSLT · {short} · {date_from}→{date_to}"
+    label = f"Cadrage + génération · {short} · {date_from}→{date_to}"
     run_id = start_job("generate_toslt",
                        lambda ctx: run_generate_toslt(ctx, company.code, establishment, date_from, date_to, data, fname),
                        company_id=company.id, pack="sterna.caisse", label=label, user=current_user(request))

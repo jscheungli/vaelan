@@ -68,14 +68,13 @@ identifiant (ex. <code>SMT01</code>) en tête de pièce → supprimable d'un blo
 <div class="table-responsive">
 <table class="table table-sm align-middle">
   <thead><tr class="small text-muted">
-    <th>Lot</th><th>Étab.</th><th>Journal</th><th>Période</th><th>Écritures</th><th>Montant</th><th>Statut</th><th></th>
+    <th>Lot</th><th>Étab.</th><th>Période</th><th>Écritures</th><th>Montant</th><th>Statut</th><th></th>
   </tr></thead>
   <tbody>
   {% for b in batches %}
     <tr class="small">
       <td><code>{{ b.code }}</code></td>
       <td>{{ b.establishment }}</td>
-      <td>{{ b.kind|upper }}</td>
       <td>{{ b.date_from }} → {{ b.date_to }}</td>
       <td>{{ b.n_entries or '—' }}</td>
       <td>{{ '%.2f €'|format(b.amount) if b.amount is not none else '—' }}</td>

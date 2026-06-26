@@ -120,7 +120,7 @@ def run_generate_toslt(ctx, company_code, establishment, date_from, date_to,
         rdata = report.compute("generate", establishment, date_from, date_to, syn, res, csv=csv_agg, **args)
         ctx.set_report(report.to_text(rdata))
         ctx.add_artifact("report",
-                         f"{fpfx} compte_rendu_TOSLT_{code}_{date_from}_{date_to}.pdf",
+                         f"{fpfx} compte_rendu_{code}_{date_from}_{date_to}.pdf",
                          report.to_pdf(rdata), "application/pdf")
         return bool(rdata.get("coherent"))
 
