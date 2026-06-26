@@ -55,7 +55,7 @@ identifiant (ex. <code>SMT01</code>) en tête de pièce → supprimable d'un blo
         <div class="form-text" style="font-size:.7rem;">le CA généré est cadré contre ce journal de synthèse</div>
       </div>
       <button type="submit" class="btn btn-dark"><i class="bi bi-shield-check"></i>
-        {% if facture_model %}Cadrer puis générer le CSV Kookabura{% else %}Cadrer puis générer le CSV TOSLT{% endif %}</button>
+        {% if facture_model %}Cadrer puis générer le CSV Kookabura{% else %}Cadrer puis générer le CSV{% endif %}</button>
       <a href="/c/{{ company.code }}" class="btn btn-outline-secondary">Annuler</a>
     </form>
     <div id="gen-result"></div>
