@@ -89,7 +89,12 @@ def _resolver(company_id: int, cfg: dict):
     def resolve(pfx, coid, cid):
         if coid and coid != ZERO:
             r = info.get((pfx, coid))
-            return (r.account_411, r.toporder_name or "client") if (r and r.account_411) else (None, None)
+            if r and r.account_411:
+                return r.account_411, r.toporder_name or "client"
+            ie = config.INTER_ETAB.get(coid)   # vente inter-boulangeries (établissement du groupe)
+            if ie:
+                return ie["account"], ie["name"]
+            return None, None
         if cid and cid != ZERO:
             return cfg["est"][pfx]["b2c_commun"], "Particulier"
         return None, None
@@ -98,6 +103,10 @@ def _resolver(company_id: int, cfg: dict):
         if not coid or coid == ZERO:
             return {"name": None, "siret": None, "pennylane_name": None,
                     "reason": "facture sans référence client (ni société ni particulier) côté TopOrder"}
+        ie = config.INTER_ETAB.get(coid)       # établissement du groupe (résolu en dur, pas via la synchro)
+        if ie:
+            return {"name": ie["name"], "siret": ie.get("siret"), "pennylane_name": ie["name"],
+                    "reason": "établissement du groupe (vente inter-boulangeries) — mappé"}
         r = info.get((pfx, coid))
         if r is None:
             return {"name": None, "siret": None, "pennylane_name": None,

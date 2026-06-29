@@ -34,6 +34,17 @@ ANALYTIC_CATEGORY = {"SL": "SAINT-LEU", "LP": "LA POSSESSION", "SM": "SAINTE-MAR
 with open(os.path.join(os.path.dirname(__file__), "data", "clients.json"), encoding="utf-8") as _f:
     CLIENTS = json.load(_f)
 
+# Ventes INTER-BOULANGERIES (les 3 établissements STERNA se facturent entre eux). TopOrder
+# référence ces clients par leur companyId GLOBAL sur les tickets, mais NE les liste PAS dans
+# `/ppe/contactcompany/shop` de la boulangerie vendeuse -> la synchro ne peut pas les capter.
+# On les mappe donc en dur : companyId global -> compte 411 STERNA (créé dans Pennylane, matché
+# par SIRET). Vaut pour n'importe quelle boulangerie vendeuse (le companyId est global).
+INTER_ETAB = {
+    "08dea426-64ac-4f40-8d30-fe5cc51fec58": {"account": "411100138", "name": "STERNA - O'Copain Sainte-Marie", "siret": "49219433700035"},
+    "08dea426-2813-448b-8590-949870c0adae": {"account": "411100139", "name": "STERNA - O'Copain La Possession", "siret": "49219433700050"},
+    "08dea425-1895-4263-8703-45073e145fd2": {"account": "411100141", "name": "STERNA - O'Copain Saint-Leu", "siret": "49219433700068"},
+}
+
 # ============================ KOOKABURA (société Pennylane SÉPARÉE) ============================
 # Labo interne 100% B2B : KK facture les 3 boulangeries STERNA. Modèle FACTURE (pas de caisse) :
 # CA depuis les factures (totalPriceHTByVATRate), pas les tickets. Pas d'analytique.
