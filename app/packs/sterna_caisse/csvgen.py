@@ -85,10 +85,24 @@ def _resolver(company_id: int, cfg: dict):
         rows = s.exec(select(ClientAccount).where(
             ClientAccount.company_id == company_id)).all()
     info = {(r.establishment, r.toporder_company_id): r for r in rows}
+    # Index GLOBAL par companyId : un companyId TopOrder est GLOBAL (une société = un client
+    # Pennylane = un compte 411, peu importe la boulangerie vendeuse). Si un client est synchronisé
+    # sous UNE boulangerie (ex. VIVO ENERGY sous Sainte-Marie) et qu'une AUTRE lui vend (La
+    # Possession), TopOrder ne le liste pas dans la 2e -> on retombe sur le même 411 via ce mapping.
+    by_coid = {}        # companyId -> ligne AVEC compte 411 (pour router)
+    by_coid_any = {}    # companyId -> n'importe quelle ligne (pour le diagnostic)
+    for r in rows:
+        if not r.toporder_company_id:
+            continue
+        by_coid_any.setdefault(r.toporder_company_id, r)
+        if r.account_411:
+            by_coid.setdefault(r.toporder_company_id, r)
 
     def resolve(pfx, coid, cid):
         if coid and coid != ZERO:
             r = info.get((pfx, coid))
+            if not (r and r.account_411):
+                r = by_coid.get(coid)          # même client vu sous une AUTRE boulangerie
             if r and r.account_411:
                 return r.account_411, r.toporder_name or "client"
             ie = config.INTER_ETAB.get(coid)   # vente inter-boulangeries (établissement du groupe)
@@ -107,7 +121,7 @@ def _resolver(company_id: int, cfg: dict):
         if ie:
             return {"name": ie["name"], "siret": ie.get("siret"), "pennylane_name": ie["name"],
                     "reason": "établissement du groupe (vente inter-boulangeries) — mappé"}
-        r = info.get((pfx, coid))
+        r = info.get((pfx, coid)) or by_coid_any.get(coid)   # connu sous une autre boulangerie ?
         if r is None:
             return {"name": None, "siret": None, "pennylane_name": None,
                     "reason": "client absent de la table de correspondance — resynchroniser les clients"}
