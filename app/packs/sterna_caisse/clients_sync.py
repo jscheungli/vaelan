@@ -87,17 +87,26 @@ def sync_clients(ctx, company_code="STERNA"):
             continue   # pull vide = probable erreur -> ne pas toucher aux statuts existants
         pulled.add(pfx)
         with Session(engine) as s:
-            existing = {r.toporder_company_id: r
-                        for r in s.exec(select(ClientAccount).where(
-                            ClientAccount.company_id == company.id,
-                            ClientAccount.establishment == pfx)).all()}
+            # index GLOBAL par companyId : un companyId TopOrder est GLOBAL (le même client peut
+            # être enregistré/vendu par une AUTRE boulangerie que celle du mapping historique).
+            # -> on retrouve la ligne existante quel que soit son établissement (pas de doublon)
+            # et on la rattache à la boulangerie où le client est actuellement présent.
+            existing = {}
+            for r in s.exec(select(ClientAccount).where(
+                    ClientAccount.company_id == company.id)).all():
+                cur = existing.get(r.toporder_company_id)
+                if cur is None or (r.account_411 and not cur.account_411):
+                    existing[r.toporder_company_id] = r   # en cas de doublon, garder la ligne avec un 411
             for c in comps:
                 if c.get("contactType") not in (0, "0"):
                     continue  # particuliers ignorés (compte commun)
                 coid = c["id"]
                 seen.add((pfx, coid))
-                row = existing.get(coid) or ClientAccount(
-                    company_id=company.id, establishment=pfx, toporder_company_id=coid)
+                row = existing.get(coid)
+                if row is None:
+                    row = ClientAccount(company_id=company.id, establishment=pfx, toporder_company_id=coid)
+                    existing[coid] = row
+                row.establishment = pfx        # boulangerie où le client est actuellement enregistré
                 row.toporder_name = c.get("name")
                 siret = _key(c.get("siret"))
                 row.siret = siret or None
@@ -131,17 +140,19 @@ def sync_clients(ctx, company_code="STERNA"):
                 n += 1
             s.commit()
 
-    # Réconciliation : une ligne d'un établissement BIEN lu mais jamais revue dans
-    # TopOrder ne doit pas garder un statut périmé (ex. seed « ok »). On la marque
-    # honnêtement « absent_toporder » sans toucher au mapping 411.
+    # Réconciliation : une ligne du mapping introuvable dans AUCUNE boulangerie (companyId
+    # global) est marquée « absent_toporder ». On ne le fait QUE si TOUTES les boulangeries
+    # ont été lues (sinon un client d'un shop non lu serait marqué absent à tort).
+    seen_coids = {coid for (_pfx, coid) in seen}
+    all_pulled = len(pulled) == len(config.establishments(company_code))
     reconciled = 0
     with Session(engine) as s:
         for r in s.exec(select(ClientAccount).where(
                 ClientAccount.company_id == company.id)).all():
-            if r.establishment in pulled and (r.establishment, r.toporder_company_id) not in seen:
+            if all_pulled and r.toporder_company_id not in seen_coids:
                 if r.status != "absent_toporder":
                     r.status = "absent_toporder"
-                    r.note = "présent dans le mapping mais introuvable dans TopOrder"
+                    r.note = "introuvable dans TopOrder (aucune boulangerie) — client d'une autre société ou supprimé"
                     r.updated_at = datetime.utcnow()
                     s.add(r)
                     reconciled += 1
