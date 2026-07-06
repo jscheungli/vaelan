@@ -75,6 +75,18 @@ def role_for(user: User, company: Company) -> Optional[str]:
 _FULL = {"suivi", "jobs", "clients", "paiements", "config"}
 _ALL = _FULL | {"salaires"}
 
+# Sociétés « paie seule » : elles n'ont NI caisse NI clients TopOrder — uniquement les
+# comptes 421 (module Salaires). On n'y expose donc QUE la feature « salaires », même pour
+# l'admin (sinon on pourrait lancer une génération caisse avec une config qui n'existe pas).
+_PAIE_ONLY = {"PP126.23"}
+
+
+def company_features(company_code: Optional[str]) -> set:
+    """Fonctionnalités réellement disponibles sur cette société."""
+    if company_code in _PAIE_ONLY:
+        return {"salaires"}
+    return set(_ALL)
+
 
 def features_for(role: Optional[str], is_superuser: bool = False) -> set:
     if is_superuser:
@@ -91,6 +103,8 @@ def features_for(role: Optional[str], is_superuser: bool = False) -> set:
 def can(user: Optional[User], company: Company, feature: str) -> bool:
     """L'utilisateur a-t-il accès à cette fonctionnalité sur cette société ?"""
     if not user:
+        return False
+    if feature not in company_features(company.code):   # la société n'expose pas cette feature
         return False
     if user.is_superuser:
         return True

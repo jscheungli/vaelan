@@ -160,9 +160,17 @@ class PennylaneClient:
             return {"ok": False, "error": str(e)[:120]}
 
 
+def _env_key(code: str) -> str:
+    """Code société -> fragment de nom de variable d'env valide (les points/tirets/espaces
+    deviennent « _ » : « PP126.23 » -> « PP126_23 »)."""
+    import re
+    return re.sub(r"[^A-Z0-9]", "_", code.upper())
+
+
 def for_company(code: str) -> Optional[PennylaneClient]:
-    token = os.getenv(f"PENNYLANE_{code.upper()}_TOKEN")
+    key = _env_key(code)
+    token = os.getenv(f"PENNYLANE_{key}_TOKEN")
     if not token:
         return None
-    base = os.getenv(f"PENNYLANE_{code.upper()}_BASEURL", DEFAULT_BASEURL)
+    base = os.getenv(f"PENNYLANE_{key}_BASEURL", DEFAULT_BASEURL)
     return PennylaneClient(token, base)

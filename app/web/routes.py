@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.core.db import engine
 from app.core.config import APP_VERSION, APP_COMMIT
-from app.core.security import authenticate, current_user, user_companies, role_for, can, features_for
+from app.core.security import authenticate, current_user, user_companies, role_for, can, features_for, company_features
 from app.core import registry
 from app.core.connectors import pennylane
 from app.core.jobs import start_job, demo_job
@@ -190,7 +190,7 @@ def dashboard(request: Request, code: str):
         company = s.exec(select(Company).where(Company.code == code)).first()
     if not company or role_for(user, company) is None:
         return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
-    feats = features_for(role_for(user, company), user.is_superuser)
+    feats = features_for(role_for(user, company), user.is_superuser) & company_features(company.code)
     tiles = [{"label": l, "icon": ic, "href": h.format(code=code), "desc": d}
              for f, l, ic, h, d in _TILES if f in feats]
     return templates.TemplateResponse(request, "company_home.html",
