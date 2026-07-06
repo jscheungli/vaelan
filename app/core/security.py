@@ -68,13 +68,19 @@ def role_for(user: User, company: Company) -> Optional[str]:
 
 
 # ---- Permissions par fonctionnalité (rôle -> features) ----
-# Deux personas : « comptable » (tout) et « gestion » (= personne TopOrder : Clients + Paiements).
+# Personas : « comptable » (compta courante), « gestion » (= personne TopOrder : Clients +
+# Paiements), « salaires » (comptable PAIE, dédiée : voit UNIQUEMENT les comptes 421 salariés).
+# La paie est ISOLÉE : ni « gestion » ni « comptable » ne la voient — seule la rôle « salaires »
+# (et l'admin/superuser pour supervision).
 _FULL = {"suivi", "jobs", "clients", "paiements", "config"}
+_ALL = _FULL | {"salaires"}
 
 
 def features_for(role: Optional[str], is_superuser: bool = False) -> set:
     if is_superuser:
-        return set(_FULL)
+        return set(_ALL)
+    if role == "salaires":
+        return {"salaires"}
     if role in ("gestion", "viewer"):
         return {"clients", "paiements"}
     if role in ("comptable", "admin", "operator"):

@@ -20,6 +20,7 @@ from app.packs.sterna_caisse.verify import run_verify
 from app.packs.sterna_caisse.justificatifs import run_justificatifs
 from app.packs.sterna_caisse.lettrage import run_lettrage
 from app.packs.sterna_caisse import payments as caisse_payments
+from app.packs.sterna_caisse import salaires as caisse_salaires
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -31,6 +32,7 @@ def _ctx(request: Request, **extra):
     base = {
         "app_name": "Vaelan", "user": u,
         "can_jobs": _can_jobs(u),       # pour masquer « Tâches » dans la nav selon le rôle
+        "can_regles": _has_general_access(u),   # « Règles » masquée pour la comptable paie pure
         "version": APP_VERSION, "commit": APP_COMMIT,
     }
     base.update(extra)
@@ -76,8 +78,11 @@ def _require_super(request):
 
 @router.get("/regles", response_class=HTMLResponse)
 def regles(request: Request):
-    if not current_user(request):
+    u = current_user(request)
+    if not u:
         return RedirectResponse("/login", status_code=303)
+    if not _has_general_access(u):    # comptable paie pure -> pas d'accès à la méthodo compta courante
+        return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
     return templates.TemplateResponse(request, "regles.html", _ctx(request))
 
 
@@ -169,6 +174,8 @@ _TILES = [
      "Encours par client, grand-livre Pennylane, rapprochement des règlements."),
     ("config", "Configuration", "bi-gear", "/c/{code}/config",
      "Comptes, journaux et catégories analytiques de la société."),
+    ("salaires", "Salaires", "bi-person-vcard", "/c/{code}/salaires",
+     "Comptes 421 des salariés : grand-livre par salarié, navigation par exercice."),
     ("jobs", "Tâches", "bi-list-task", "/jobs",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
@@ -212,6 +219,8 @@ def _feature_from_path(path: str):
     """Déduit la fonctionnalité gardée d'après l'URL (gating automatique par rôle)."""
     if "/config" in path:
         return "config"
+    if "/salaires" in path:
+        return "salaires"
     if "/paiements" in path:
         return "paiements"
     if "/clients" in path:
@@ -597,6 +606,41 @@ def suivi_reset(request: Request, code: str, establishment: str = Form(...)):
     return RedirectResponse(f"/c/{code}", status_code=303)
 
 
+# ----------------------------- Salaires (comptes 421, rôle « salaires ») -----------------------------
+@router.get("/c/{code}/salaires", response_class=HTMLResponse)
+def salaires_list(request: Request, code: str, q: str = ""):
+    company, redir = _company_or_redirect(request, code)   # feature « salaires » déduite de l'URL
+    if redir:
+        return redir
+    try:
+        accounts = caisse_salaires.list_accounts(company.code)
+        err = None
+    except Exception as e:
+        accounts, err = [], str(e)[:200]
+    if q:
+        ql = q.lower()
+        accounts = [a for a in accounts if ql in (a["label"] or "").lower() or ql in a["number"]]
+    return templates.TemplateResponse(request, "salaires.html",
+                                      _ctx(request, company=company, accounts=accounts, q=q, err=err,
+                                           role=role_for(current_user(request), company)))
+
+
+@router.get("/c/{code}/salaires/{account}", response_class=HTMLResponse)
+def salaires_compte(request: Request, code: str, account: str, ex: str = "",
+                    q: str = "", lett: list = Query(default=[]), jr: list = Query(default=[])):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    ledger, err = None, None
+    try:
+        ledger = caisse_payments.account_ledger(company.code, account, ex=ex or None)
+    except Exception as e:
+        err = str(e)[:200]
+    return templates.TemplateResponse(request, "salaires_compte.html",
+                                      _ctx(request, company=company, account=account,
+                                           ledger=ledger, err=err, q=q, lett=lett, jr=jr))
+
+
 # ----------------------------- Clients (correspondance) -----------------------------
 @router.get("/c/{code}/clients", response_class=HTMLResponse)
 def clients_page(request: Request, code: str, q: str = "", etab: str = "",
@@ -661,6 +705,19 @@ def _can_jobs(user) -> bool:
     if user.is_superuser:
         return True
     return any(can(user, c, "jobs") for c in user_companies(user))
+
+
+def _has_general_access(user) -> bool:
+    """A-t-il au moins une fonctionnalité HORS paie (pour la nav Règles) ? Un utilisateur
+    « salaires » pur ne voit que la paie — pas la page Règles (méthodologie compta courante)."""
+    if not user:
+        return False
+    if user.is_superuser:
+        return True
+    feats = set()
+    for c in user_companies(user):
+        feats |= features_for(role_for(user, c))
+    return bool(feats - {"salaires"})
 
 
 @router.get("/jobs", response_class=HTMLResponse)

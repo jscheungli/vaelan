@@ -32,6 +32,7 @@
               <option value="" {{ 'selected' if not cur }}>—</option>
               <option value="comptable" {{ 'selected' if cur in ('comptable','admin','operator') }}>comptable (tout)</option>
               <option value="gestion" {{ 'selected' if cur in ('gestion','viewer') }}>gestion (Clients + Paiements)</option>
+              <option value="salaires" {{ 'selected' if cur == 'salaires' }}>salaires (paie — comptes 421 uniquement)</option>
             </select>
           </form>
           {% endif %}
@@ -59,5 +60,7 @@
   <div class="col-12"><button class="btn btn-sm btn-dark"><i class="bi bi-person-plus"></i> Créer</button></div>
 </form>
 <p class="text-muted small mt-2">« — » = aucun accès. <strong>comptable</strong> = toutes les fonctionnalités (suivi, tâches, config, clients, paiements) ;
-  <strong>gestion</strong> (personne TopOrder) = Clients + Paiements uniquement. Le superadmin a accès à toutes les sociétés.</p>
+  <strong>gestion</strong> (personne TopOrder) = Clients + Paiements uniquement ;
+  <strong>salaires</strong> (comptable paie) = <strong>uniquement</strong> les comptes 421 des salariés (rien d'autre).
+  Le superadmin a accès à toutes les sociétés.</p>
 {% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Salaires (421) · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Salaires</li>
+</ol></nav>
+
+<div class="d-flex align-items-center mb-1 flex-wrap gap-2">
+  <h1 class="h4 mb-0">Comptes salariés (421)</h1>
+  {% if role %}<span class="badge text-bg-secondary">{{ role }}</span>{% endif %}
+</div>
+<p class="text-muted small">Comptes <strong>421</strong> (personnel — rémunérations dues) de {{ company.name }}.
+  Clique un salarié pour voir le grand-livre détaillé, navigable <strong>par exercice</strong>. Consultation seule.</p>
+
+{% if err %}<div class="alert alert-danger small">Lecture Pennylane impossible : {{ err }}</div>{% endif %}
+
+<form method="get" class="row g-2 mb-2 align-items-center">
+  <div class="col-auto"><input type="search" name="q" value="{{ q }}" class="form-control form-control-sm"
+       placeholder="Rechercher (nom / n° de compte)…" style="width:280px;"></div>
+  <div class="col-auto"><button class="btn btn-sm btn-outline-dark">Filtrer</button>
+    {% if q %}<a href="/c/{{ company.code }}/salaires" class="btn btn-sm btn-link text-muted">réinitialiser</a>{% endif %}</div>
+  <div class="col-auto ms-auto small text-muted">{{ accounts|length }} compte(s)</div>
+</form>
+
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle">
+  <thead><tr class="small text-muted">
+    <th style="width:160px;">N° de compte</th><th>Salarié</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for a in accounts %}
+    <tr class="small">
+      <td><code>{{ a.number }}</code></td>
+      <td><a href="/c/{{ company.code }}/salaires/{{ a.number }}" class="text-decoration-none fw-semibold">{{ a.label or a.number }}</a></td>
+      <td class="text-end"><a href="/c/{{ company.code }}/salaires/{{ a.number }}" class="btn btn-sm btn-outline-dark py-0"><i class="bi bi-eye"></i> Grand-livre</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3" class="text-muted small">Aucun compte 421 trouvé.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
