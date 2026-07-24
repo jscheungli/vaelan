@@ -147,10 +147,21 @@ def run_achats_kk(ctx):
     invoices = _kk_invoices(date_from, date_to)
     ctx.log(f"{len(invoices)} facture(s) KK vers les boulangeries sur la période")
 
+    # pré-lecture des références déjà côté STERNA : on saute ces factures AVANT de
+    # télécharger/téléverser quoi que ce soit (pas de pièce jointe orpheline à la relance).
+    try:
+        known = {si.get("external_reference") for si in pl.supplier_invoices(supplier_id=supplier_id)
+                 if si.get("external_reference")}
+    except Exception:
+        known = set()
+
     pushed, already, errors = [], [], []
     for i, f in enumerate(invoices):
         ctx.progress(i, len(invoices), step=f"facture F{f['fnum']} ({i + 1}/{len(invoices)})…")
         ref = _REF.format(gid=f["gid"])
+        if ref in known:
+            already.append(f)
+            continue
         pdf = _download_pdf(f["gid"])
         if pdf is None:
             errors.append({**f, "why": "PDF TopOrder introuvable"})
