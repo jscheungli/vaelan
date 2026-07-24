@@ -125,14 +125,19 @@ def run_achats_kk(ctx):
             ImportBatch.company_id == kk.id, ImportBatch.kind == "toslt")).all()
     if not batches:
         return "Rien à faire — aucun lot KK généré"
+    # période = TOUT ce qui a été généré (min -> max des lots), PAS seulement le dernier lot :
+    # l'envoi est idempotent (external_reference), donc couvrir large est sans risque et
+    # garantit qu'un mois généré avant la mise en place de cette étape (ex. juin) est rattrapé.
     latest = max(batches, key=lambda b: (b.created_at or datetime.min, b.id))
-    date_from, date_to = latest.date_from.isoformat(), latest.date_to.isoformat()
-    label = f"{latest.date_from.strftime('%d/%m/%Y')} → {latest.date_to.strftime('%d/%m/%Y')}"
+    d_from = min(b.date_from for b in batches)
+    d_to = max(b.date_to for b in batches)
+    date_from, date_to = d_from.isoformat(), d_to.isoformat()
+    label = f"{d_from.strftime('%d/%m/%Y')} → {d_to.strftime('%d/%m/%Y')}"
 
     pl = pennylane.for_company("STERNA")
     if not pl:
         raise RuntimeError("clé Pennylane STERNA absente")
-    ctx.log(f"Factures d'achat KK → STERNA · période {label} (dernier lot {latest.code})")
+    ctx.log(f"Factures d'achat KK → STERNA · période {label} (tous les lots générés, jusqu'à {latest.code})")
     supplier_id = _kk_supplier_id(pl)
     if not supplier_id:
         raise RuntimeError("fournisseur KOOKABURA introuvable dans le Pennylane STERNA")
@@ -158,7 +163,9 @@ def run_achats_kk(ctx):
         lines = []
         for r, h in sorted(f["perrate"].items()):
             t = round(h * float(r) / 100, 2)
-            lines.append({"currency_amount": f"{h:.2f}", "currency_tax": f"{t:.2f}",
+            # currency_amount de LIGNE = TTC (vérifié : l'API exige Σ lignes = total TTC ;
+            # la doc dit « HT » mais renvoie 422 sinon). currency_tax = la TVA de la ligne.
+            lines.append({"currency_amount": f"{round(h + t, 2):.2f}", "currency_tax": f"{t:.2f}",
                           "vat_rate": _VAT.get(r, "exempt")})
         body = {
             "file_attachment_id": fid, "supplier_id": supplier_id,
@@ -246,7 +253,7 @@ def run_achats_kk(ctx):
         d.verified_at = now
         d.verify_ok = coherent
         d.verify_run_id = ctx.run_id
-        d.covered_to = latest.date_to
+        d.covered_to = d_to
         d.state = "verified" if coherent else "declared"
         d.updated_at = datetime.utcnow()
         s.add(d)
