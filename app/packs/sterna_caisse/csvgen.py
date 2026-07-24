@@ -614,9 +614,11 @@ def build_kk(establishment, date_from, date_to, company_id, batch_code, company_
             tacc = tva_acc.get(f"{p:g}")
             if abs(tva) >= 0.005 and tacc:
                 if tva >= 0:
-                    rows.append([date, jt, tacc, "TVA collectée", f"TVA {rl} · {nm}", rl, pieceT, "", f"{tva:.2f}", "", "", ""])
+                    # taux VIDE sur la ligne du compte de TVA (445…) : Pennylane refuse un taux
+                    # sur ces comptes (INVALID_PLAN_ITEM_VAT_RATE) — même convention que STERNA.
+                    rows.append([date, jt, tacc, "TVA collectée", f"TVA {rl} · {nm}", "", pieceT, "", f"{tva:.2f}", "", "", ""])
                 else:
-                    rows.append([date, jt, tacc, "TVA collectée", f"Avoir TVA {rl} · {nm}", rl, pieceT, f"{-tva:.2f}", "", "", "", ""])
+                    rows.append([date, jt, tacc, "TVA collectée", f"Avoir TVA {rl} · {nm}", "", pieceT, f"{-tva:.2f}", "", "", "", ""])
                 tva_by_rate[f"{p:g}"] += tva
             ent_ht += h2
             ent_tva += tva
