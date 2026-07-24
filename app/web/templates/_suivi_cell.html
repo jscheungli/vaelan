@@ -51,6 +51,13 @@
                 hx-target="#{{ wid }}" hx-swap="innerHTML"><i class="bi bi-paperclip"></i> Attacher</button>
         {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
       </div>
+    {% elif c.act == 'achats' %}
+      <div class="d-flex align-items-center gap-1 mt-1">
+        <button class="btn btn-outline-dark btn-sm py-0" style="font-size:.72rem;" title="Pousser les factures KK vers STERNA en factures d'achat à saisir, puis cadrer (sans quitter la page)"
+                hx-post="/c/{{ company.code }}/suivi/achats-kk"
+                hx-target="#{{ wid }}" hx-swap="innerHTML"><i class="bi bi-send"></i> Envoyer vers STERNA</button>
+        {% if c.run_id %}<a href="/jobs/{{ c.run_id }}/artifact/report" class="small" title="Compte rendu (PDF)"><i class="bi bi-file-earmark-bar-graph"></i></a>{% endif %}
+      </div>
     {% elif c.act == 'lettrage' %}
       <form hx-post="/c/{{ company.code }}/suivi/lettrage" hx-target="#{{ wid }}" hx-swap="innerHTML"
             class="d-flex align-items-center gap-1 mt-1">

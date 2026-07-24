@@ -24,7 +24,12 @@ STEPS = [
     {"n": "4", "key": "verify_tickets", "label": "Cadrage de l'import par Vaelan", "kind": "verify"},
     {"n": "5", "key": "justificatifs", "label": "Attache des justificatifs (PDF factures) par Vaelan", "kind": "justif"},
     {"n": "6", "key": "lettrage", "label": "Lettrage des comptes 411 (niveau société)", "kind": "lettrage", "scope": "company"},
-    {"n": "7", "key": "recon_caisse", "label": "Lettrage caisse/CB ↔ dépôts bancaires (à venir)", "kind": "soon"},
+    # étape 7 KOOKABURA uniquement : ses factures de vente deviennent des factures d'ACHAT
+    # côté STERNA (fournisseur KOOKABURA, « à saisir »), avec cadrage.
+    {"n": "7", "key": "achats_kk", "label": "Factures d'achat → STERNA (à saisir) + cadrage",
+     "kind": "achats", "scope": "company", "facture_only": True},
+    {"n": "7", "key": "recon_caisse", "label": "Lettrage caisse/CB ↔ dépôts bancaires (à venir)",
+     "kind": "soon", "caisse_only": True},
 ]
 
 
@@ -63,8 +68,13 @@ def build_board(company):
     # colonnes : SM, LP, SL (de gauche à droite) — ordre de la config
     ests = [e["pfx"] for e in config.establishments(company.code).values()]
     today = (datetime.utcnow() + _TZ).date()
+    facture = config.is_facture_model(company.code)
     rows = []
     for stp in STEPS:
+        if stp.get("facture_only") and not facture:
+            continue                      # étape réservée au modèle facture (KK)
+        if stp.get("caisse_only") and facture:
+            continue                      # étape caisse sans objet pour KK
         if stp.get("scope") == "company":
             # étape au niveau société : une seule cellule (comptes 411 partagés)
             c = _cell(stp, "", clients, batches, decls, last_sync, target)
@@ -149,6 +159,22 @@ def _cell(stp, pfx, clients, batches, decls, last_sync, target):
         else:
             cell["state"] = "todo"
             cell["text"] = "à attacher"
+        return cell
+
+    if kind == "achats":
+        d = decls.get((pfx, stp["key"]))   # pfx == "" (niveau société)
+        cell = {"act": "achats", "run_id": (d.verify_run_id if d else None)}
+        if d and d.verified_at is not None:
+            cell["coverage"] = _date(d.covered_to)
+            cell["realized"] = _dl(d.verified_at)
+            if not d.verify_ok:
+                cell["state"], cell["text"] = "error", "erreurs / manquantes"
+            else:
+                cell["state"] = _cov_state(d.covered_to, target)
+                cell["text"] = "complet" if cell["state"] == "done" else "à relancer (mois à clôturer)"
+        else:
+            cell["state"] = "todo"
+            cell["text"] = "à envoyer"
         return cell
 
     if kind == "lettrage":

@@ -151,6 +151,59 @@ class PennylaneClient:
             return True
         return False
 
+    def import_supplier_invoice(self, body: dict):
+        """Importe une FACTURE FOURNISSEUR (POST /supplier_invoices/import) : la pièce doit
+        déjà être téléversée (file_attachment_id). Renvoie (statut, réponse|texte) —
+        409 = external_reference déjà importée (idempotence, pas une erreur)."""
+        import json as _json
+        h = {**self._h, "Content-Type": "application/json"}
+        for attempt in range(6):
+            with httpx.Client(timeout=90) as c:
+                r = c.post(self.base_url + "/supplier_invoices/import", headers=h,
+                           content=_json.dumps(body).encode())
+            if r.status_code == 429 and attempt < 5:
+                wait = float(r.headers.get("Retry-After") or 0) or (1.5 * (attempt + 1))
+                time.sleep(min(wait, 10))
+                continue
+            try:
+                payload = r.json()
+            except Exception:
+                payload = r.text[:300]
+            return r.status_code, payload
+        return 429, "rate-limited"
+
+    def supplier_invoices(self, supplier_id=None):
+        """Liste les factures fournisseur (filtrées par fournisseur si possible ;
+        repli : pagination complète + filtre côté client)."""
+        import json as _json
+        flt = None
+        if supplier_id:
+            flt = _json.dumps([{"field": "supplier_id", "operator": "eq", "value": supplier_id}])
+        out, cur = [], None
+        use_filter = flt is not None
+        while True:
+            params = {"limit": 100}
+            if cur:
+                params["cursor"] = cur
+            if use_filter:
+                params["filter"] = flt
+            try:
+                d = self.get("/supplier_invoices", **params)
+            except Exception:
+                if use_filter:          # filtre non supporté -> repli sans filtre
+                    use_filter, cur = False, None
+                    out = []
+                    continue
+                raise
+            items = d.get("items") or []
+            if supplier_id and not use_filter:
+                items = [i for i in items if (i.get("supplier") or {}).get("id") == supplier_id]
+            out += items
+            if not d.get("has_more"):
+                break
+            cur = d.get("next_cursor")
+        return out
+
     def health(self) -> dict:
         """Vérifie que le token répond (lecture d'une ressource légère)."""
         try:

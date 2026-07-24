@@ -19,6 +19,7 @@ from app.packs.sterna_caisse import suivi as caisse_suivi
 from app.packs.sterna_caisse.verify import run_verify
 from app.packs.sterna_caisse.justificatifs import run_justificatifs
 from app.packs.sterna_caisse.lettrage import run_lettrage
+from app.packs.sterna_caisse.achats_kk import run_achats_kk
 from app.packs.sterna_caisse import payments as caisse_payments
 from app.packs.sterna_caisse import salaires as caisse_salaires
 
@@ -480,6 +481,20 @@ def suivi_cell(request: Request, code: str, step: str, run: str = "", est: str =
         html += (f'<div class="text-danger mt-1" style="font-size:.68rem;">'
                  f'<i class="bi bi-exclamation-triangle"></i> {why} — voir <a href="/jobs">Tâches</a></div>')
     return HTMLResponse(html)
+
+
+@router.post("/c/{code}/suivi/achats-kk")
+def suivi_achats_kk(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    if not caisse_config.is_facture_model(company.code):
+        return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
+    label = f"Factures d'achat KK → STERNA · {company.name}"
+    run_id = start_job("achats_kk", lambda ctx: run_achats_kk(ctx),
+                       company_id=company.id, pack="sterna.caisse", label=label,
+                       user=current_user(request))
+    return _suivi_inplace(request, company, "achats_kk", "", run_id)
 
 
 @router.post("/c/{code}/suivi/lettrage")

@@ -493,6 +493,85 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
                            batch_code, n_tickets, balanced, run_id, executed_at, fac_payments, fac_detail))
 
 
+def achats_pdf(title_scope, period_label, counts, pushed, already, errors, missing,
+               coherent, run_id=None, executed_at=None) -> bytes:
+    """Compte rendu PDF de l'étape 7 KK (factures d'achat KOOKABURA -> STERNA)."""
+    def _ascii(s):
+        return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
+                .replace("œ", "oe").replace("…", "...").replace("⚠️", "!").replace("✅", "OK"))
+    doc = fitz.open()
+    state = {"y": 56, "page": doc.new_page()}
+    W = state["page"].rect.width
+    x0 = 40
+
+    def left(x, s, size=9, font="helv", color=_DARK):
+        state["page"].insert_text((x, state["y"]), _ascii(s), fontsize=size, fontname=font, color=color)
+
+    def right(xr, s, size=9, font="cour", color=_DARK):
+        s = _ascii(s)
+        state["page"].insert_text((xr - fitz.get_text_length(s, fontname=font, fontsize=size), state["y"]),
+                                  s, fontsize=size, fontname=font, color=color)
+
+    def ny(d):
+        state["y"] += d
+
+    def ensure(space=18):
+        if state["y"] + space > 800:
+            state["page"] = doc.new_page()
+            state["y"] = 56
+
+    def section(name, color=(0.15, 0.15, 0.22)):
+        ensure(30)
+        state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, W - 40, state["y"] + 4), fill=_BAR, color=_BAR)
+        left(x0 + 3, name, 10, "hebo", color); ny(16)
+
+    left(x0, "Compte rendu · Factures d'achat KOOKABURA -> STERNA", 14, "hebo"); ny(18)
+    left(x0, f"{title_scope}        {period_label}", 9, "helv", (0.3, 0.3, 0.3)); ny(13)
+    trace = []
+    if run_id is not None:
+        trace.append(f"Tâche #{run_id}")
+    if executed_at:
+        trace.append(f"Vérifié le {executed_at}")
+    if trace:
+        left(x0, "        ".join(trace), 9, "helv", (0.3, 0.3, 0.3)); ny(13)
+    ny(8)
+
+    section("Synthèse")
+    for lbl, v in [("Factures KK de la période", f"{counts['total']}  ({counts['ttc']:.2f} EUR TTC)"),
+                   ("Poussées (nouvelles)", counts["pushed"]),
+                   ("Déjà présentes (idempotence)", counts["already"]),
+                   ("En erreur", counts["errors"]),
+                   ("Manquantes côté STERNA", counts["missing"])]:
+        ensure()
+        left(x0 + 4, lbl, 9); right(W - 60, str(v)); ny(14)
+    ny(6)
+
+    def _facrows(name, rows, color=_DARK):
+        if not rows:
+            return
+        section(name, color)
+        for f in rows:
+            ensure(13)
+            left(x0 + 4, f"F{f['fnum']:07d}", 9, "cour"); left(x0 + 80, str(f.get("date") or ""), 8, "cour")
+            left(x0 + 160, str(f.get("client") or "")[:30], 9)
+            if f.get("why"):
+                left(x0 + 330, str(f["why"])[:30], 8, "helv", _RED)
+            right(W - 60, f"{f['ttc']:.2f}"); ny(13)
+        ny(6)
+
+    _facrows("Poussées vers STERNA (factures à saisir)", pushed, _GREEN)
+    _facrows("Déjà présentes", already)
+    _facrows("Erreurs", errors, _RED)
+    _facrows("Manquantes côté STERNA", missing, _RED)
+
+    ensure(30)
+    col = _GREEN if coherent else _RED
+    state["page"].draw_rect(fitz.Rect(x0, state["y"] - 9, W - 40, state["y"] + 6), fill=col, color=col)
+    left(x0 + 4, ("COMPLET · toutes les factures KK de la période sont côté STERNA (à saisir)."
+                  if coherent else "INCOMPLET · voir erreurs / manquantes."), 10, "hebo", (1, 1, 1))
+    return doc.tobytes()
+
+
 def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
                  ambiguous, open_creances, errors, coherent, unmatched_vir=None,
                  run_id=None, executed_at=None) -> bytes:
