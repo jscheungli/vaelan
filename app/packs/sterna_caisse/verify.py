@@ -55,9 +55,18 @@ def _expected_by_account(company_id, pfx, start, end):
                 d = row[0]
                 if not (start.isoformat() <= d <= end.isoformat()):
                     continue
-                acc = row[2]
+                acc = _radical(row[2])
                 net[acc] += float(row[8] or 0) - float(row[7] or 0)   # crédit − débit
     return {a: round(v, 2) for a, v in net.items()}, used, missing
+
+
+def _radical(acc):
+    """Numéro de compte NORMALISÉ à la façon Pennylane : les zéros finaux sont ignorés
+    (« 411100100 » ≡ « 4111001 » ; Pennylane pad/tronque les zéros finaux à l'import).
+    On ne descend pas sous 4 caractères pour ne pas écraser les comptes courts."""
+    s = str(acc or "")
+    r = s.rstrip("0")
+    return r if len(r) >= 4 else s
 
 
 def _aggregates(net, cfg, pfx):
@@ -105,7 +114,7 @@ def _actual_by_account(pl, journal_ids, start, end):
                 acc = (l.get("ledger_account") or {}).get("number")
                 if not acc:
                     continue
-                net[acc] += float(l.get("credit") or 0) - float(l.get("debit") or 0)
+                net[_radical(acc)] += float(l.get("credit") or 0) - float(l.get("debit") or 0)
     return {a: round(v, 2) for a, v in net.items()}, n
 
 

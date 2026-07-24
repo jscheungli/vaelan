@@ -56,7 +56,9 @@ JOURNALS_KK = {"KK": {"tickets": 84717481984, "factures": 84717486080}}  # TOKKT
 # 2026-07-24) : toutes les ventes KK au groupe vont au MÊME 411 côté KOOKABURA, miroir du
 # fournisseur KOOKABURA côté STERNA -> la réciprocité client/fournisseur se cadre d'un regard.
 # Le nom par boulangerie est conservé pour les LIBELLÉS de lignes (détail préservé).
-KK_STERNA_ACCOUNT = "411100100"
+# NB : Pennylane IGNORE les zéros finaux des numéros de compte (« radical ») — un import
+# en « 411100100 » a créé le compte « 4111001 ». On adopte donc le radical comme canonique.
+KK_STERNA_ACCOUNT = "4111001"
 CLIENTS_KK = {"b2b": {
     "KK:08dea426-2813-448b-8590-949870c0adae": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN LA POSSESSION"},
     "KK:08dea426-64ac-4f40-8d30-fe5cc51fec58": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN SAINTE-MARIE"},
