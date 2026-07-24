@@ -494,7 +494,7 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
 
 
 def achats_pdf(title_scope, period_label, counts, pushed, already, errors, missing,
-               coherent, run_id=None, executed_at=None) -> bytes:
+               coherent, recip=None, run_id=None, executed_at=None) -> bytes:
     """Compte rendu PDF de l'étape 7 KK (factures d'achat KOOKABURA -> STERNA)."""
     def _ascii(s):
         return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
@@ -558,6 +558,26 @@ def achats_pdf(title_scope, period_label, counts, pushed, already, errors, missi
                 left(x0 + 330, str(f["why"])[:30], 8, "helv", _RED)
             right(W - 60, f"{f['ttc']:.2f}"); ny(13)
         ny(6)
+
+    if recip:
+        section("Réciprocité client / fournisseur")
+        for lbl, v in [("Factures TopOrder (période)", recip.get("topo")),
+                       ("Achats KOOKABURA côté STERNA", recip.get("sterna")),
+                       ("Compte client STERNA côté KK (TOKKT)", recip.get("kk411"))]:
+            ensure()
+            left(x0 + 4, lbl, 9)
+            right(W - 60, (f"{v:.2f}" if isinstance(v, float) else "?"),
+                  color=(_DARK if isinstance(v, float) else _RED))
+            ny(14)
+        if recip.get("note"):
+            ensure()
+            left(x0 + 4, recip["note"], 8, "helv", _RED); ny(13)
+        ensure()
+        ok = recip.get("ok")
+        left(x0 + 4, ("RÉCIPROQUE · les trois montants sont identiques" if ok
+                      else "ÉCART · les montants ne se recoupent pas"), 9, "hebo",
+             (_GREEN if ok else _RED))
+        ny(16)
 
     _facrows("Poussées vers STERNA (factures à saisir)", pushed, _GREEN)
     _facrows("Déjà présentes", already)

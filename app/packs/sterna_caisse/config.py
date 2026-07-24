@@ -52,12 +52,18 @@ ESTABLISHMENTS_KK = {
     "KOOKABURA": {"pfx": "KK", "shop_id": "08de7f5f-18c7-4c5c-8547-3102b7617acd"},
 }
 JOURNALS_KK = {"KK": {"tickets": 84717481984, "factures": 84717486080}}  # TOKKT, TOKKF
-# Clients B2B = les 3 boulangeries (companyId KK -> compte 411 dans la société KOOKABURA)
+# Clients B2B = les 3 boulangeries. COMPTE CLIENT UNIQUE « STERNA (groupe) » (décision user
+# 2026-07-24) : toutes les ventes KK au groupe vont au MÊME 411 côté KOOKABURA, miroir du
+# fournisseur KOOKABURA côté STERNA -> la réciprocité client/fournisseur se cadre d'un regard.
+# Le nom par boulangerie est conservé pour les LIBELLÉS de lignes (détail préservé).
+KK_STERNA_ACCOUNT = "411100100"
 CLIENTS_KK = {"b2b": {
-    "KK:08dea426-2813-448b-8590-949870c0adae": {"account": "411100022", "name": "OCOPAIN LA POSSESSION"},
-    "KK:08dea426-64ac-4f40-8d30-fe5cc51fec58": {"account": "411100019", "name": "OCOPAIN SAINTE-MARIE"},
-    "KK:08dea425-1895-4263-8703-45073e145fd2": {"account": "411100021", "name": "OCOPAIN SAINT-LEU"},
+    "KK:08dea426-2813-448b-8590-949870c0adae": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN LA POSSESSION"},
+    "KK:08dea426-64ac-4f40-8d30-fe5cc51fec58": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN SAINTE-MARIE"},
+    "KK:08dea425-1895-4263-8703-45073e145fd2": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN SAINT-LEU"},
 }, "b2c_commun": {}}
+# Libellés d'affichage des comptes REGROUPÉS (création auto à l'import CSV + lettrage/rapports)
+ACCOUNT_LABELS = {KK_STERNA_ACCOUNT: "STERNA (groupe)"}
 
 _FACTURE_COMPANIES = {"KOOKABURA"}   # sociétés au modèle « facture » (pas de caisse)
 

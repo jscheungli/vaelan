@@ -201,12 +201,14 @@ def run_achats_kk(ctx):
 
     # ---- cadrage : tout TopOrder de la période doit être côté STERNA ----
     ctx.progress(len(invoices), len(invoices), step="cadrage STERNA…")
-    refs_pl = set()
+    refs_pl, sterna_ttc = set(), 0.0
     try:
         for si in pl.supplier_invoices(supplier_id=supplier_id):
             r = si.get("external_reference")
-            if r:
+            if r and str(r).startswith("TOKK-"):
                 refs_pl.add(r)
+                if (si.get("date") or "") and date_from <= si["date"] <= date_to:
+                    sterna_ttc += float(si.get("currency_amount") or 0)
     except Exception as e:
         ctx.log(f"⚠️ relecture supplier_invoices impossible ({str(e)[:60]}) — cadrage sur les statuts d'envoi")
         refs_pl = None
@@ -218,13 +220,45 @@ def run_achats_kk(ctx):
         if not ok:
             missing.append(f)
 
+    # ---- RÉCIPROCITÉ client/fournisseur : le compte client unique « STERNA » côté KK doit
+    # porter les MÊMES montants que les achats KOOKABURA côté STERNA (et que TopOrder). ----
+    topo_ttc = round(sum(f["ttc"] for f in invoices), 2)
+    sterna_ttc = round(sterna_ttc, 2) if refs_pl is not None else None
+    kk411_ttc = None
+    kk411_note = ""
+    try:
+        pl_kk = pennylane.for_company("KOOKABURA")
+        acc = pl_kk.find_account(config.KK_STERNA_ACCOUNT) if pl_kk else None
+        if acc:
+            jt_id = int(config.resolve("KOOKABURA")["est"]["KK"]["journal_tickets_id"])
+            deb = 0.0
+            for l in pl_kk.account_lines(acc["id"], date_to):
+                if (l.get("date") or "") < date_from:
+                    continue
+                if (l.get("journal") or {}).get("id") != jt_id:
+                    continue              # créances TOKKT seules (pas les règlements banque)
+                deb += float(l.get("debit") or 0) - float(l.get("credit") or 0)
+            kk411_ttc = round(deb, 2)
+        else:
+            kk411_note = f"compte {config.KK_STERNA_ACCOUNT} absent côté KK (importer le CSV regénéré)"
+    except Exception as e:
+        kk411_note = f"lecture KK impossible : {str(e)[:60]}"
+    recip_ok = (sterna_ttc is not None and abs(topo_ttc - sterna_ttc) < 0.05
+                and kk411_ttc is not None and abs(topo_ttc - kk411_ttc) < 0.05)
+
     now = datetime.utcnow() + _TZ
     stamp = now.strftime("%d/%m/%Y %H:%M")
-    coherent = not errors and not missing
-    tot = round(sum(f["ttc"] for f in invoices), 2)
+    coherent = not errors and not missing and recip_ok
+    tot = topo_ttc
     ctx.log(f"{len(pushed)} poussée(s) · {len(already)} déjà présente(s) · "
             f"{len(errors)} erreur(s) · {len(missing)} manquante(s) · total TTC {tot:.2f} €")
+    ctx.log(f"Réciprocité : TopOrder {topo_ttc:.2f} · achats STERNA "
+            f"{sterna_ttc if sterna_ttc is not None else '?'} · client STERNA côté KK "
+            f"{kk411_ttc if kk411_ttc is not None else '? (' + (kk411_note or 'n/a') + ')'}"
+            f" → {'OK ✅' if recip_ok else 'ÉCART ⚠️'}")
 
+    def _r(v):
+        return f"{v:>12.2f}" if isinstance(v, float) else f"{'?':>12}"
     L = [f"FACTURES D'ACHAT KOOKABURA → STERNA — {label}",
          f"vérifié le {stamp} · tâche #{ctx.run_id} · fournisseur STERNA id {supplier_id}", "",
          "== SYNTHÈSE ==",
@@ -232,7 +266,13 @@ def run_achats_kk(ctx):
          f"  Poussées (nouvelles)           : {len(pushed)}",
          f"  Déjà présentes (idempotence)   : {len(already)}",
          f"  En erreur                      : {len(errors)}",
-         f"  Manquantes côté STERNA         : {len(missing)}", ""]
+         f"  Manquantes côté STERNA         : {len(missing)}", "",
+         "== RÉCIPROCITÉ CLIENT/FOURNISSEUR ==",
+         f"  Factures TopOrder (période)         : {_r(topo_ttc)}",
+         f"  Achats KOOKABURA côté STERNA        : {_r(sterna_ttc)}",
+         f"  Compte client STERNA côté KK (TOKKT): {_r(kk411_ttc)}"
+         + (f"   ({kk411_note})" if kk411_note else ""),
+         f"  → {'RÉCIPROQUE ✅ (les trois montants sont identiques)' if recip_ok else 'ÉCART ⚠️'}", ""]
     for f in pushed:
         L.append(f"  + F{f['fnum']:07d}  {f['date']}  {f['client'][:28]:<30} {f['ttc']:>10.2f}")
     if pushed:
@@ -250,9 +290,11 @@ def run_achats_kk(ctx):
     from . import report
     counts = {"total": len(invoices), "pushed": len(pushed), "already": len(already),
               "errors": len(errors), "missing": len(missing), "ttc": tot}
+    recip = {"topo": topo_ttc, "sterna": sterna_ttc, "kk411": kk411_ttc,
+             "ok": recip_ok, "note": kk411_note}
     ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} compte_rendu_achats_KK.pdf",
                      report.achats_pdf("Kookabura → Sterna", label, counts, pushed, already,
-                                       errors, missing, coherent,
+                                       errors, missing, coherent, recip=recip,
                                        run_id=ctx.run_id, executed_at=stamp),
                      "application/pdf")
 

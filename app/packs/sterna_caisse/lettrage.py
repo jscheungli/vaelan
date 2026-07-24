@@ -48,7 +48,8 @@ def _client_accounts(company_code):
             out[e["b2c_commun"]] = f"Particuliers {pfx}"
     for v in config.clients(company_code).get("b2b", {}).values():
         if v.get("account"):
-            out[v["account"]] = v.get("name") or "client B2B"
+            # compte REGROUPÉ (ex. STERNA côté KK) : libellé dédié, pas celui du dernier client
+            out[v["account"]] = config.ACCOUNT_LABELS.get(v["account"]) or v.get("name") or "client B2B"
     return out
 
 

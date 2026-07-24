@@ -623,10 +623,13 @@ def build_kk(establishment, date_from, date_to, company_id, batch_code, company_
             ent_ht += h2
             ent_tva += tva
         ttc = round(ent_ht + ent_tva, 2)
+        # « Libellé de compte » = nom du compte (Pennylane crée le compte avec ce libellé
+        # si le numéro n'existe pas encore à l'import -> « STERNA (groupe) »).
+        acc_lbl = config.ACCOUNT_LABELS.get(str(acc411), "Client KK")
         if ttc >= 0:
-            rows.append([date, jt, acc411, "Client KK - facture", f"Facture {num:07d} · {nm}", "", pieceT, f"{ttc:.2f}", "", "", "", lettr])
+            rows.append([date, jt, acc411, acc_lbl, f"Facture {num:07d} · {nm}", "", pieceT, f"{ttc:.2f}", "", "", "", lettr])
         else:
-            rows.append([date, jt, acc411, "Client KK - avoir", f"Avoir {num:07d} · {nm}", "", pieceT, "", f"{-ttc:.2f}", "", "", "", lettr])
+            rows.append([date, jt, acc411, acc_lbl, f"Avoir {num:07d} · {nm}", "", pieceT, "", f"{-ttc:.2f}", "", "", "", lettr])
         # --- TOKKF : reclassement HT 70101 -> 7012 ---
         if ent_ht >= 0:
             rows.append([date, jf, ca_acc, "Reclassement", f"Reclassement {num:07d} · {nm}", "", pieceF, f"{ent_ht:.2f}", "", "", "", ""])
