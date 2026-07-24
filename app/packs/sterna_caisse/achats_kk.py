@@ -179,9 +179,10 @@ def run_achats_kk(ctx):
             "invoice_lines": lines,
         }
         st, resp = pl.import_supplier_invoice(body)
+        dup = "already been taken" in str(resp)      # doublon d'external_reference (l'API répond 422)
         if st in (200, 201):
             pushed.append(f)
-        elif st == 409:                    # external_reference déjà importée -> idempotent
+        elif st == 409 or dup:                       # déjà importée -> idempotent, pas une erreur
             already.append(f)
         else:
             errors.append({**f, "why": f"HTTP {st}: {str(resp)[:80]}"})
