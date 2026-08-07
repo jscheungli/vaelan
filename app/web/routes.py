@@ -656,6 +656,36 @@ def salaires_compte(request: Request, code: str, account: str, ex: str = "",
                                            ledger=ledger, err=err, q=q, lett=lett, jr=jr))
 
 
+def _ledger_pdf_response(company, account, ex):
+    """Extrait de compte PDF (commun salariés 421 / clients 411)."""
+    from fastapi.responses import Response
+    from app.packs.sterna_caisse import report as caisse_report
+    ledger = caisse_payments.account_ledger(company.code, account, ex=ex or None)
+    if not ledger:
+        return RedirectResponse("/companies", status_code=303)
+    stamp = (datetime.utcnow() + timedelta(hours=4)).strftime("%d/%m/%Y %H:%M")
+    pdf = caisse_report.ledger_pdf(company.name, ledger, generated_at=stamp)
+    fname = f"extrait_{account}_{ledger['exercise_label']}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/c/{code}/salaires/{account}/pdf")
+def salaires_compte_pdf(request: Request, code: str, account: str, ex: str = ""):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    return _ledger_pdf_response(company, account, ex)
+
+
+@router.get("/c/{code}/paiements/{account}/pdf")
+def paiements_client_pdf(request: Request, code: str, account: str, ex: str = ""):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    return _ledger_pdf_response(company, account, ex)
+
+
 # ----------------------------- Clients (correspondance) -----------------------------
 @router.get("/c/{code}/clients", response_class=HTMLResponse)
 def clients_page(request: Request, code: str, q: str = "", etab: str = "",

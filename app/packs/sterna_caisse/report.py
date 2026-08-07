@@ -493,6 +493,83 @@ def build_pdf(kind, establishment, date_from, date_to, syn, api, csv=None, *,
                            batch_code, n_tickets, balanced, run_id, executed_at, fac_payments, fac_detail))
 
 
+def ledger_pdf(company_name, ledger, generated_at=None) -> bytes:
+    """Extrait de compte (grand-livre par exercice) en PDF — salariés (421) et clients (411).
+    Reprend la vue affichée : exercice choisi, ou vue CUMULÉE si exercice(s) non clôturé(s)."""
+    def _ascii(s):
+        return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
+                .replace("œ", "oe").replace("…", "...").replace("⚠️", "!").replace("✅", "OK"))
+    doc = fitz.open()
+    state = {"y": 56, "page": doc.new_page()}
+    W = state["page"].rect.width
+    x0 = 36
+
+    def left(x, s, size=8, font="helv", color=_DARK):
+        state["page"].insert_text((x, state["y"]), _ascii(s), fontsize=size, fontname=font, color=color)
+
+    def right(xr, s, size=8, font="cour", color=_DARK):
+        s = _ascii(s)
+        state["page"].insert_text((xr - fitz.get_text_length(s, fontname=font, fontsize=size), state["y"]),
+                                  s, fontsize=size, fontname=font, color=color)
+
+    def ny(d):
+        state["y"] += d
+
+    def header_cols():
+        state["page"].draw_rect(fitz.Rect(x0, state["y"] - 8, W - 36, state["y"] + 4), fill=_BAR, color=_BAR)
+        left(x0 + 2, "Date", 8, "hebo"); left(x0 + 58, "Jour.", 8, "hebo")
+        left(x0 + 92, "Libellé", 8, "hebo"); left(x0 + 268, "Nº pièce", 8, "hebo")
+        left(x0 + 372, "Lett.", 8, "hebo")
+        right(W - 148, "Débit", 8, "hebo"); right(W - 96, "Crédit", 8, "hebo"); right(W - 40, "Solde", 8, "hebo")
+        ny(14)
+
+    def ensure(space=16):
+        if state["y"] + space > 800:
+            state["page"] = doc.new_page()
+            state["y"] = 56
+            header_cols()
+
+    left(x0, f"Extrait de compte · {ledger.get('name') or ledger.get('number')}", 13, "hebo"); ny(16)
+    left(x0, f"{company_name}        compte {ledger.get('number')}        exercice {ledger.get('exercise_label')}"
+             + ("  (VUE CUMULÉE)" if ledger.get("combined") else ""), 9, "helv", (0.3, 0.3, 0.3)); ny(12)
+    if generated_at:
+        left(x0, f"édité le {generated_at} (heure de La Réunion) · Vaelan", 8, "helv", (0.45, 0.45, 0.45)); ny(12)
+    if ledger.get("combined"):
+        state["page"].draw_rect(fitz.Rect(x0, state["y"] - 8, W - 36, state["y"] + 16), fill=(1, 0.95, 0.85),
+                                color=(1, 0.95, 0.85))
+        left(x0 + 3, f"Exercice(s) non clôturé(s) : à-nouveaux absents au 1er juillet "
+                     f"{', '.join(str(y) for y in ledger.get('missing_an', []))}.", 8, "hebo", (0.55, 0.35, 0.05)); ny(11)
+        left(x0 + 3, f"Cette vue CUMULE les écritures depuis l'exercice {ledger.get('span_from')}-"
+                     f"{ledger.get('span_from', 0) + 1} pour un solde juste.", 8, "helv", (0.55, 0.35, 0.05)); ny(15)
+    ny(4)
+    header_cols()
+
+    for l in ledger.get("lines", []):
+        ensure()
+        left(x0 + 2, str(l.get("date") or ""), 7, "cour")
+        left(x0 + 58, str(l.get("journal") or ""), 7, "cour")
+        left(x0 + 92, str(l.get("label") or "")[:36], 8)
+        left(x0 + 268, str(l.get("piece") or "")[:22], 6.5, "cour", (0.35, 0.35, 0.35))
+        if l.get("letter"):
+            left(x0 + 372, l["letter"], 8, "hebo", (0.15, 0.35, 0.65))
+        if l.get("debit"):
+            right(W - 148, f"{l['debit']:.2f}", 7.5)
+        if l.get("credit"):
+            right(W - 96, f"{l['credit']:.2f}", 7.5)
+        right(W - 40, f"{l.get('balance', 0):.2f}", 7.5, "cour",
+              (_RED if l.get("balance", 0) > 0.005 else _DARK))
+        ny(12)
+
+    ny(4)
+    ensure(20)
+    state["page"].draw_rect(fitz.Rect(x0, state["y"] - 8, W - 36, state["y"] + 5), fill=_BAR, color=_BAR)
+    left(x0 + 2, f"TOTAL {ledger.get('number')} (exercice {ledger.get('exercise_label')})", 8, "hebo")
+    right(W - 148, f"{ledger.get('total_debit', 0):.2f}", 8, "hebo")
+    right(W - 96, f"{ledger.get('total_credit', 0):.2f}", 8, "hebo")
+    right(W - 40, f"{ledger.get('solde', 0):.2f}", 8, "hebo")
+    return doc.tobytes()
+
+
 def achats_pdf(title_scope, period_label, counts, pushed, already, errors, missing,
                coherent, recip=None, run_id=None, executed_at=None) -> bytes:
     """Compte rendu PDF de l'étape 7 KK (factures d'achat KOOKABURA -> STERNA)."""

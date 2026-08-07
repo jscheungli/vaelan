@@ -32,19 +32,32 @@
 <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
   <h3 class="h6 text-uppercase text-muted mb-0">Grand-livre du compte 421 (Pennylane)</h3>
   {% set base = '/c/' + company.code + '/salaires/' + account %}
-  <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="Exercice">
-    <a href="{{ base }}?ex={{ ledger.prev }}" class="btn btn-outline-secondary" title="Exercice précédent"><i class="bi bi-chevron-left"></i></a>
-    <div class="btn-group btn-group-sm" role="group">
-      <button class="btn btn-outline-dark dropdown-toggle fw-semibold" data-bs-toggle="dropdown">Exercice {{ ledger.exercise_label }}</button>
-      <ul class="dropdown-menu dropdown-menu-end">
-        {% for y in ledger.exercises %}
-        <li><a class="dropdown-item {{ 'active' if y == ledger.exercise }}" href="{{ base }}?ex={{ y }}">Exercice {{ y }}-{{ y + 1 }}</a></li>
-        {% endfor %}
-      </ul>
+  <div class="ms-auto d-flex align-items-center gap-2">
+    <a href="{{ base }}/pdf?ex={{ ledger.exercise }}" class="btn btn-sm btn-outline-dark" title="Télécharger l'extrait de compte affiché (PDF)"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+    <div class="btn-group btn-group-sm" role="group" aria-label="Exercice">
+      <a href="{{ base }}?ex={{ ledger.prev }}" class="btn btn-outline-secondary" title="Exercice précédent"><i class="bi bi-chevron-left"></i></a>
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-dark dropdown-toggle fw-semibold {{ 'btn-warning' if ledger.combined }}" data-bs-toggle="dropdown">
+          Exercice{{ 's' if ledger.combined }} {{ ledger.exercise_label }}{{ ' (cumulés)' if ledger.combined }}</button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          {% for y in ledger.exercises %}
+          <li><a class="dropdown-item {{ 'active' if y == ledger.exercise }}" href="{{ base }}?ex={{ y }}">Exercice {{ y }}-{{ y + 1 }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+      <a href="{{ base }}?ex={{ ledger.next }}" class="btn btn-outline-secondary" title="Exercice suivant"><i class="bi bi-chevron-right"></i></a>
     </div>
-    <a href="{{ base }}?ex={{ ledger.next }}" class="btn btn-outline-secondary" title="Exercice suivant"><i class="bi bi-chevron-right"></i></a>
   </div>
 </div>
+{% if ledger.combined %}
+<div class="alert alert-warning py-2 small mb-2">
+  <i class="bi bi-exclamation-triangle-fill"></i>
+  <strong>Exercice{{ 's' if ledger.missing_an|length > 1 }} non clôturé{{ 's' if ledger.missing_an|length > 1 }}</strong> —
+  les à-nouveaux du 1<sup>er</sup> juillet {{ ledger.missing_an|join(', du 1er juillet ') }} n'ont pas encore été générés.
+  Pour un solde juste, cette vue <strong>cumule les écritures depuis l'exercice {{ ledger.span_from }}-{{ ledger.span_from + 1 }}</strong>
+  (dernier exercice ouvert par à-nouveaux). Elle redeviendra annuelle après la clôture.
+</div>
+{% endif %}
 <p class="text-muted" style="font-size:.75rem;">Vue par <strong>exercice comptable (1<sup>er</sup> juillet → 30 juin)</strong>, comme Pennylane :
   l'à-nouveau du 1<sup>er</sup> juillet + les mouvements de l'année (le solde repart de 0). La colonne
   <strong>Lett.</strong> reprend la lettre de lettrage (même groupe = même lettre/couleur). Consultation seule.</p>

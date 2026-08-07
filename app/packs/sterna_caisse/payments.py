@@ -141,13 +141,29 @@ def account_ledger(company_code, account, ex=None, pl=None):
     if selected not in years:
         years = sorted(set(years) | {selected}, reverse=True)
 
-    sub = [l for l in raw if _fiscal_year(l.get("date")) == selected]
-
-    # enrichissement (pièce + journal) UNIQUEMENT sur l'exercice affiché
     try:
         jmap = pl.journals_map()
     except Exception:
         jmap = {}
+
+    # EXERCICE NON CLÔTURÉ : tant que la clôture n'est pas faite, les à-nouveaux (journal AN)
+    # du 1er juillet n'existent pas et le solde de l'exercice courant serait FAUX (reparti de 0
+    # sans le report). Détection : l'exercice choisi n'a pas de ligne AN -> la vue S'ÉTEND en
+    # arrière, exercice par exercice, jusqu'au dernier exercice OUVERT PAR à-nouveaux (ou au
+    # tout premier exercice du compte). Le solde cumulé est alors juste.
+    def _jcode(l):
+        return str(jmap.get((l.get("journal") or {}).get("id")) or "").upper()
+    an_years = {_fiscal_year(l.get("date")) for l in raw if _jcode(l) == "AN"}
+    data_years = {y for y in (_fiscal_year(l.get("date")) for l in raw) if y is not None}
+    span_from = selected
+    while span_from not in an_years and data_years and span_from > min(data_years):
+        span_from -= 1
+    combined = span_from < selected
+
+    sub = [l for l in raw
+           if (lambda y: y is not None and span_from <= y <= selected)(_fiscal_year(l.get("date")))]
+
+    # enrichissement (pièce + journal) UNIQUEMENT sur la plage affichée
     ecache = {}
     for l in sub:
         eid = (l.get("ledger_entry") or {}).get("id")
@@ -204,8 +220,12 @@ def account_ledger(company_code, account, ex=None, pl=None):
             "solde": round(tot_d - tot_c, 2), "name": acc.get("label"), "number": account,
             "letterable": bool(acc.get("letterable")),
             "journals": sorted({x["journal"] for x in lines if x["journal"]}),   # pour le filtre Journaux
-            "exercise": selected, "exercise_label": f"{selected}-{selected + 1}",
-            "exercises": years, "prev": selected - 1, "next": selected + 1}
+            "exercise": selected,
+            "exercise_label": (f"{span_from}-{selected + 1}" if combined else f"{selected}-{selected + 1}"),
+            "exercises": years, "prev": selected - 1, "next": selected + 1,
+            # vue cumulée (exercice(s) non clôturé(s)) : depuis quand, et quels 1ers juillet sans AN
+            "combined": combined, "span_from": span_from,
+            "missing_an": ([y for y in range(span_from + 1, selected + 1)] if combined else [])}
 
 
 def _pdate(d):
