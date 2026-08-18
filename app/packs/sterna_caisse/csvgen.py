@@ -45,7 +45,7 @@ def _rate_label(r: str) -> str:
 # moyen de paiement TopOrder -> clé de compte d'encaissement
 _PAYKEY = {"CB": "cb", "Carte": "cb", "Espèce": "especes", "Espece": "especes",
            "Ticket restaurant": "ticket_resto", "Titre restaurant": "ticket_resto",
-           "Chèque": "autres", "Cheque": "autres"}   # chèques comptabilisés dans le compte AUTRES (41125X04)
+           "Chèque": "cheque", "Cheque": "cheque"}   # chèques -> compte CHEQUES commun (411100024)
 
 # Modes de paiement dont CHAQUE encaissement doit être une ligne dédiée (pas d'agrégat
 # journalier) : on garde le détail (n° de chèque, client…) dans le libellé pour le rapprochement.

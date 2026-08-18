@@ -119,11 +119,17 @@ def journal_code(pfx: str, kind: str) -> str:
     return f"TO{pfx}{_JSUFFIX.get(kind, 'T')}"
 
 
+# Compte « CHEQUES » COMMUN aux 3 boulangeries (chèques à encaisser, soldé par les remises
+# en banque). Demande user 2026-08-07 : les chèques allaient à tort dans ELP/ESM/ESL AUTRES.
+CHEQUES_ACCOUNT = "411100024"
+
+
 def caisse_accounts(pfx: str) -> dict:
     """Comptes d'encaissement / écart de caisse de l'établissement (défauts)."""
     x = _X[pfx]
     return {
         "especes": f"41125{x}01", "cb": f"41125{x}02", "ticket_resto": f"41125{x}03",
+        "cheque": CHEQUES_ACCOUNT,
         "autres": f"41125{x}04", "ecart": f"41125{x}06", "b2c_commun": f"41125{x}09",
     }
 
@@ -152,8 +158,8 @@ def _defaults() -> dict:
 
 # libellés lisibles pour la page Configuration (clé « : » -> libellé)
 ACCOUNT_FIELDS = [("especes", "Espèces"), ("cb", "CB"), ("ticket_resto", "Ticket restaurant"),
-                  ("autres", "Autres / compte client"), ("ecart", "Écart de caisse"),
-                  ("b2c_commun", "Particuliers (compte commun)")]
+                  ("cheque", "Chèques (compte commun)"), ("autres", "Autres"),
+                  ("ecart", "Écart de caisse"), ("b2c_commun", "Particuliers (compte commun)")]
 JOURNAL_FIELDS = [("journal_tickets", "Code journal Tickets (CSV)"),
                   ("journal_tickets_id", "ID journal Tickets (API)"),
                   ("journal_factures", "Code journal Factures (CSV)"),

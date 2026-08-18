@@ -77,7 +77,8 @@ def _aggregates(net, cfg, pfx):
     tva_accs = set(cfg["tva"].values())
     ecfg = cfg["est"][pfx]
     pay_lbl = {ecfg[k]: lbl for k, lbl in (("cb", "CB"), ("especes", "Espèce"),
-               ("ticket_resto", "Ticket restaurant"), ("autres", "Autres")) if ecfg.get(k)}
+               ("ticket_resto", "Ticket restaurant"), ("cheque", "Chèque"),
+               ("autres", "Autres")) if ecfg.get(k)}
     ecart = ecfg.get("ecart")
     ca_ht = round(sum(net.get(a, 0.0) for a in ca_accs), 2)
     tva = round(sum(net.get(a, 0.0) for a in tva_accs), 2)
@@ -92,7 +93,7 @@ def _aggregates(net, cfg, pfx):
     if abs(ht0) > TOL:
         ht_by_rate["0"] = ht0
     payments = {m: round(-sum(net.get(a, 0.0) for a in pay_lbl if pay_lbl[a] == m), 2)
-                for m in ("CB", "Espèce", "Ticket restaurant", "Autres")}
+                for m in ("CB", "Espèce", "Chèque", "Ticket restaurant", "Autres")}
     ecart_caisse = round(-net.get(ecart, 0.0), 2)
     known = ca_accs | tva_accs | set(pay_lbl) | {ecart}
     clients_411 = round(sum(v for a, v in net.items() if a not in known), 2)
@@ -197,7 +198,7 @@ def run_verify(ctx, company_code, pfx):
     ht_rows = rows_from([(r, f"HT {r}%") for r in hrates], lambda agg, r: agg["ht_by_rate"].get(r))
     if ht_rows:
         sections.append({"name": "HT par taux (déduit de la TVA)", "rows": ht_rows})
-    pay_rows = rows_from([(m, m) for m in ("CB", "Espèce", "Ticket restaurant", "Autres")],
+    pay_rows = rows_from([(m, m) for m in ("CB", "Espèce", "Chèque", "Ticket restaurant", "Autres")],
                          lambda agg, m: agg["payments"].get(m))
     sections.append({"name": "Encaissements par mode", "rows": pay_rows})
     sections.append({"name": "Détail par compte",
