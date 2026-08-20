@@ -133,26 +133,36 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     # des dizaines de pièces, les arrondis dérivent de quelques centimes en sens OPPOSÉS
     # (HT −x / TVA +x), TTC inchangé. Ce n'est PAS un écart : on ne flague un taux que si
     # son TTC (HT + TVA) diverge réellement entre API et CSV.
-    def _rate_match(rt):
-        if csv is None:
-            return "na"
-        ah = api.get("ht_by_rate", {}).get(rt)
-        ch = csv.get("ht_by_rate", {}).get(rt)
-        at = api.get("tva_by_rate", {}).get(rt)
-        ct = csv.get("tva_by_rate", {}).get(rt)
-        if ch is None and ct is None:
-            return _match(ah, None)
-        return "ok" if abs(((ah or 0.0) + (at or 0.0)) - ((ch or 0.0) + (ct or 0.0))) < TOL else "ecart"
+    def _rate_match(rt, av, cv):
+        """État d'une ligne par taux : « ok » (identique au centime), « arrondi » (la ligne
+        diffère de quelques centimes MAIS le TTC du taux est identique — dérive d'arrondi
+        par pièce, compensée entre HT et TVA), « ecart » (vraie divergence)."""
+        if csv is None or (av is None and cv is None):
+            return _match(av, cv)
+        if abs((av or 0.0) - (cv or 0.0)) < TOL:
+            return "ok"
+        ah = api.get("ht_by_rate", {}).get(rt) or 0.0
+        ch = (csv.get("ht_by_rate", {}) or {}).get(rt) or 0.0
+        at = api.get("tva_by_rate", {}).get(rt) or 0.0
+        ct = (csv.get("tva_by_rate", {}) or {}).get(rt) or 0.0
+        return "arrondi" if abs((ah + at) - (ch + ct)) < TOL else "ecart"
+
+    _ARRONDI_NOTE = ("≈ arrondi : la répartition HT/TVA du CSV est arrondie PIÈCE PAR PIÈCE "
+                     "(la TVA de chaque pièce complète son TTC exact) ; la ligne diffère de "
+                     "quelques centimes de la somme brute, mais HT + TVA du taux est IDENTIQUE "
+                     "au centime — rien ne manque, ça matche au final.")
 
     # HT par taux
     rates = sorted(set(list(api.get("ht_by_rate", {})) + list((csv or {}).get("ht_by_rate", {}))),
                    key=lambda x: float(x))
-    sections.append({"name": "HT par taux de TVA",
-                     "note": "synthèse : n/a · répartition HT/TVA arrondie par pièce (TTC du taux cadré)",
-                     "rows": [{"label": f"HT {rt}%", "syn": None,
-                               "api": api.get("ht_by_rate", {}).get(rt),
-                               "csv": (csv or {}).get("ht_by_rate", {}).get(rt),
-                               "match": _rate_match(rt)} for rt in rates]})
+    hrows = [{"label": f"HT {rt}%", "syn": None,
+              "api": api.get("ht_by_rate", {}).get(rt),
+              "csv": (csv or {}).get("ht_by_rate", {}).get(rt),
+              "match": _rate_match(rt, api.get("ht_by_rate", {}).get(rt),
+                                   (csv or {}).get("ht_by_rate", {}).get(rt))} for rt in rates]
+    sections.append({"name": "HT par taux de TVA", "note": "synthèse : n/a (ventile par famille)",
+                     "rows": hrows,
+                     "footnote": (_ARRONDI_NOTE if any(r["match"] == "arrondi" for r in hrows) else None)})
 
     # TVA par taux (on masque les taux sans TVA)
     rates = sorted(set(list(api.get("tva_by_rate", {})) + list((csv or {}).get("tva_by_rate", {}))),
@@ -164,8 +174,9 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
         if abs(av or 0) < TOL and abs(cv or 0) < TOL:
             continue
         trows.append({"label": f"TVA {rt}%", "syn": None, "api": av, "csv": cv,
-                      "match": _rate_match(rt)})
-    sections.append({"name": "TVA par taux", "note": "synthèse : n/a", "rows": trows})
+                      "match": _rate_match(rt, av, cv)})
+    sections.append({"name": "TVA par taux", "note": "synthèse : n/a", "rows": trows,
+                     "footnote": (_ARRONDI_NOTE if any(r["match"] == "arrondi" for r in trows) else None)})
 
     # paiements
     modes = ["CB", "Espèce", "Chèque", "Ticket restaurant"]
@@ -235,7 +246,7 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
     unres_groups = sorted(by.values(), key=lambda x: -x["total"])
     # cohérence GLOBALE : tous les rapprochements OK (ou n/a) + tous les modes cadrent +
     # CSV équilibré + aucune créance non routée. Sert au VERDICT du résumé de tâche.
-    coherent = (all(r["match"] in ("ok", "na") for s in sections for r in s["rows"])
+    coherent = (all(r["match"] in ("ok", "na", "arrondi") for s in sections for r in s["rows"])
                 and (paydetail is None or paydetail.get("all_match", True))
                 and (balance is None or balance.get("ok", True))
                 and not unres_groups)
@@ -250,7 +261,7 @@ def to_text(data) -> str:
         return f"{_fmt(v):>14}"
 
     def badge(st):
-        return {"ok": "OK", "ecart": "⚠️ ÉCART", "na": "—",
+        return {"ok": "OK", "ecart": "⚠️ ÉCART", "na": "—", "arrondi": "≈ arrondi (compensé)",
                 "split": "≠ partage encaissé/créances"}.get(st, st)
 
     L = [data["title"], *data["meta"], ""]
@@ -277,6 +288,8 @@ def to_text(data) -> str:
         L.append(head)
         for r in sec["rows"]:
             L.append(f"  {r['label']:<22}{cell(r['syn'])}{cell(r['api'])}{cell(r['csv'])}    {badge(r['match'])}")
+        if sec.get("footnote"):
+            L.append(f"  {sec['footnote']}")
         L.append("")
     if data.get("paydetail"):
         p = data["paydetail"]
@@ -313,6 +326,7 @@ def to_text(data) -> str:
 _GREEN = (0.10, 0.53, 0.33)
 _RED = (0.86, 0.21, 0.27)
 _GREY = (0.55, 0.55, 0.58)
+_BLUE = (0.16, 0.42, 0.75)   # « ≈ arrondi » : ligne décalée de qq centimes mais compensée (TTC exact)
 _DARK = (0.12, 0.12, 0.16)
 _BAR = (0.93, 0.93, 0.96)
 
@@ -360,7 +374,9 @@ def to_pdf(data) -> bytes:
     left(x0 + 14, "rapproché", size=8, color=_GREY)
     page.draw_rect(fitz.Rect(x0 + 78, y - 7, x0 + 88, y + 1), fill=_RED, color=_RED)
     left(x0 + 92, "écart", size=8, color=_GREY)
-    left(x0 + 130, "—  non comparable (source absente)", size=8, color=_GREY)
+    page.draw_rect(fitz.Rect(x0 + 126, y - 7, x0 + 136, y + 1), fill=_BLUE, color=_BLUE)
+    left(x0 + 140, "écart d'arrondi compensé (voir note)", size=8, color=_GREY)
+    left(x0 + 310, "—  non comparable (source absente)", size=8, color=_GREY)
     nl(16)
 
     # ⛔ clients à corriger (créances non routées) — bloc en tête car c'est le point bloquant
@@ -414,15 +430,29 @@ def to_pdf(data) -> bytes:
             right(COL["api"], _fmt(r["api"]))
             right(COL["csv"], _fmt(r["csv"]))
             st = r["match"]
-            if st in ("ok", "ecart", "split"):
-                col = {"ok": _GREEN, "ecart": _RED, "split": _GREY}[st]
-                lbl = {"ok": "OK", "ecart": "ÉCART", "split": "≠ partage"}[st]
+            if st in ("ok", "ecart", "split", "arrondi"):
+                col = {"ok": _GREEN, "ecart": _RED, "split": _GREY, "arrondi": _BLUE}[st]
+                lbl = {"ok": "OK", "ecart": "ÉCART", "split": "≠ partage", "arrondi": "≈ arrondi *"}[st]
                 w = fitz.get_text_length(lbl, fontname="hebo", fontsize=8) + 8
                 page.draw_rect(fitz.Rect(BADGE_X, y - 8, BADGE_X + w, y + 2.5), fill=col, color=col)
                 page.insert_text((BADGE_X + 4, y), lbl, fontsize=8, fontname="hebo", color=(1, 1, 1))
             else:
                 left(BADGE_X + 2, "—", size=9, color=_GREY)
             nl(14)
+        if sec.get("footnote"):
+            # note « * » sous la section (repliée sur plusieurs lignes), en bleu
+            words = _ascii("* " + sec["footnote"]).split()
+            line = ""
+            for wd in words:
+                if len(line) + len(wd) + 1 > 118:
+                    ensure(12)
+                    left(x0 + 4, line, size=7.5, color=_BLUE); nl(10)
+                    line = wd
+                else:
+                    line = (line + " " + wd).strip()
+            if line:
+                ensure(12)
+                left(x0 + 4, line, size=7.5, color=_BLUE); nl(10)
         nl(6)
 
     if data.get("paydetail"):
