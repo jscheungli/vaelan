@@ -128,12 +128,31 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
         row("CA TTC total", syn_ttc, api.get("ca_ttc"), (csv or {}).get("ca_ttc")),
     ]})
 
+    # Par TAUX : la répartition HT/TVA du CSV est arrondie PAR PIÈCE (la TVA de chaque pièce
+    # = complément de son TTC exact), alors que la colonne API somme les valeurs brutes. Sur
+    # des dizaines de pièces, les arrondis dérivent de quelques centimes en sens OPPOSÉS
+    # (HT −x / TVA +x), TTC inchangé. Ce n'est PAS un écart : on ne flague un taux que si
+    # son TTC (HT + TVA) diverge réellement entre API et CSV.
+    def _rate_match(rt):
+        if csv is None:
+            return "na"
+        ah = api.get("ht_by_rate", {}).get(rt)
+        ch = csv.get("ht_by_rate", {}).get(rt)
+        at = api.get("tva_by_rate", {}).get(rt)
+        ct = csv.get("tva_by_rate", {}).get(rt)
+        if ch is None and ct is None:
+            return _match(ah, None)
+        return "ok" if abs(((ah or 0.0) + (at or 0.0)) - ((ch or 0.0) + (ct or 0.0))) < TOL else "ecart"
+
     # HT par taux
     rates = sorted(set(list(api.get("ht_by_rate", {})) + list((csv or {}).get("ht_by_rate", {}))),
                    key=lambda x: float(x))
-    sections.append({"name": "HT par taux de TVA", "note": "synthèse : n/a (ventile par famille)",
-                     "rows": [row(f"HT {rt}%", None, api.get("ht_by_rate", {}).get(rt),
-                                  (csv or {}).get("ht_by_rate", {}).get(rt)) for rt in rates]})
+    sections.append({"name": "HT par taux de TVA",
+                     "note": "synthèse : n/a · répartition HT/TVA arrondie par pièce (TTC du taux cadré)",
+                     "rows": [{"label": f"HT {rt}%", "syn": None,
+                               "api": api.get("ht_by_rate", {}).get(rt),
+                               "csv": (csv or {}).get("ht_by_rate", {}).get(rt),
+                               "match": _rate_match(rt)} for rt in rates]})
 
     # TVA par taux (on masque les taux sans TVA)
     rates = sorted(set(list(api.get("tva_by_rate", {})) + list((csv or {}).get("tva_by_rate", {}))),
@@ -144,7 +163,8 @@ def _compute(kind, establishment, date_from, date_to, syn, api, csv,
         cv = (csv or {}).get("tva_by_rate", {}).get(rt)
         if abs(av or 0) < TOL and abs(cv or 0) < TOL:
             continue
-        trows.append(row(f"TVA {rt}%", None, av, cv))
+        trows.append({"label": f"TVA {rt}%", "syn": None, "api": av, "csv": cv,
+                      "match": _rate_match(rt)})
     sections.append({"name": "TVA par taux", "note": "synthèse : n/a", "rows": trows})
 
     # paiements
