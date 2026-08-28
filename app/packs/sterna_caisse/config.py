@@ -56,9 +56,12 @@ JOURNALS_KK = {"KK": {"tickets": 84717481984, "factures": 84717486080}}  # TOKKT
 # 2026-07-24) : toutes les ventes KK au groupe vont au MÊME 411 côté KOOKABURA, miroir du
 # fournisseur KOOKABURA côté STERNA -> la réciprocité client/fournisseur se cadre d'un regard.
 # Le nom par boulangerie est conservé pour les LIBELLÉS de lignes (détail préservé).
-# NB : Pennylane IGNORE les zéros finaux des numéros de compte (« radical ») — un import
-# en « 411100100 » a créé le compte « 4111001 ». On adopte donc le radical comme canonique.
-KK_STERNA_ACCOUNT = "4111001"
+# Compte client STERNA côté KK = 411100016 « STERNA », le compte HISTORIQUE réellement
+# tenu par la comptable (à-nouveaux, ventes pré-TopOrder, banque). Le 4111001
+# « STERNA (groupe) » créé par Vaelan en 07/2026 était un doublon : la comptable a
+# re-basculé les lignes dessus -> on s'aligne (4111001 à vider puis archiver).
+# NB : Pennylane IGNORE les zéros finaux des numéros de compte (« radical »).
+KK_STERNA_ACCOUNT = "411100016"
 # Contrepartie de CHARGE suggérée sur les factures d'achat KK poussées chez STERNA
 # (sinon Pennylane retombe sur son défaut 6288 « Autres charges extérieures diverses »).
 KK_ACHATS_STERNA_ACCOUNT = "60112"   # « Matières premières et marchandises KOOKABURA »
@@ -68,7 +71,7 @@ CLIENTS_KK = {"b2b": {
     "KK:08dea425-1895-4263-8703-45073e145fd2": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN SAINT-LEU"},
 }, "b2c_commun": {}}
 # Libellés d'affichage des comptes REGROUPÉS (création auto à l'import CSV + lettrage/rapports)
-ACCOUNT_LABELS = {KK_STERNA_ACCOUNT: "STERNA (groupe)"}
+ACCOUNT_LABELS = {KK_STERNA_ACCOUNT: "STERNA"}
 
 _FACTURE_COMPANIES = {"KOOKABURA"}   # sociétés au modèle « facture » (pas de caisse)
 
