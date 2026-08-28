@@ -59,6 +59,9 @@ JOURNALS_KK = {"KK": {"tickets": 84717481984, "factures": 84717486080}}  # TOKKT
 # NB : Pennylane IGNORE les zéros finaux des numéros de compte (« radical ») — un import
 # en « 411100100 » a créé le compte « 4111001 ». On adopte donc le radical comme canonique.
 KK_STERNA_ACCOUNT = "4111001"
+# Contrepartie de CHARGE suggérée sur les factures d'achat KK poussées chez STERNA
+# (sinon Pennylane retombe sur son défaut 6288 « Autres charges extérieures diverses »).
+KK_ACHATS_STERNA_ACCOUNT = "60112"   # « Matières premières et marchandises KOOKABURA »
 CLIENTS_KK = {"b2b": {
     "KK:08dea426-2813-448b-8590-949870c0adae": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN LA POSSESSION"},
     "KK:08dea426-64ac-4f40-8d30-fe5cc51fec58": {"account": KK_STERNA_ACCOUNT, "name": "OCOPAIN SAINTE-MARIE"},

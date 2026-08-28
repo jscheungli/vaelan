@@ -142,6 +142,17 @@ def run_achats_kk(ctx):
     if not supplier_id:
         raise RuntimeError("fournisseur KOOKABURA introuvable dans le Pennylane STERNA")
     ctx.log(f"Fournisseur STERNA : KOOKABURA (id {supplier_id})")
+    # contrepartie de charge SUGGÉRÉE sur chaque ligne (sinon Pennylane met son défaut 6288)
+    charge = None
+    try:
+        charge = pl.find_account(config.KK_ACHATS_STERNA_ACCOUNT)
+    except Exception:
+        charge = None
+    if charge:
+        ctx.log(f"Contrepartie suggérée : {config.KK_ACHATS_STERNA_ACCOUNT} « {charge.get('label')} »")
+    else:
+        ctx.log(f"⚠️ compte {config.KK_ACHATS_STERNA_ACCOUNT} introuvable côté STERNA — "
+                "Pennylane choisira sa contrepartie par défaut")
 
     ctx.progress(0, None, step="lecture des factures KK…")
     invoices = _kk_invoices(date_from, date_to)
@@ -176,8 +187,11 @@ def run_achats_kk(ctx):
             t = round(h * float(r) / 100, 2)
             # currency_amount de LIGNE = TTC (vérifié : l'API exige Σ lignes = total TTC ;
             # la doc dit « HT » mais renvoie 422 sinon). currency_tax = la TVA de la ligne.
-            lines.append({"currency_amount": f"{round(h + t, 2):.2f}", "currency_tax": f"{t:.2f}",
-                          "vat_rate": _VAT.get(r, "exempt")})
+            line = {"currency_amount": f"{round(h + t, 2):.2f}", "currency_tax": f"{t:.2f}",
+                    "vat_rate": _VAT.get(r, "exempt")}
+            if charge:
+                line["ledger_account_id"] = charge["id"]    # contrepartie 60112 suggérée
+            lines.append(line)
         body = {
             "file_attachment_id": fid, "supplier_id": supplier_id,
             "date": f["date"], "deadline": f["date"],
