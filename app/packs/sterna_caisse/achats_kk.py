@@ -202,6 +202,9 @@ def run_achats_kk(ctx):
             "currency_amount": f"{f['ttc']:.2f}",
             "label": f"Facture KOOKABURA F{f['fnum']:07d} · {f['client']}",
             "invoice_lines": lines,
+            # la facture arrive « À TRAITER » (pas déjà traitée) : la comptable valide la
+            # saisie (PDF, montants et contrepartie 60112 déjà pré-remplis par Vaelan).
+            "import_as_incomplete": True,
         }
         st, resp = pl.import_supplier_invoice(body)
         dup = "already been taken" in str(resp)      # doublon d'external_reference (l'API répond 422)
