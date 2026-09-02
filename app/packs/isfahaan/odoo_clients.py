@@ -58,11 +58,13 @@ def _siren(siret=None, vat=None, reg_no=None):
 def _pull_odoo_partners(oc, ctx):
     """Fiches clients Odoo de tête (pas les contacts enfants), actives."""
     fields = ["name", "vat", "ref", "email", "is_company", "customer_rank"]
-    has_siret = oc.has_field("res.partner", "siret")
-    if has_siret:
-        fields.append("siret")
-    else:
-        ctx.log("champ « siret » absent du res.partner (module l10n_fr non détecté) — clé = n° de TVA")
+    # sources d'identifiant : company_registry (SIREN/SIRET standard Odoo) et/ou siret (l10n_fr)
+    for opt in ("company_registry", "siret"):
+        if oc.has_field("res.partner", opt):
+            fields.append(opt)
+    has_siret = "siret" in fields or "company_registry" in fields
+    if not has_siret:
+        ctx.log("ni « company_registry » ni « siret » sur res.partner — clé = n° de TVA seulement")
     return oc.search_read("res.partner",
                           [("parent_id", "=", False), ("customer_rank", ">", 0)],
                           fields), has_siret
@@ -104,7 +106,7 @@ def run_odoo_clients_sync(ctx, company_code):
 
     # ---- clés ----
     for p in partners:
-        p["_siren"] = _siren(siret=p.get("siret"), vat=p.get("vat"))
+        p["_siren"] = _siren(siret=p.get("siret") or p.get("company_registry"), vat=p.get("vat"))
         p["_nname"] = _norm_name(p.get("name"))
     for c in customers:
         c["_siren"] = _siren(reg_no=c.get("reg_no"))
@@ -133,7 +135,7 @@ def run_odoo_clients_sync(ctx, company_code):
         sr, nn = p["_siren"], p["_nname"]
         row = OdooClientMatch(company_id=company.id, odoo_id=p["id"], odoo_name=p.get("name"),
                               odoo_ref=(p.get("ref") or None), odoo_vat=(p.get("vat") or None),
-                              odoo_siret=(p.get("siret") or None) if has_siret else None,
+                              odoo_siret=(p.get("siret") or p.get("company_registry") or None) if has_siret else None,
                               siren=sr, last_synced=now)
         # candidats Pennylane : par SIREN d'abord, sinon par nom normalisé
         cands = pl_by_siren.get(sr, []) if sr else []
