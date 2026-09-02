@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Clients Odoo ↔ Pennylane · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Clients Odoo ↔ Pennylane</li>
+</ol></nav>
+
+<div class="d-flex align-items-center mb-1 flex-wrap gap-2">
+  <h1 class="h4 mb-0">Clients Odoo ↔ Pennylane</h1>
+  <form hx-post="/c/{{ company.code }}/odoo-clients/sync" hx-target="#sync-result" hx-swap="innerHTML"
+        hx-disabled-elt="find button" class="ms-auto">
+    <button class="btn btn-dark btn-sm"><i class="bi bi-arrow-repeat"></i> Synchroniser</button>
+  </form>
+</div>
+<p class="text-muted small mb-1">Correspondance par <strong>SIREN</strong> (SIRET Odoo, n° de TVA FR, reg_no Pennylane),
+  repli par nom normalisé. Vaelan détecte doublons, mauvais matchings et orphelins ; la correction (fusion,
+  saisie du SIREN) se fait <strong>dans Odoo / Pennylane</strong>, puis on resynchronise.
+  {% if last_synced %}<span class="ms-2">Dernière synchro : {{ last_synced.strftime('%d/%m/%Y %H:%M') }} UTC.</span>{% endif %}</p>
+<div id="sync-result"></div>
+
+{% set badges = [('ok','ok','success'), ('conflit_nom','conflit de nom','danger'),
+                 ('doublon_odoo','doublons Odoo','danger'), ('doublon_pennylane','doublons Pennylane','danger'),
+                 ('sans_cle','sans SIREN/TVA','warning'), ('absent_pennylane','absents de Pennylane','warning'),
+                 ('absent_odoo','orphelins Pennylane','secondary')] %}
+<div class="d-flex flex-wrap gap-2 mb-2 small">
+  {% for st, lbl, color in badges %}{% if counts.get(st) %}
+  <a href="#" class="text-decoration-none" onclick="setStatus('{{ st }}');return false;">
+    <span class="badge text-bg-{{ color }}">{{ counts[st] }}</span> {{ lbl }}</a>
+  {% endif %}{% endfor %}
+</div>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2 small">
+  <input type="search" id="f-q" class="form-control form-control-sm" style="width:260px;"
+         placeholder="nom, SIREN, TVA, réf…" oninput="applyFilters()">
+  <select id="f-st" class="form-select form-select-sm" style="width:auto;" onchange="applyFilters()">
+    <option value="">Tous les statuts</option>
+    {% for st, lbl, color in badges %}<option value="{{ st }}">{{ lbl }}</option>{% endfor %}
+  </select>
+  <a href="#" id="f-clear" class="btn btn-sm btn-link text-muted d-none" onclick="clearFilters();return false;">réinitialiser</a>
+  <span class="ms-auto text-muted"><span id="f-n">{{ rows|length }}</span> ligne(s)</span>
+</div>
+
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle" style="font-size:.8rem;">
+  <thead class="table-light"><tr class="small text-muted">
+    <th>Client Odoo</th><th>Réf.</th><th>TVA / SIRET Odoo</th><th class="text-center">SIREN</th>
+    <th>Client Pennylane</th><th>reg_no</th><th>Statut</th><th>Note</th>
+  </tr></thead>
+  <tbody id="rows">
+  {% for r in rows %}
+  {% set color = {'ok':'success','conflit_nom':'danger','doublon_odoo':'danger','doublon_pennylane':'danger',
+                  'sans_cle':'warning','absent_pennylane':'warning','absent_odoo':'secondary'}.get(r.status,'secondary') %}
+    <tr class="mrow" data-status="{{ r.status }}"
+        data-text="{{ ((r.odoo_name or '') ~ ' ' ~ (r.pennylane_name or '') ~ ' ' ~ (r.siren or '') ~ ' ' ~ (r.odoo_vat or '') ~ ' ' ~ (r.odoo_ref or '') ~ ' ' ~ (r.dup_group or ''))|lower }}">
+      <td>{{ r.odoo_name or '' }}{% if r.odoo_id %} <span class="text-muted" style="font-size:.68rem;">#{{ r.odoo_id }}</span>{% endif %}</td>
+      <td><code style="font-size:.7rem;">{{ r.odoo_ref or '' }}</code></td>
+      <td><code style="font-size:.7rem;">{{ r.odoo_siret or r.odoo_vat or '' }}</code></td>
+      <td class="text-center"><code style="font-size:.7rem;">{{ r.siren or '—' }}</code></td>
+      <td>{{ r.pennylane_name or '' }}{% if r.pennylane_customer_id %} <span class="text-muted" style="font-size:.68rem;">#{{ r.pennylane_customer_id }}</span>{% endif %}</td>
+      <td><code style="font-size:.7rem;">{{ r.pennylane_reg_no or '' }}</code></td>
+      <td><span class="badge text-bg-{{ color }}">{{ r.status }}</span>
+          {% if r.dup_group %}<div class="text-muted" style="font-size:.65rem;">{{ r.dup_group }}</div>{% endif %}</td>
+      <td class="small text-muted">{{ r.note or '' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="text-muted small">Aucune donnée — lance une <strong>Synchronisation</strong> (clés Odoo + Pennylane requises).</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<script>
+function applyFilters(){
+  var q=(document.getElementById('f-q').value||'').toLowerCase().trim();
+  var st=document.getElementById('f-st').value;
+  var n=0;
+  document.querySelectorAll('#rows tr.mrow').forEach(function(tr){
+    var vis=(!q||tr.dataset.text.indexOf(q)>=0)&&(!st||tr.dataset.status===st);
+    tr.classList.toggle('d-none',!vis); if(vis)n++;
+  });
+  document.getElementById('f-n').textContent=n;
+  document.getElementById('f-clear').classList.toggle('d-none',!(q||st));
+}
+function setStatus(st){document.getElementById('f-st').value=st;applyFilters();}
+function clearFilters(){document.getElementById('f-q').value='';document.getElementById('f-st').value='';applyFilters();}
+</script>
+{% endblock %}

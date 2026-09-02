@@ -72,20 +72,30 @@ def role_for(user: User, company: Company) -> Optional[str]:
 # Paiements), « salaires » (comptable PAIE, dédiée : voit UNIQUEMENT les comptes 421 salariés).
 # La paie est ISOLÉE : ni « gestion » ni « comptable » ne la voient — seule la rôle « salaires »
 # (et l'admin/superuser pour supervision).
-_FULL = {"suivi", "jobs", "clients", "paiements", "config"}
-_ALL = _FULL | {"salaires"}
+_CAISSE = {"suivi", "jobs", "clients", "paiements", "config"}   # modules Groupe FDF (TopOrder)
+_ODOO = {"odoo", "jobs"}                                        # modules Groupe ISFAHAAN (Odoo × Pennylane)
+_FULL = _CAISSE                                                 # alias historique
+_ALL = _CAISSE | {"salaires"} | _ODOO
 
-# Sociétés « paie seule » : elles n'ont NI caisse NI clients TopOrder — uniquement les
-# comptes 421 (module Salaires). On n'y expose donc QUE la feature « salaires », même pour
-# l'admin (sinon on pourrait lancer une génération caisse avec une config qui n'existe pas).
-_PAIE_ONLY = {"PP126.23"}
+# ---- Registre SOCIÉTÉ -> MODULES ----
+# Chaque société n'expose QUE les modules de son groupe : rien n'est partagé par défaut.
+# Ajouter une société = une ligne ici (+ seed) : ses tuiles/routes sont gardées partout
+# via can()/company_features(), même pour l'admin (pas de module « caisse » sur une
+# société Odoo, pas de module Odoo sur une boulangerie, etc.).
+COMPANY_MODULES = {
+    # Groupe FDF (boulangeries + labo — TopOrder)
+    "STERNA":    _CAISSE | {"salaires"},
+    "KOOKABURA": _CAISSE | {"salaires"},
+    "PP126.23":  {"salaires"},                 # paie seule
+    # Groupe ISFAHAAN (Odoo × Pennylane — PAS de TopOrder)
+    "LACORP":    set(_ODOO),
+}
 
 
 def company_features(company_code: Optional[str]) -> set:
-    """Fonctionnalités réellement disponibles sur cette société."""
-    if company_code in _PAIE_ONLY:
-        return {"salaires"}
-    return set(_ALL)
+    """Modules réellement disponibles sur cette société (registre ci-dessus).
+    Société inconnue du registre -> AUCUN module (opt-in explicite)."""
+    return set(COMPANY_MODULES.get(company_code, set()))
 
 
 def features_for(role: Optional[str], is_superuser: bool = False) -> set:
@@ -96,7 +106,9 @@ def features_for(role: Optional[str], is_superuser: bool = False) -> set:
     if role in ("gestion", "viewer"):
         return {"clients", "paiements"}
     if role in ("comptable", "admin", "operator"):
-        return set(_FULL)
+        # le périmètre réel est ENSUITE intersecté avec les modules de la société :
+        # un comptable ISFAHAAN ne voit que « odoo », un comptable FDF que la caisse.
+        return _CAISSE | _ODOO
     return set()
 
 

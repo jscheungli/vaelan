@@ -216,3 +216,31 @@ class ImportBatch(SQLModel, table=True):
     n_entries: Optional[int] = None
     amount: Optional[float] = None
     csv_path: Optional[str] = None
+
+
+class OdooClientMatch(SQLModel, table=True):
+    """Correspondance clients Odoo ↔ Pennylane (groupe ISFAHAAN — sociétés sans TopOrder).
+
+    Une ligne par client Odoo (odoo_id renseigné) OU par client Pennylane orphelin
+    (odoo_id vide, status absent_odoo). Statuts : ok / conflit_nom / doublon_odoo /
+    doublon_pennylane / sans_cle / absent_pennylane / absent_odoo. Vaelan détecte et
+    alerte ; la correction (fusion des doublons, saisie SIREN/TVA) se fait dans
+    Odoo / Pennylane, puis on resynchronise.
+    """
+    __tablename__ = "odoo_client_matches"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="companies.id", index=True)
+    odoo_id: Optional[int] = Field(default=None, index=True)
+    odoo_name: Optional[str] = None
+    odoo_ref: Optional[str] = None                    # référence interne Odoo
+    odoo_vat: Optional[str] = None                    # n° TVA saisi dans Odoo
+    odoo_siret: Optional[str] = None                  # SIRET Odoo (module l10n_fr) si présent
+    siren: Optional[str] = Field(default=None, index=True)   # clé de matching calculée
+    pennylane_customer_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger))
+    pennylane_name: Optional[str] = None
+    pennylane_reg_no: Optional[str] = None
+    status: str = "unknown"
+    note: Optional[str] = None
+    dup_group: Optional[str] = None                   # clé partagée par les doublons (pour regrouper)
+    last_synced: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

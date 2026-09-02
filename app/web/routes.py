@@ -20,6 +20,7 @@ from app.packs.sterna_caisse.verify import run_verify
 from app.packs.sterna_caisse.justificatifs import run_justificatifs
 from app.packs.sterna_caisse.lettrage import run_lettrage
 from app.packs.sterna_caisse.achats_kk import run_achats_kk
+from app.packs.isfahaan.odoo_clients import run_odoo_clients_sync
 from app.packs.sterna_caisse import payments as caisse_payments
 from app.packs.sterna_caisse import salaires as caisse_salaires
 
@@ -177,6 +178,8 @@ _TILES = [
      "Comptes, journaux et catégories analytiques de la société."),
     ("salaires", "Salaires", "bi-person-vcard", "/c/{code}/salaires",
      "Comptes 421 des salariés : grand-livre par salarié, navigation par exercice."),
+    ("odoo", "Clients Odoo ↔ Pennylane", "bi-diagram-3", "/c/{code}/odoo-clients",
+     "Correspondance des clients entre Odoo et Pennylane : doublons, matching, orphelins."),
     ("jobs", "Tâches", "bi-list-task", "/jobs",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
@@ -222,6 +225,8 @@ def _feature_from_path(path: str):
         return "config"
     if "/salaires" in path:
         return "salaires"
+    if "/odoo-clients" in path:
+        return "odoo"
     if "/paiements" in path:
         return "paiements"
     if "/clients" in path:
@@ -684,6 +689,38 @@ def paiements_client_pdf(request: Request, code: str, account: str, ex: str = ""
     if redir:
         return redir
     return _ledger_pdf_response(company, account, ex)
+
+
+# ----------------------------- ISFAHAAN : clients Odoo ↔ Pennylane -----------------------------
+@router.get("/c/{code}/odoo-clients", response_class=HTMLResponse)
+def odoo_clients_page(request: Request, code: str):
+    from app.models import OdooClientMatch
+    company, redir = _company_or_redirect(request, code)   # feature « odoo » déduite de l'URL
+    if redir:
+        return redir
+    with Session(engine) as s:
+        rows = s.exec(select(OdooClientMatch).where(
+            OdooClientMatch.company_id == company.id)).all()
+    counts = {}
+    for r in rows:
+        counts[r.status] = counts.get(r.status, 0) + 1
+    last = max((r.last_synced for r in rows if r.last_synced), default=None)
+    return templates.TemplateResponse(request, "odoo_clients.html",
+                                      _ctx(request, company=company, rows=rows, counts=counts,
+                                           last_synced=last))
+
+
+@router.post("/c/{code}/odoo-clients/sync")
+def odoo_clients_sync_action(request: Request, code: str):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    run_id = start_job("odoo_clients", lambda ctx: run_odoo_clients_sync(ctx, company.code),
+                       company_id=company.id, pack="isfahaan", label=f"Clients Odoo ↔ Pennylane · {company.name}",
+                       user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse("/jobs", status_code=303)
 
 
 # ----------------------------- Clients (correspondance) -----------------------------
