@@ -62,6 +62,12 @@ def load(path: str = None, db: bool = False) -> str:
         _set(f"ODOO_{k}_DB", c.get("db"))
         _set(f"ODOO_{k}_LOGIN", c.get("login"))
         _set(f"ODOO_{k}_APIKEY", c.get("apiKey"))
+    for code, c in (d.get("inqom") or {}).items():
+        k = _env_key(code)
+        _set(f"INQOM_{k}_CLIENT_ID", c.get("clientId"))
+        _set(f"INQOM_{k}_CLIENT_SECRET", c.get("clientSecret"))
+        _set(f"INQOM_{k}_USER", c.get("user"))
+        _set(f"INQOM_{k}_PASSWORD", c.get("password"))
 
     # ---- ancien format plat (rétrocompatibilité) ----
     for key, c in d.items():
