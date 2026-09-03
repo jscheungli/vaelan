@@ -73,7 +73,7 @@ def role_for(user: User, company: Company) -> Optional[str]:
 # La paie est ISOLÉE : ni « gestion » ni « comptable » ne la voient — seule la rôle « salaires »
 # (et l'admin/superuser pour supervision).
 _CAISSE = {"suivi", "jobs", "clients", "paiements", "config"}   # modules Groupe FDF (TopOrder)
-_ODOO = {"odoo", "jobs"}                                        # modules Groupe ISFAHAAN (Odoo × Pennylane)
+_ODOO = {"odoo", "inqom", "jobs"}                               # modules Groupe ISFAHAAN (Odoo/Inqom × Pennylane)
 _FULL = _CAISSE                                                 # alias historique
 _ALL = _CAISSE | {"salaires"} | _ODOO
 

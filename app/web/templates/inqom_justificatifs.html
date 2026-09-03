@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Justificatifs Inqom · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Justificatifs Inqom</li>
+</ol></nav>
+
+<h1 class="h4 mb-1">Justificatifs Inqom → Pennylane</h1>
+<p class="text-muted small">Chaque écriture Inqom porte son document accroché : Vaelan matche l'écriture Inqom
+  avec l'écriture Pennylane (par <strong>pièce</strong>, sinon par <strong>date + montant</strong> unique) et accroche le
+  document — <strong>aucune interprétation</strong>. Une écriture Pennylane déjà pourvue d'une pièce est sautée
+  (relançable sans doublon). Commence toujours par un <strong>cadrage à blanc</strong>.</p>
+
+<div class="card shadow-sm mb-3" style="max-width:760px;">
+  <div class="card-body">
+    <form hx-post="/c/{{ company.code }}/inqom-justificatifs/run" hx-target="#run-result" hx-swap="innerHTML"
+          hx-disabled-elt="find button" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small text-muted mb-1">Du</label>
+        <input type="date" name="date_from" value="2026-01-01" class="form-control form-control-sm">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small text-muted mb-1">Au (vide = aujourd'hui)</label>
+        <input type="date" name="date_to" class="form-control form-control-sm">
+      </div>
+      <div class="col-auto">
+        <button name="mode" value="dry" class="btn btn-sm btn-dark"><i class="bi bi-search"></i> Cadrer à blanc</button>
+      </div>
+      <div class="col-auto">
+        <button name="mode" value="apply" class="btn btn-sm btn-outline-danger"
+                onclick="return confirm('ACCROCHER les documents dans Pennylane ?\nLes écritures déjà pourvues seront sautées (idempotent). Lancer ?');">
+          <i class="bi bi-paperclip"></i> Accrocher</button>
+      </div>
+    </form>
+    <div id="run-result" class="mt-2"></div>
+  </div>
+</div>
+
+<h3 class="h6 text-uppercase text-muted">Dernières exécutions</h3>
+<div class="table-responsive">
+<table class="table table-sm align-middle" style="font-size:.82rem;">
+  <thead class="table-light"><tr class="small text-muted">
+    <th>#</th><th>Lancée</th><th>Libellé</th><th>Statut</th><th>Résumé</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in runs %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td class="text-nowrap">{{ r.created_at.strftime('%d/%m %H:%M') if r.created_at }}</td>
+      <td>{{ (r.label or '')[:48] }}</td>
+      <td><span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('danger' if r.status in ('error','failed') else 'secondary') }}">{{ r.status }}</span></td>
+      <td class="small">{{ (r.summary or '')[:90] }}</td>
+      <td class="text-nowrap">
+        <a href="/jobs/{{ r.id }}/artifact/report" class="small" title="Compte rendu PDF"><i class="bi bi-file-earmark-bar-graph"></i> CR</a>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="text-muted small">Aucune exécution — lance un cadrage à blanc.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

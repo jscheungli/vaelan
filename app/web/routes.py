@@ -21,6 +21,7 @@ from app.packs.sterna_caisse.justificatifs import run_justificatifs
 from app.packs.sterna_caisse.lettrage import run_lettrage
 from app.packs.sterna_caisse.achats_kk import run_achats_kk
 from app.packs.isfahaan.odoo_clients import run_odoo_clients_sync
+from app.packs.isfahaan.inqom_justificatifs import run_inqom_justificatifs
 from app.packs.sterna_caisse import payments as caisse_payments
 from app.packs.sterna_caisse import salaires as caisse_salaires
 
@@ -180,6 +181,8 @@ _TILES = [
      "Comptes 421 des salariés : grand-livre par salarié, navigation par exercice."),
     ("odoo", "Clients Odoo ↔ Pennylane", "bi-diagram-3", "/c/{code}/odoo-clients",
      "Correspondance des clients entre Odoo et Pennylane : doublons, matching, orphelins."),
+    ("inqom", "Justificatifs Inqom", "bi-paperclip", "/c/{code}/inqom-justificatifs",
+     "Accroche les documents des écritures Inqom aux écritures Pennylane (cadrage à blanc, puis accrochage)."),
     ("jobs", "Tâches", "bi-list-task", "/jobs",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
@@ -227,6 +230,8 @@ def _feature_from_path(path: str):
         return "salaires"
     if "/odoo-clients" in path:
         return "odoo"
+    if "/inqom-justificatifs" in path:
+        return "inqom"
     if "/paiements" in path:
         return "paiements"
     if "/clients" in path:
@@ -717,6 +722,38 @@ def odoo_clients_sync_action(request: Request, code: str):
         return redir
     run_id = start_job("odoo_clients", lambda ctx: run_odoo_clients_sync(ctx, company.code),
                        company_id=company.id, pack="isfahaan", label=f"Clients Odoo ↔ Pennylane · {company.name}",
+                       user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse("/jobs", status_code=303)
+
+
+# ----------------------------- ISFAHAAN : justificatifs Inqom -----------------------------
+@router.get("/c/{code}/inqom-justificatifs", response_class=HTMLResponse)
+def inqom_justificatifs_page(request: Request, code: str):
+    from app.models import Run
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        runs = s.exec(select(Run).where(Run.company_id == company.id, Run.kind == "inqom_justif")
+                      .order_by(Run.id.desc()).limit(8)).all()
+    return templates.TemplateResponse(request, "inqom_justificatifs.html",
+                                      _ctx(request, company=company, runs=runs))
+
+
+@router.post("/c/{code}/inqom-justificatifs/run")
+def inqom_justificatifs_run(request: Request, code: str, mode: str = Form("dry"),
+                            date_from: str = Form("2026-01-01"), date_to: str = Form("")):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    apply_mode = (mode == "apply")
+    label = ("Accrochage" if apply_mode else "Cadrage à blanc") + f" justificatifs Inqom · {company.name}"
+    run_id = start_job("inqom_justif",
+                       lambda ctx: run_inqom_justificatifs(ctx, company.code, date_from=date_from,
+                                                           date_to=(date_to or None), apply=apply_mode),
+                       company_id=company.id, pack="isfahaan", label=label,
                        user=current_user(request))
     if request.headers.get("HX-Request"):
         return _watch_fragment(run_id)

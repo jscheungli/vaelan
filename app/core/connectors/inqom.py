@@ -72,7 +72,51 @@ class InqomClient:
             return r.json()
         return None
 
+    def post_json(self, path: str, body: dict):
+        h = {"Authorization": f"Bearer {self.token()}", "Content-Type": "application/json",
+             "Accept": "application/json"}
+        for attempt in range(5):
+            with httpx.Client(timeout=120) as c:
+                r = c.post(BASE_URL + path, headers=h, json=body)
+            if r.status_code == 401 and attempt == 0:
+                self._token = None
+                h["Authorization"] = f"Bearer {self.token()}"
+                continue
+            if r.status_code == 429 and attempt < 4:
+                time.sleep(float(r.headers.get("Retry-After") or 0) or 1.5 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            return r.json() if r.content else None
+        return None
+
     # ---- helpers ----
+    def search_entries(self, enterprise_id, journal_ids, with_lines=True):
+        """Écritures d'un ou plusieurs journaux (POST entries/search-multiple)."""
+        out = {"WithEntryRef": True, "WithEntryLabel": True, "WithDocDate": True}
+        if not with_lines:
+            out["WithMetadataOnly"] = True
+        return self.post_json(f"/api/app/enterprises/{enterprise_id}/entries/search-multiple",
+                              {"Search": {"JournalIds": list(journal_ids)}, "Output": out}) or []
+
+    def journals(self, enterprise_id):
+        return self.get(f"/api/app/enterprises/{enterprise_id}/journals") or []
+
+    def file_info(self, enterprise_id, file_id, public=True):
+        return self.get(f"/api/app/enterprises/{enterprise_id}/Files/{file_id}",
+                        withPublicUrl="true" if public else "false")
+
+    def download_file(self, enterprise_id, file_id):
+        """Télécharge le document accroché -> (nom, bytes) ou (None, None)."""
+        info = self.file_info(enterprise_id, file_id) or {}
+        url = info.get("FileUrl")
+        if not url:
+            return None, None
+        with httpx.Client(timeout=120) as c:
+            r = c.get(url)
+        if r.status_code != 200 or not r.content:
+            return None, None
+        return (info.get("Name") or f"inqom_{file_id}.pdf"), r.content
+
     def folders(self):
         """Dossiers comptables accessibles au compte (GET /api/app/companies/accounting-folders)."""
         return self.get("/api/app/companies/accounting-folders")
