@@ -11,6 +11,8 @@ IDEMPOTENT : une écriture Pennylane qui a déjà une pièce (champ attachment d
 endpoint) est sautée. Mode par défaut = CADRAGE À BLANC (aucune écriture, aucun upload).
 Les journaux Inqom sans journal Pennylane de même code sont signalés (non traités).
 """
+import csv
+import io
 import re
 import time
 from collections import defaultdict
@@ -210,6 +212,35 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
         L += ["== ERREURS =="] + [f"  {e['code']} {e['date']} {str(e['docref'])[:24]} — {e['why']}" for e in errors[:60]] + [""]
     L.append("✅ " + ("Accrochage terminé." if apply else "Cadrage à blanc terminé — rien n'a été modifié.")
              if ok else "⚠️ Voir conflits/erreurs ci-dessus.")
+
+    # ---- CSV D'AUDIT (traçabilité ligne à ligne, une par document traité) ----
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["statut", "journal", "date_ecriture", "piece_inqom", "montant", "matching",
+                "id_ecriture_pennylane", "piece_pennylane", "fichier", "id_fichier_inqom",
+                "id_ecriture_inqom", "motif"])
+    def _row(st, d, **kw):
+        w.writerow([st, d.get("code"), d.get("date"), d.get("docref"),
+                    f"{d.get('amount', 0):.2f}", kw.get("how") or d.get("how") or "",
+                    d.get("pl_id") or "", d.get("pl_piece") or "", kw.get("name") or "",
+                    d.get("file_id"), d.get("inqom_id"), kw.get("why") or ""])
+    for d in attached:
+        _row("accrochee", d, name=d.get("name"))
+    if not apply:
+        for d in to_attach:
+            _row("a_accrocher", d)
+    for d in already:
+        _row("deja_pourvue", d)
+    for d in unmatched:
+        _row("non_matchee", d, why="aucune écriture Pennylane trouvée (pièce, puis date+montant)")
+    for c in conflicts:
+        _row("conflit", c, why=c.get("why"))
+    for e in errors:
+        _row("erreur", e, why=e.get("why"))
+    ctx.add_artifact("csv", f"{now.strftime('%Y%m%d %H%M')} audit_justificatifs_{company_code}.csv",
+                     buf.getvalue().encode("utf-8-sig"), "text/csv")
+    L.append("")
+    L.append("Traçabilité : CSV d'audit joint à la tâche (une ligne par document, statut + ids Inqom/Pennylane).")
     ctx.set_report("\n".join(L))
 
     ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} justificatifs_inqom_{company_code}.pdf",

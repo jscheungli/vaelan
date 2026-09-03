@@ -53,6 +53,7 @@
       <td class="small">{{ (r.summary or '')[:90] }}</td>
       <td class="text-nowrap">
         <a href="/jobs/{{ r.id }}/artifact/report" class="small" title="Compte rendu PDF"><i class="bi bi-file-earmark-bar-graph"></i> CR</a>
+        <a href="/jobs/{{ r.id }}/artifact/csv" class="small ms-2" title="CSV d'audit (une ligne par document)"><i class="bi bi-filetype-csv"></i> Audit</a>
       </td>
     </tr>
   {% else %}
