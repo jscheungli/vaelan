@@ -142,9 +142,45 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
     ctx.log(f"matching : {len(to_attach)} à accrocher · {len(already)} déjà pourvues · "
             f"{len(unmatched)} non matchées · {len(conflicts)} conflits · {unmapped_docs} hors journaux mappés")
 
-    # ---- accrochage (mode apply) ----
+    # ---- CSV d'audit : builder réutilisable (flush INCRÉMENTAL pendant l'accrochage,
+    # pour qu'une interruption — redéploiement, crash — laisse toujours la trace exacte) ----
+    csv_name = f"{(datetime.utcnow() + _TZ).strftime('%Y%m%d %H%M')} audit_justificatifs_{company_code} T{ctx.run_id}.csv"
     attached, errors = [], []
+
+    def _audit_csv(pending):
+        buf = io.StringIO()
+        w = csv.writer(buf, delimiter=";")
+        w.writerow(["statut", "journal", "date_ecriture", "piece_inqom", "montant", "matching",
+                    "id_ecriture_pennylane", "piece_pennylane", "fichier", "id_fichier_inqom",
+                    "id_ecriture_inqom", "motif"])
+        def _row(st, d, **kw):
+            w.writerow([st, d.get("code"), d.get("date"), d.get("docref"),
+                        f"{d.get('amount', 0):.2f}", kw.get("how") or d.get("how") or "",
+                        d.get("pl_id") or "", d.get("pl_piece") or "", kw.get("name") or "",
+                        d.get("file_id"), d.get("inqom_id"), kw.get("why") or ""])
+        for d in attached:
+            _row("accrochee", d, name=d.get("name"))
+        for d in pending:
+            _row("a_accrocher", d)
+        for d in already:
+            _row("deja_pourvue", d)
+        for d in unmatched:
+            _row("non_matchee", d, why="aucune écriture Pennylane trouvée (pièce, puis date+montant)")
+        for c in conflicts:
+            _row("conflit", c, why=c.get("why"))
+        for e in errors:
+            _row("erreur", e, why=e.get("why"))
+        return buf.getvalue().encode("utf-8-sig")
+
+    def _flush(pending):
+        try:
+            ctx.add_artifact("csv", csv_name, _audit_csv(pending), "text/csv")
+        except Exception:
+            pass
+
+    # ---- accrochage (mode apply) ----
     if apply and to_attach:
+        _flush(to_attach)                     # état initial persisté avant le premier document
         for i, d in enumerate(to_attach):
             ctx.progress(i, len(to_attach), step=f"accrochage {i + 1}/{len(to_attach)} ({d['code']} {d['date']})…")
             try:
@@ -162,6 +198,8 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
                     errors.append({**d, "why": "attach_to_entry a échoué"})
             except Exception as e:
                 errors.append({**d, "why": str(e)[:70]})
+            if (i + 1) % 25 == 0 or (errors and errors[-1].get("inqom_id") == d.get("inqom_id")):
+                _flush(to_attach[i + 1:])     # trace incrémentale (tous les 25 docs + chaque erreur)
             time.sleep(0.15)
 
     # ---- compte rendu ----
@@ -213,32 +251,8 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
     L.append("✅ " + ("Accrochage terminé." if apply else "Cadrage à blanc terminé — rien n'a été modifié.")
              if ok else "⚠️ Voir conflits/erreurs ci-dessus.")
 
-    # ---- CSV D'AUDIT (traçabilité ligne à ligne, une par document traité) ----
-    buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
-    w.writerow(["statut", "journal", "date_ecriture", "piece_inqom", "montant", "matching",
-                "id_ecriture_pennylane", "piece_pennylane", "fichier", "id_fichier_inqom",
-                "id_ecriture_inqom", "motif"])
-    def _row(st, d, **kw):
-        w.writerow([st, d.get("code"), d.get("date"), d.get("docref"),
-                    f"{d.get('amount', 0):.2f}", kw.get("how") or d.get("how") or "",
-                    d.get("pl_id") or "", d.get("pl_piece") or "", kw.get("name") or "",
-                    d.get("file_id"), d.get("inqom_id"), kw.get("why") or ""])
-    for d in attached:
-        _row("accrochee", d, name=d.get("name"))
-    if not apply:
-        for d in to_attach:
-            _row("a_accrocher", d)
-    for d in already:
-        _row("deja_pourvue", d)
-    for d in unmatched:
-        _row("non_matchee", d, why="aucune écriture Pennylane trouvée (pièce, puis date+montant)")
-    for c in conflicts:
-        _row("conflit", c, why=c.get("why"))
-    for e in errors:
-        _row("erreur", e, why=e.get("why"))
-    ctx.add_artifact("csv", f"{now.strftime('%Y%m%d %H%M')} audit_justificatifs_{company_code} T{ctx.run_id}.csv",
-                     buf.getvalue().encode("utf-8-sig"), "text/csv")
+    # ---- CSV d'audit final (mode à blanc : les « à accrocher » ; mode apply : tout est traité) ----
+    _flush(to_attach if not apply else [])
     L.append("")
     L.append("Traçabilité : CSV d'audit joint à la tâche (une ligne par document, statut + ids Inqom/Pennylane).")
     ctx.set_report("\n".join(L))
