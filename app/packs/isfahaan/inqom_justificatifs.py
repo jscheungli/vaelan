@@ -237,13 +237,13 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
         _row("conflit", c, why=c.get("why"))
     for e in errors:
         _row("erreur", e, why=e.get("why"))
-    ctx.add_artifact("csv", f"{now.strftime('%Y%m%d %H%M')} audit_justificatifs_{company_code}.csv",
+    ctx.add_artifact("csv", f"{now.strftime('%Y%m%d %H%M')} audit_justificatifs_{company_code} T{ctx.run_id}.csv",
                      buf.getvalue().encode("utf-8-sig"), "text/csv")
     L.append("")
     L.append("Traçabilité : CSV d'audit joint à la tâche (une ligne par document, statut + ids Inqom/Pennylane).")
     ctx.set_report("\n".join(L))
 
-    ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} justificatifs_inqom_{company_code}.pdf",
+    ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} justificatifs_inqom_{company_code} T{ctx.run_id}.pdf",
                      isf_report.justificatifs_pdf(company_code, label, mode, counts, dict(per_j),
                                                   unmatched, errors, ok,
                                                   run_id=ctx.run_id, executed_at=stamp),

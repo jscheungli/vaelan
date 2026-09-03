@@ -16,7 +16,7 @@
 <div class="d-flex align-items-center mb-1 flex-wrap gap-2">
   <h1 class="h4 mb-0">Suivi des paiements</h1>
   <div class="ms-auto d-flex align-items-center gap-2">
-    {% if board.synced %}<span class="small text-muted">synchro {{ board.synced.strftime('%d/%m %H:%M') }}</span>{% endif %}
+    {% if board.synced %}<span class="small text-muted">synchro {{ board.synced | dtlocal }}</span>{% endif %}
     <form method="post" action="/c/{{ company.code }}/paiements/sync" class="d-inline">
       <button class="btn btn-sm btn-dark"><i class="bi bi-arrow-repeat"></i> Synchroniser</button>
     </form>

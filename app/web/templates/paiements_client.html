@@ -138,7 +138,7 @@
           <button name="status" value="saisi" class="btn btn-sm py-0 px-1 {{ 'btn-success' if tag and tag.status=='saisi' else 'btn-outline-success' }}" title="Saisi / rapproché dans TopOrder"><i class="bi bi-check2"></i></button>
           <button name="status" value="ignore" class="btn btn-sm py-0 px-1 {{ 'btn-secondary' if tag and tag.status=='ignore' else 'btn-outline-secondary' }}" title="Ignorer (non pertinent / déjà traité)"><i class="bi bi-slash-circle"></i></button>
         </form>
-        {% if tag %}<div class="text-muted" style="font-size:.62rem;">{{ (tag.reported_by or '').split('@')[0] }} · {{ tag.reported_at.strftime('%d/%m %H:%M') }}</div>{% endif %}
+        {% if tag %}<div class="text-muted" style="font-size:.62rem;">{{ (tag.reported_by or '').split('@')[0] }} · {{ tag.reported_at | dtlocal }}</div>{% endif %}
       </td>
     </tr>
   {% endfor %}

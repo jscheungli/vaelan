@@ -27,6 +27,9 @@ from app.packs.sterna_caisse import salaires as caisse_salaires
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+# horodatages : stockés en UTC, TOUJOURS affichés en heure de La Réunion (UTC+4)
+templates.env.filters["dtlocal"] = (
+    lambda dt: (dt + timedelta(hours=4)).strftime("%d/%m/%Y %H:%M") if dt else "—")
 
 
 def _ctx(request: Request, **extra):

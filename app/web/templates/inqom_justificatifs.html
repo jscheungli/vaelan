@@ -41,13 +41,13 @@
 <div class="table-responsive">
 <table class="table table-sm align-middle" style="font-size:.82rem;">
   <thead class="table-light"><tr class="small text-muted">
-    <th>#</th><th>Lancée</th><th>Libellé</th><th>Statut</th><th>Résumé</th><th></th>
+    <th>#</th><th>Lancée (heure Réunion)</th><th>Libellé</th><th>Statut</th><th>Résumé</th><th></th>
   </tr></thead>
   <tbody>
   {% for r in runs %}
     <tr>
       <td>{{ r.id }}</td>
-      <td class="text-nowrap">{{ r.created_at.strftime('%d/%m %H:%M') if r.created_at }}</td>
+      <td class="text-nowrap">{{ r.started_at | dtlocal }}</td>
       <td>{{ (r.label or '')[:48] }}</td>
       <td><span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('danger' if r.status in ('error','failed') else 'secondary') }}">{{ r.status }}</span></td>
       <td class="small">{{ (r.summary or '')[:90] }}</td>

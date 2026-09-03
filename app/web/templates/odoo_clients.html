@@ -16,7 +16,7 @@
 <p class="text-muted small mb-1">Correspondance par <strong>SIREN</strong> (SIRET Odoo, n° de TVA FR, reg_no Pennylane),
   repli par nom normalisé. Vaelan détecte doublons, mauvais matchings et orphelins ; la correction (fusion,
   saisie du SIREN) se fait <strong>dans Odoo / Pennylane</strong>, puis on resynchronise.
-  {% if last_synced %}<span class="ms-2">Dernière synchro : {{ last_synced.strftime('%d/%m/%Y %H:%M') }} UTC.</span>{% endif %}</p>
+  {% if last_synced %}<span class="ms-2">Dernière synchro : {{ last_synced | dtlocal }} (Réunion).</span>{% endif %}</p>
 <div id="sync-result"></div>
 
 {% set badges = [('ok','ok','success'), ('conflit_nom','conflit de nom','danger'),
