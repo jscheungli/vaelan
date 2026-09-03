@@ -115,7 +115,14 @@ class InqomClient:
             r = c.get(url)
         if r.status_code != 200 or not r.content:
             return None, None
-        return (info.get("Name") or f"inqom_{file_id}.pdf"), r.content
+        data = r.content
+        # RÉPARATION : certains fichiers Inqom (connecteur ZEOP) sont des réponses HTTP
+        # BRUTES (en-têtes réseau + PDF). Pennylane les refuse (422) -> on extrait le PDF.
+        if data[:5] == b"HTTP/":
+            i = data.find(b"%PDF")
+            if i > 0:
+                data = data[i:]
+        return (info.get("Name") or f"inqom_{file_id}.pdf"), data
 
     def folders(self):
         """Dossiers comptables accessibles au compte (GET /api/app/companies/accounting-folders)."""
