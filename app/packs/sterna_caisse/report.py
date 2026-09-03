@@ -721,7 +721,7 @@ def achats_pdf(title_scope, period_label, counts, pushed, already, errors, missi
 
 def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
                  ambiguous, open_creances, errors, coherent, unmatched_vir=None,
-                 run_id=None, executed_at=None) -> bytes:
+                 overpaid=None, run_id=None, executed_at=None) -> bytes:
     """Compte rendu PDF de l'étape 6 (lettrage des comptes 411)."""
     def _ascii(s):
         return (str(s).replace("—", "·").replace("→", "->").replace("€", "EUR")
@@ -766,6 +766,7 @@ def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
     section("Synthèse")
     for lbl, v in [("Factures soldées lettrées", counts["full"]),
                    ("Lettrages partiels (acomptes)", counts["partial"]),
+                   ("Avoirs/trop-perçus partiels (dû au client)", counts.get("overpaid", 0)),
                    ("Virements rapprochés (certains)", counts["vir"]),
                    ("Ambigus (à traiter à la main)", counts["ambiguous"]),
                    ("Virements non rapprochés (info)", counts.get("unmatched", 0)),
@@ -786,6 +787,18 @@ def lettrage_pdf(company_name, period_label, counts, full, partial, vir_ok,
             right(W - 60, f"{v['amount']:.2f}"); ny(13)
         ny(6)
 
+    if overpaid:
+        section("Avoirs / trop-perçus partiellement lettrés (informatif)")
+        left(x0 + 4, "Règlements > créance (avoir remboursé en partie ou trop-perçu) : lettrage partiel posé,", 8, "helv", _GREY); ny(11)
+        left(x0 + 4, "le solde reste ouvert au crédit du client (remboursement du reste ou imputation à venir).", 8, "helv", _GREY); ny(14)
+        for o in overpaid:
+            ensure(13)
+            left(x0 + 4, o.get("fref") or f"F{o['fnum']}", 9, "cour")
+            left(x0 + 90, str(o.get("nm") or "")[:30], 9)
+            left(x0 + 300, f"reçu {o['received']:.2f}", 9, "cour")
+            right(W - 60, f"dû au client {o['back']:.2f}", 9, "cour", (0.55, 0.35, 0.05))
+            ny(13)
+        ny(6)
     if partial:
         section("Lettrages partiels (reste dû)")
         for p in partial:

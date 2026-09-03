@@ -84,7 +84,7 @@ def run_lettrage(ctx, company_code, as_of):
     label = f"arrêté au {as_of.strftime('%d/%m/%Y')}"
     ctx.log(f"Lettrage des comptes 411 · {company.name} · {label} · {len(accounts)} comptes clients")
 
-    full, partial, vir_ok = [], [], []
+    full, partial, vir_ok, overpaid = [], [], [], []
     ambiguous, open_creances, orphans, errors = [], [], [], []
     unmatched_vir = []      # virements sans créance TopOrder du même montant (Kimayo/acompte/à venir)
     n_acc = 0
@@ -169,8 +169,12 @@ def run_lettrage(ctx, company_code, as_of):
                                                                     "pfx": gpfx, "fref": fref,
                                                                     "paid": round(g["cs"], 2), "due": bal})
                 else:
-                    ambiguous.append({"acc": num, "nm": nm, "fnum": fnum, "pfx": gpfx, "fref": fref,
-                                      "why": f"trop-perçu {-bal:.2f}"})
+                    # paiements > créance : avoir partiellement remboursé ou trop-perçu.
+                    # Même traitement que les acomptes, en miroir : LETTRAGE PARTIEL, et le
+                    # reste (dû AU CLIENT) est laissé ouvert — informatif, pas bloquant.
+                    pl.letter_lines(ids, "partial")
+                    overpaid.append({"acc": num, "nm": nm, "fnum": fnum, "pfx": gpfx, "fref": fref,
+                                     "received": round(g["cs"], 2), "back": round(-bal, 2)})
             except Exception as e:
                 errors.append({"acc": num, "nm": nm, "why": f"{fref}: {str(e)[:50]}"})
             time.sleep(0.05)
@@ -202,10 +206,12 @@ def run_lettrage(ctx, company_code, as_of):
     now = datetime.utcnow() + _TZ
     stamp = now.strftime("%d/%m/%Y %H:%M")
     counts = {"accounts": n_acc, "full": len(full), "partial": len(partial),
+              "overpaid": len(overpaid),
               "vir": len(vir_ok), "ambiguous": len(ambiguous), "unmatched": len(unmatched_vir),
               "open": len(open_creances), "errors": len(errors)}
     coherent = not errors and not ambiguous
     ctx.log(f"{len(full)} factures soldées lettrées · {len(partial)} partielles · "
+            f"{len(overpaid)} avoirs/trop-perçus partiels · "
             f"{len(vir_ok)} virements rapprochés · {len(ambiguous)} ambigus · "
             f"{len(open_creances)} créances ouvertes")
     if kimayo_skipped:
@@ -221,6 +227,7 @@ def run_lettrage(ctx, company_code, as_of):
          "== SYNTHÈSE ==",
          f"  Factures soldées lettrées      : {len(full)}",
          f"  Lettrages partiels (acomptes)  : {len(partial)}",
+         f"  Avoirs/trop-perçus partiels    : {len(overpaid)}   (reste dû AU CLIENT)",
          f"  Virements rapprochés (certains): {len(vir_ok)}",
          f"  Ambigus (à traiter à la main)  : {len(ambiguous)}",
          f"  Virements non rapprochés (info): {len(unmatched_vir)}",
@@ -232,6 +239,14 @@ def run_lettrage(ctx, company_code, as_of):
               "    après la bascule, acompte, ou facture pas encore générée — laissés ouverts)"]
         for v in sorted(unmatched_vir, key=lambda x: (x.get("date") or "")):
             L.append(f"  {v['date']}  {v['nm'][:28]:<30} {v['amount']:>10.2f}")
+        L.append("")
+    if overpaid:
+        L += ["== AVOIRS / TROP-PERÇUS PARTIELLEMENT LETTRÉS (informatif) ==",
+              "   (les règlements dépassent la créance : avoir remboursé en partie, ou trop-perçu.",
+              "    Lettrage PARTIEL posé ; le solde reste OUVERT au crédit du client — il se soldera",
+              "    par le remboursement du reste ou par imputation sur un prochain achat.)"]
+        for o in overpaid:
+            L.append(f"  {o.get('fref', 'F'+str(o['fnum'])):<11} {o['nm'][:28]:<30} reçu {o['received']:>10.2f}  reste dû au client {o['back']:>8.2f}")
         L.append("")
     if partial:
         L += ["== LETTRAGES PARTIELS (reste dû) =="]
@@ -263,7 +278,7 @@ def run_lettrage(ctx, company_code, as_of):
     ctx.add_artifact("report", f"{now.strftime('%Y%m%d %H%M')} compte_rendu_lettrage.pdf",
                      report.lettrage_pdf(company.name, label, counts, full, partial, vir_ok,
                                          ambiguous, open_creances, errors, coherent,
-                                         unmatched_vir=unmatched_vir,
+                                         unmatched_vir=unmatched_vir, overpaid=overpaid,
                                          run_id=ctx.run_id, executed_at=stamp),
                      "application/pdf")
     _record(company.id, coherent, as_of, now, ctx.run_id)
