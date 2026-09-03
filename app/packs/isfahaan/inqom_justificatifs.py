@@ -121,6 +121,15 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
             same_day = [c for c in cands if c.get("date") == d["date"]]
             if len(same_day) == 1:
                 target, how = same_day[0], "pièce+date"
+            else:
+                # pièce en PLUSIEURS exemplaires côté Pennylane (doublons d'écritures, souvent
+                # avec doublons Inqom en face) : tous les candidats portent la même pièce ->
+                # on sert chaque document à un candidat LIBRE (non réclamé, sans pièce jointe)
+                # dont le MONTANT confirme. Comptablement sûr : mêmes pièce/montant partout.
+                free = [c for c in cands if c["id"] not in claimed and not c.get("attachment")
+                        and d["amount"] > 0 and abs(_plamt(c) - d["amount"]) < 0.01]
+                if free:
+                    target, how = free[0], "pièce+montant (multi-exemplaires)"
         if target is None and d["amount"] > 0:
             day = [c for c in by_date.get((d["pl_jid"], d["date"]), []) if c["id"] not in claimed]
             hits = [c for c in day if abs(_plamt(c) - d["amount"]) < 0.01]
