@@ -18,6 +18,7 @@ _COMPANIES = [
     ("GLDSTDENIS", "GLD SAINT-DENIS"),     # groupe ISFAHAAN (SIREN 910919174)
     ("GLDCASABONA", "GLD CASABONA"),       # groupe ISFAHAAN (SIREN 952182764)
     ("ISFAHAAN", "Isfahaan"),      # holding du groupe (SIREN 981355589)
+    ("GONGCHA", "GONG CHA"),       # groupe ISFAHAAN (SIREN 953142080)
 ]
 
 

@@ -14,6 +14,7 @@ COMPANIES = {
     "GLDSTDENIS": {"name": "GLD SAINT-DENIS", "siren": "910919174"},
     "GLDCASABONA": {"name": "GLD CASABONA", "siren": "952182764"},
     "ISFAHAAN": {"name": "Isfahaan (holding)", "siren": "981355589"},
+    "GONGCHA": {"name": "GONG CHA", "siren": "953142080"},
 }
 
 # ---- Inqom (justificatifs) ----
@@ -34,6 +35,7 @@ INQOM_ENTERPRISES = {
     "GLDSTDENIS": 118024,
     "GLDCASABONA": 118027,
     "ISFAHAAN": 118695,
+    "GONGCHA": 118698,      # accès ouvert le 04/09/2026 (SIREN 953142080 vérifié)
 }
 
 

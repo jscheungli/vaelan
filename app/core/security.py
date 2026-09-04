@@ -98,6 +98,7 @@ COMPANY_MODULES = {
     "GLDSTDENIS":   {"inqom", "jobs"},
     "GLDCASABONA":  {"inqom", "jobs"},
     "ISFAHAAN":     {"inqom", "jobs"},
+    "GONGCHA":      {"inqom", "jobs"},
 }
 
 
