@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Trésorerie groupe · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Trésorerie groupe</li>
+</ol></nav>
+
+<h1 class="h4 mb-1">Trésorerie du groupe ISFAHAAN</h1>
+<p class="text-muted small">Lit la <strong>balance générale Pennylane</strong> de chaque société du groupe à plusieurs
+  fins de mois et en tire les grandes masses : trésorerie (51+53), dettes fournisseurs (401), créances clients (411),
+  emprunts (16), comptes de liaison intra-groupe (45/46/47). Lecture seule.
+  ⚠️ Tant que la migration Inqom → Pennylane n'est pas soldée par le cabinet, piloter sur les
+  <strong>variations</strong> mois par mois plutôt que sur les niveaux.</p>
+
+<div class="card shadow-sm mb-3" style="max-width:560px;">
+  <div class="card-body">
+    <form hx-post="/c/{{ company.code }}/treso/run" hx-target="#run-result" hx-swap="innerHTML"
+          hx-disabled-elt="find button" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small text-muted mb-1">Profondeur</label>
+        <select name="months" class="form-select form-select-sm">
+          <option value="3">3 mois</option>
+          <option value="6" selected>6 mois</option>
+          <option value="12">12 mois</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-dark"><i class="bi bi-bank"></i> Scanner le groupe</button>
+      </div>
+    </form>
+    <div id="run-result" class="mt-2"></div>
+  </div>
+</div>
+
+{% if latest %}
+<h3 class="h6 text-uppercase text-muted">Dernier scan (tâche #{{ latest.id }})</h3>
+<pre class="border rounded bg-white p-3 small" style="overflow-x:auto;">{{ latest.report }}</pre>
+{% endif %}
+
+<h3 class="h6 text-uppercase text-muted">Dernières exécutions</h3>
+<div class="table-responsive">
+<table class="table table-sm align-middle" style="font-size:.82rem;">
+  <thead class="table-light"><tr class="small text-muted">
+    <th>#</th><th>Lancée (heure Réunion)</th><th>Libellé</th><th>Statut</th><th>Résumé</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in runs %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td class="text-nowrap">{{ r.started_at | dtlocal }}</td>
+      <td>{{ (r.label or '')[:48] }}</td>
+      <td><span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('danger' if r.status in ('error','failed') else 'secondary') }}">{{ r.status }}</span></td>
+      <td class="small">{{ (r.summary or '')[:90] }}</td>
+      <td class="text-nowrap">
+        <a href="/jobs/{{ r.id }}/artifact/csv" class="small" title="CSV (une ligne par société et par date)"><i class="bi bi-filetype-csv"></i> CSV</a>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="text-muted small">Aucune exécution — lance un premier scan.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

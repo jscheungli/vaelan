@@ -22,6 +22,7 @@ from app.packs.sterna_caisse.lettrage import run_lettrage
 from app.packs.sterna_caisse.achats_kk import run_achats_kk
 from app.packs.isfahaan.odoo_clients import run_odoo_clients_sync
 from app.packs.isfahaan.inqom_justificatifs import run_inqom_justificatifs
+from app.packs.isfahaan.treso import run_treso_scan
 from app.packs.sterna_caisse import payments as caisse_payments
 from app.packs.sterna_caisse import salaires as caisse_salaires
 
@@ -186,6 +187,8 @@ _TILES = [
      "Correspondance des clients entre Odoo et Pennylane : doublons, matching, orphelins."),
     ("inqom", "Justificatifs Inqom", "bi-paperclip", "/c/{code}/inqom-justificatifs",
      "Accroche les documents des écritures Inqom aux écritures Pennylane (cadrage à blanc, puis accrochage)."),
+    ("treso", "Trésorerie groupe", "bi-bank", "/c/{code}/treso",
+     "Grandes masses des balances Pennylane de toutes les sociétés du groupe : trésorerie, dettes fournisseurs, créances, emprunts."),
     ("jobs", "Tâches", "bi-list-task", "/jobs",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
@@ -235,6 +238,8 @@ def _feature_from_path(path: str):
         return "odoo"
     if "/inqom-justificatifs" in path:
         return "inqom"
+    if "/treso" in path:
+        return "treso"
     if "/paiements" in path:
         return "paiements"
     if "/clients" in path:
@@ -757,6 +762,35 @@ def inqom_justificatifs_run(request: Request, code: str, mode: str = Form("dry")
                        lambda ctx: run_inqom_justificatifs(ctx, company.code, date_from=date_from,
                                                            date_to=(date_to or None), apply=apply_mode),
                        company_id=company.id, pack="isfahaan", label=label,
+                       user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse("/jobs", status_code=303)
+
+
+@router.get("/c/{code}/treso", response_class=HTMLResponse)
+def treso_page(request: Request, code: str):
+    from app.models import Run
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        runs = s.exec(select(Run).where(Run.company_id == company.id, Run.kind == "treso_scan")
+                      .order_by(Run.id.desc()).limit(8)).all()
+    latest = next((r for r in runs if r.status == "ok" and r.report), None)
+    return templates.TemplateResponse(request, "treso.html",
+                                      _ctx(request, company=company, runs=runs, latest=latest))
+
+
+@router.post("/c/{code}/treso/run")
+def treso_run(request: Request, code: str, months: int = Form(6)):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    run_id = start_job("treso_scan",
+                       lambda ctx: run_treso_scan(ctx, months=months),
+                       company_id=company.id, pack="isfahaan",
+                       label=f"Trésorerie groupe · balances sur {months} mois",
                        user=current_user(request))
     if request.headers.get("HX-Request"):
         return _watch_fragment(run_id)
