@@ -11,3 +11,4 @@ pydantic-settings>=2.2
 python-dotenv>=1.0
 itsdangerous>=2.1
 pymupdf>=1.24
+ijson>=3.2

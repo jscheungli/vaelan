@@ -75,13 +75,16 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
     docs = []                                          # écritures Inqom avec FileId, période
     unmapped_docs = 0
     for j in unmapped:
-        n = sum(1 for e in iq.search_entries(ent_id, [j["Id"]], with_lines=False)
+        n = sum(1 for e in iq.search_entries_stream(ent_id, [j["Id"]])
                 if e.get("FileId") and date_from <= str(e.get("Date") or "")[:10] <= date_to)
         unmapped_docs += n
         if n:
             ctx.log(f"⚠️ journal Inqom « {j.get('Name')} » sans équivalent Pennylane : {n} document(s) non traités")
     for ijid, code, pljid in mapped:
-        for e in iq.search_entries(ent_id, [ijid]):
+        # STREAMING obligatoire : search-multiple renvoie TOUT le journal avec lignes
+        # (aucun filtre serveur) — un gros journal bancaire (>50 000 écritures) parsé
+        # d'un bloc a saturé la RAM de l'instance (OOM Render du 04/09/2026).
+        for e in iq.search_entries_stream(ent_id, [ijid]):
             d = str(e.get("Date") or "")[:10]
             if e.get("FileId") and date_from <= d <= date_to:
                 docs.append({"code": code, "pl_jid": pljid, "date": d,

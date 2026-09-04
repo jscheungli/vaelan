@@ -16,6 +16,7 @@ import time
 from typing import Optional
 
 import httpx
+import ijson
 
 AUTH_URL = "https://auth.inqom.com/identity/connect/token"
 BASE_URL = "https://api.inqom.com"
@@ -98,6 +99,41 @@ class InqomClient:
         return self.post_json(f"/api/app/enterprises/{enterprise_id}/entries/search-multiple",
                               {"Search": {"JournalIds": list(journal_ids)}, "Output": out}) or []
 
+    def search_entries_stream(self, enterprise_id, journal_ids):
+        """Écritures d'un ou plusieurs journaux, en STREAMING (générateur).
+
+        search-multiple renvoie TOUJOURS toutes les écritures avec leurs lignes — aucun
+        filtre de dates, exercice ou pagination n'est honoré côté serveur (vérifié le
+        04/09/2026). Sur un gros journal (bancaire : >50 000 écritures) la réponse
+        parsée d'un bloc sature la RAM (OOM Render 512 Mo) : ici on parse objet par
+        objet (ijson) et l'appelant ne garde que ce qui l'intéresse."""
+        path = f"/api/app/enterprises/{enterprise_id}/entries/search-multiple"
+        body = {"Search": {"JournalIds": list(journal_ids)},
+                "Output": {"WithEntryRef": True, "WithEntryLabel": True, "WithDocDate": True}}
+        for attempt in range(5):
+            h = {"Authorization": f"Bearer {self.token()}", "Content-Type": "application/json",
+                 "Accept": "application/json"}
+            with httpx.Client(timeout=httpx.Timeout(300, connect=30)) as c:
+                with c.stream("POST", BASE_URL + path, headers=h, json=body) as r:
+                    if r.status_code == 401 and attempt == 0:
+                        self._token = None
+                        continue
+                    if r.status_code == 429 and attempt < 4:
+                        time.sleep(float(r.headers.get("Retry-After") or 0) or 1.5 * (attempt + 1))
+                        continue
+                    r.raise_for_status()
+                    yield from ijson.items(_IterReader(r.iter_bytes()), "item")
+                    return
+
+    def entries_by_ids(self, enterprise_id, entry_ids):
+        """Écritures précises AVEC leurs lignes (POST entries/search-multiple par EntryIds).
+        À appeler par LOTS restreints : c'est le complément « lourd » d'une première
+        passe en métadonnées seules (search_entries with_lines=False)."""
+        return self.post_json(f"/api/app/enterprises/{enterprise_id}/entries/search-multiple",
+                              {"Search": {"EntryIds": list(entry_ids)},
+                               "Output": {"WithEntryRef": True, "WithEntryLabel": True,
+                                          "WithDocDate": True}}) or []
+
     def journals(self, enterprise_id):
         return self.get(f"/api/app/enterprises/{enterprise_id}/journals") or []
 
@@ -134,6 +170,25 @@ class InqomClient:
             return {"ok": True, "expires_in_s": int(self._exp - time.time())}
         except Exception as e:
             return {"ok": False, "error": str(e)[:150]}
+
+
+class _IterReader:
+    """Adaptateur file-like (read) sur un itérateur de bytes, pour ijson."""
+    def __init__(self, it):
+        self._it = it
+        self._buf = b""
+
+    def read(self, n=-1):
+        while n < 0 or len(self._buf) < n:
+            try:
+                self._buf += next(self._it)
+            except StopIteration:
+                break
+        if n < 0:
+            out, self._buf = self._buf, b""
+        else:
+            out, self._buf = self._buf[:n], self._buf[n:]
+        return out
 
 
 def for_key(key: str) -> Optional[InqomClient]:
