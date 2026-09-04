@@ -11,6 +11,13 @@ _COMPANIES = [
     ("PP126.23", "PP126.23"),      # société « paie seule » (module Salaires / comptes 421 uniquement)
     ("LACORP", "Lacorp"),          # groupe ISFAHAAN (Odoo × Pennylane — pas de TopOrder)
     ("JBIBFOOD", "JB & IB FOOD"),  # groupe ISFAHAAN (SIREN 877519371)
+    ("JBFOOD", "JB FOOD"),         # groupe ISFAHAAN (SIREN 833093875)
+    ("OTCSTPIERRE", "OTC SAINT-PIERRE"),   # groupe ISFAHAAN (SIREN 899890651)
+    ("OTCRESERVE", "OTC LA RESERVE"),      # groupe ISFAHAAN (SIREN 895133940)
+    ("OTCBRASFUSIL", "OTC BRAS FUSIL"),    # groupe ISFAHAAN (SIREN 981608151)
+    ("GLDSTDENIS", "GLD SAINT-DENIS"),     # groupe ISFAHAAN (SIREN 910919174)
+    ("GLDCASABONA", "GLD CASABONA"),       # groupe ISFAHAAN (SIREN 952182764)
+    ("ISFAHAAN", "Isfahaan"),      # holding du groupe (SIREN 981355589)
 ]
 
 

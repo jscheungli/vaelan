@@ -60,8 +60,13 @@ def run_inqom_justificatifs(ctx, company_code, date_from="2026-01-01", date_to=N
     mapped, unmapped = [], []
     for j in ijournals:
         code = j.get("Name")
-        if code in pl_by_code:
-            mapped.append((j["Id"], code, pl_by_code[code]))
+        # alias : Inqom dédouble certains journaux avec un tiret final (« FRS- », « CLI- »…)
+        # dont les écritures sont importées côté Pennylane sous le code de base (« FRS »).
+        target = code if code in pl_by_code else str(code or "").rstrip("-")
+        if target in pl_by_code:
+            if target != code:
+                ctx.log(f"journal Inqom « {code} » rapproché du journal Pennylane « {target} » (alias tiret final)")
+            mapped.append((j["Id"], target, pl_by_code[target]))
         else:
             unmapped.append(j)
 

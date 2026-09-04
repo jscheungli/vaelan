@@ -88,8 +88,16 @@ COMPANY_MODULES = {
     "KOOKABURA": _CAISSE | {"salaires"},
     "PP126.23":  {"salaires"},                 # paie seule
     # Groupe ISFAHAAN (Odoo × Pennylane — PAS de TopOrder)
-    "LACORP":    set(_ODOO),
-    "JBIBFOOD":  {"inqom", "jobs"},            # pas d'Odoo raccordé (à ajouter si clés fournies)
+    "LACORP":       set(_ODOO),
+    # sociétés « justificatifs Inqom » seuls (pas d'Odoo raccordé — à élargir si clés fournies)
+    "JBIBFOOD":     {"inqom", "jobs"},
+    "JBFOOD":       {"inqom", "jobs"},
+    "OTCSTPIERRE":  {"inqom", "jobs"},
+    "OTCRESERVE":   {"inqom", "jobs"},
+    "OTCBRASFUSIL": {"inqom", "jobs"},
+    "GLDSTDENIS":   {"inqom", "jobs"},
+    "GLDCASABONA":  {"inqom", "jobs"},
+    "ISFAHAAN":     {"inqom", "jobs"},
 }
 
 

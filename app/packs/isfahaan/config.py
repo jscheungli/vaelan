@@ -5,8 +5,15 @@ COMPANY_MODULES (security.py) + le seed + ses clés (Pennylane et, si besoin, Od
 """
 
 COMPANIES = {
-    "LACORP": {"name": "Lacorp"},
+    "LACORP": {"name": "Lacorp", "siren": "882566128"},
     "JBIBFOOD": {"name": "JB & IB FOOD", "siren": "877519371"},
+    "JBFOOD": {"name": "JB FOOD", "siren": "833093875"},
+    "OTCSTPIERRE": {"name": "OTC SAINT-PIERRE", "siren": "899890651"},
+    "OTCRESERVE": {"name": "OTC LA RESERVE", "siren": "895133940"},
+    "OTCBRASFUSIL": {"name": "OTC BRAS FUSIL", "siren": "981608151"},
+    "GLDSTDENIS": {"name": "GLD SAINT-DENIS", "siren": "910919174"},
+    "GLDCASABONA": {"name": "GLD CASABONA", "siren": "952182764"},
+    "ISFAHAAN": {"name": "Isfahaan (holding)", "siren": "981355589"},
 }
 
 # ---- Inqom (justificatifs) ----
@@ -20,6 +27,13 @@ INQOM_KEY = "ISFAHAAN"          # clé credentials du cabinet (INQOM_ISFAHAAN_* 
 INQOM_ENTERPRISES = {
     "LACORP": 123449,
     "JBIBFOOD": 122482,
+    "JBFOOD": 118694,
+    "OTCSTPIERRE": 118022,
+    "OTCRESERVE": 118010,
+    "OTCBRASFUSIL": 118696,
+    "GLDSTDENIS": 118024,
+    "GLDCASABONA": 118027,
+    "ISFAHAAN": 118695,
 }
 
 
