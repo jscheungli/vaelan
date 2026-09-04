@@ -89,6 +89,7 @@ COMPANY_MODULES = {
     "PP126.23":  {"salaires"},                 # paie seule
     # Groupe ISFAHAAN (Odoo × Pennylane — PAS de TopOrder)
     "LACORP":    set(_ODOO),
+    "JBIBFOOD":  {"inqom", "jobs"},            # pas d'Odoo raccordé (à ajouter si clés fournies)
 }
 
 

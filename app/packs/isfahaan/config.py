@@ -6,6 +6,7 @@ COMPANY_MODULES (security.py) + le seed + ses clés (Pennylane et, si besoin, Od
 
 COMPANIES = {
     "LACORP": {"name": "Lacorp"},
+    "JBIBFOOD": {"name": "JB & IB FOOD", "siren": "877519371"},
 }
 
 # ---- Inqom (justificatifs) ----
@@ -18,6 +19,7 @@ INQOM_KEY = "ISFAHAAN"          # clé credentials du cabinet (INQOM_ISFAHAAN_* 
 #   JB & IB FOOD 122482 · GLD CHAUDRON 140136
 INQOM_ENTERPRISES = {
     "LACORP": 123449,
+    "JBIBFOOD": 122482,
 }
 
 

@@ -204,6 +204,14 @@ class PennylaneClient:
             cur = d.get("next_cursor")
         return out
 
+    def whoami(self) -> dict:
+        """Identité du dossier détenteur du token (GET /me) : {name, reg_no, id, scopes}.
+        Contrôle d'embarquement : confronter reg_no au SIREN attendu (évite un token croisé)."""
+        d = self.get("/me") or {}
+        c = d.get("company") or {}
+        return {"name": c.get("name"), "reg_no": c.get("reg_no"), "id": c.get("id"),
+                "scopes": d.get("scopes") or []}
+
     def health(self) -> dict:
         """Vérifie que le token répond (lecture d'une ressource légère)."""
         try:

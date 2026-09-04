@@ -10,6 +10,7 @@ _COMPANIES = [
     ("KOOKABURA", "Kookabura"),
     ("PP126.23", "PP126.23"),      # société « paie seule » (module Salaires / comptes 421 uniquement)
     ("LACORP", "Lacorp"),          # groupe ISFAHAAN (Odoo × Pennylane — pas de TopOrder)
+    ("JBIBFOOD", "JB & IB FOOD"),  # groupe ISFAHAAN (SIREN 877519371)
 ]
 
 
