@@ -44,10 +44,25 @@ def load(path: str = None, db: bool = False) -> str:
         d = json.load(f)
 
     # ---- format groupé par connecteur (canonique) ----
-    for code, c in (d.get("pennylane") or {}).items():
-        k = _env_key(code)
-        _set(f"PENNYLANE_{k}_TOKEN", c.get("apiToken"))
-        _set(f"PENNYLANE_{k}_BASEURL", c.get("baseUrl"))
+    pn = d.get("pennylane") or {}
+    if "tokens" in pn:
+        # format factorisé : {"baseUrl": "...", "tokens": {CODE: "token" | {apiToken, baseUrl}}}
+        common = pn.get("baseUrl")
+        for code, v in (pn.get("tokens") or {}).items():
+            k = _env_key(code)
+            tok = v.get("apiToken") if isinstance(v, dict) else v
+            if tok and str(tok).startswith("COLLE_ICI"):
+                continue                     # placeholder pas encore rempli
+            _set(f"PENNYLANE_{k}_TOKEN", tok)
+            _set(f"PENNYLANE_{k}_BASEURL", (v.get("baseUrl") if isinstance(v, dict) else None) or common)
+    else:
+        # ancien format : {CODE: {apiToken, baseUrl}}
+        for code, c in pn.items():
+            if not isinstance(c, dict):
+                continue
+            k = _env_key(code)
+            _set(f"PENNYLANE_{k}_TOKEN", c.get("apiToken"))
+            _set(f"PENNYLANE_{k}_BASEURL", c.get("baseUrl"))
     to = d.get("toporder") or {}
     _set("TOPORDER_BASEURL", to.get("baseUrl"))
     if to.get("establishments"):
