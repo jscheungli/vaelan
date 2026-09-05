@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Tiers Odoo ↔ Pennylane · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Tiers Odoo ↔ Pennylane · {{ kind }}s</li>
+</ol></nav>
+
+<div class="d-flex align-items-center mb-1 flex-wrap gap-2">
+  <h1 class="h4 mb-0">{{ 'Clients' if kind == 'client' else 'Fournisseurs' }} Odoo ↔ Pennylane</h1>
+  <div class="ms-auto d-flex gap-2 flex-wrap">
+    <form hx-post="/c/{{ company.code }}/tiers/sync" hx-target="#sync-result" hx-swap="innerHTML" hx-disabled-elt="find button">
+      <input type="hidden" name="kind" value="{{ kind }}">
+      <button class="btn btn-dark btn-sm"><i class="bi bi-search"></i> Analyser (lecture seule)</button>
+    </form>
+    {% if latest_run %}
+    <a class="btn btn-outline-secondary btn-sm" href="/jobs/{{ latest_run.id }}/artifact/xlsx"><i class="bi bi-file-earmark-excel"></i> Excel du plan</a>
+    {% endif %}
+    <form hx-post="/c/{{ company.code }}/tiers/apply" hx-target="#sync-result" hx-swap="innerHTML" hx-disabled-elt="find button"
+          onsubmit="return confirm('ÉCRIRE dans PENNYLANE les identifiants du plan (reg_no, TVA, emails, référence ODOO_) sur les lignes sûres ?\nJamais d\'IBAN. Un audit CSV sera produit.');">
+      <input type="hidden" name="kind" value="{{ kind }}"><input type="hidden" name="target" value="pennylane">
+      <button class="btn btn-outline-danger btn-sm"><i class="bi bi-pencil-square"></i> Appliquer → Pennylane</button>
+    </form>
+    <form hx-post="/c/{{ company.code }}/tiers/apply" hx-target="#sync-result" hx-swap="innerHTML" hx-disabled-elt="find button"
+          onsubmit="return confirm('ÉCRIRE dans ODOO (TVA, registre, email, réf.) sur les lignes sûres ?\nUn audit CSV sera produit.');">
+      <input type="hidden" name="kind" value="{{ kind }}"><input type="hidden" name="target" value="odoo">
+      <button class="btn btn-outline-danger btn-sm"><i class="bi bi-pencil-square"></i> Appliquer → Odoo</button>
+    </form>
+  </div>
+</div>
+<p class="text-muted small mb-1">Règle du connecteur Pennylane (confirmée par Pennylane le 03/09/2026) : un tiers est rapproché dès qu'<strong>un</strong>
+  identifiant est commun — <strong>email</strong>, <strong>numéro de compte tiers</strong>, <strong>SIREN / SIRET / TVA</strong> — sinon il est créé en double.
+  Vaelan simule ces critères, choisit le tiers Pennylane qui porte l'historique et prépare les écritures des deux côtés.
+  {% if last_synced %}<span class="ms-2">Dernière analyse : {{ last_synced | dtlocal }} (Réunion).</span>{% endif %}</p>
+<div id="sync-result"></div>
+
+{% set modes = [('MANUEL','🔴 manuel (fusion)','danger'), ('A_VALIDER','🟡 SIREN à valider','warning'),
+                ('SAISIE','🟠 SIREN à rechercher','warning'), ('AUTO','🔵 auto (Vaelan écrit)','primary'), ('RIEN','🟢 rien','success')] %}
+<div class="d-flex flex-wrap gap-2 mb-2 small">
+  {% for m, lbl, color in modes %}{% if mcounts.get(m) %}
+  <a href="#" class="text-decoration-none" onclick="setMode('{{ m }}');return false;">
+    <span class="badge text-bg-{{ color }}">{{ mcounts[m] }}</span> {{ lbl }}</a>
+  {% endif %}{% endfor %}
+  {% if no_id %}<span class="ms-3 text-danger"><i class="bi bi-exclamation-triangle"></i> <strong>{{ no_id }}</strong> fiches Odoo sans aucun identifiant commun (doublon garanti au prochain import)</span>{% endif %}
+</div>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2 small">
+  <input type="search" id="f-q" class="form-control form-control-sm" style="width:260px;" placeholder="nom, SIREN, compte…" oninput="applyFilters()">
+  <select id="f-m" class="form-select form-select-sm" style="width:auto;" onchange="applyFilters()">
+    <option value="">Tous les modes</option>
+    {% for m, lbl, color in modes %}<option value="{{ m }}">{{ lbl }}</option>{% endfor %}
+  </select>
+  <select id="f-st" class="form-select form-select-sm" style="width:auto;" onchange="applyFilters()">
+    <option value="">Tous les statuts</option>
+    {% for st in counts %}<option value="{{ st }}">{{ st }} ({{ counts[st] }})</option>{% endfor %}
+  </select>
+  <span class="ms-auto text-muted"><span id="f-n">{{ rows|length }}</span> ligne(s)</span>
+</div>
+
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle" style="font-size:.78rem;">
+  <thead class="table-light"><tr class="small text-muted">
+    <th>Fiche Odoo</th><th class="text-end">Fact. 26</th><th>SIREN (source)</th><th>Tiers Pennylane (canonique)</th><th>Compte</th>
+    <th class="text-end">Écr. 26</th><th>Identifiants communs</th><th>Mode</th><th>Action utilisateur</th><th>Action Vaelan</th>
+  </tr></thead>
+  <tbody id="rows">
+  {% for r in rows %}
+  {% set color = {'MANUEL':'danger','A_VALIDER':'warning','SAISIE':'warning','AUTO':'primary','RIEN':'success'}.get(r.mode,'secondary') %}
+    <tr class="mrow" data-mode="{{ r.mode }}" data-status="{{ r.status }}"
+        data-text="{{ ((r.odoo_name or '') ~ ' ' ~ (r.pl_name or '') ~ ' ' ~ (r.siren or '') ~ ' ' ~ (r.pl_account or '') ~ ' ' ~ (r.odoo_ref or ''))|lower }}">
+      <td>{{ r.odoo_name or '' }}{% if r.odoo_id %} <span class="text-muted" style="font-size:.66rem;">#{{ r.odoo_id }}</span>{% endif %}
+          {% if r.pl_dups %}<div class="text-danger" style="font-size:.66rem;">doublons PL : {{ r.pl_dups }}</div>{% endif %}</td>
+      <td class="text-end">{{ r.odoo_inv_2026 or '' }}</td>
+      <td><code style="font-size:.7rem;">{{ r.siren or '—' }}</code>{% if r.siren_source %} <span class="text-muted" style="font-size:.64rem;">{{ r.siren_source }}</span>{% endif %}</td>
+      <td>{{ r.pl_name or '' }}{% if r.pl_id %} <span class="text-muted" style="font-size:.66rem;">#{{ r.pl_id }}</span>{% endif %}</td>
+      <td><code style="font-size:.7rem;">{{ r.pl_account or '' }}</code></td>
+      <td class="text-end">{{ r.pl_lines_2026 or '' }}</td>
+      <td class="small">{% if r.match_via %}<span class="text-success">{{ r.match_via }}</span>{% elif r.pl_id and r.odoo_id %}<span class="text-danger">aucun</span>{% endif %}</td>
+      <td><span class="badge text-bg-{{ color }}">{{ r.mode }}</span><div class="text-muted" style="font-size:.64rem;">{{ r.status }}</div>
+          {% if r.applied_pl_at %}<div style="font-size:.62rem;" class="text-success">PL écrit</div>{% endif %}{% if r.applied_odoo_at %}<div style="font-size:.62rem;" class="text-success">Odoo écrit</div>{% endif %}</td>
+      <td class="small">{{ r.action_user or '' }}</td>
+      <td class="small text-muted">{{ r.action_ia or '' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="10" class="text-muted small">Aucune donnée — lance une <strong>Analyse</strong> (clés Odoo + Pennylane requises).</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<script>
+function applyFilters(){
+  var q=(document.getElementById('f-q').value||'').toLowerCase().trim();
+  var m=document.getElementById('f-m').value, st=document.getElementById('f-st').value, n=0;
+  document.querySelectorAll('#rows tr.mrow').forEach(function(tr){
+    var vis=(!q||tr.dataset.text.indexOf(q)>=0)&&(!m||tr.dataset.mode===m)&&(!st||tr.dataset.status===st);
+    tr.classList.toggle('d-none',!vis); if(vis)n++;
+  });
+  document.getElementById('f-n').textContent=n;
+}
+function setMode(m){document.getElementById('f-m').value=m;applyFilters();}
+</script>
+{% endblock %}

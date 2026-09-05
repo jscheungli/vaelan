@@ -244,3 +244,53 @@ class OdooClientMatch(SQLModel, table=True):
     dup_group: Optional[str] = None                   # clé partagée par les doublons (pour regrouper)
     last_synced: Optional[datetime] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TiersMatch(SQLModel, table=True):
+    """Tiers Odoo ↔ Pennylane (clients OU fournisseurs) : diagnostic + plan d'actions.
+
+    Une ligne par fiche Odoo de tête (odoo_id) OU par tiers Pennylane orphelin (odoo_id vide).
+    Le moteur reproduit les critères de rapprochement du connecteur Pennylane (email, numéro de
+    compte tiers, SIREN/SIRET/TVA) pour PRÉDIRE les doublons, choisit le tiers Pennylane canonique
+    (celui qui porte l'historique) et prépare les écritures des deux côtés (plan_pl / plan_odoo,
+    JSON). L'application est un acte séparé et tracé (applied_*_at). Jamais d'IBAN.
+    """
+    __tablename__ = "tiers_matches"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="companies.id", index=True)
+    kind: str = Field(default="client", index=True)          # client / fournisseur
+    odoo_id: Optional[int] = Field(default=None, index=True)
+    odoo_name: Optional[str] = None
+    odoo_ref: Optional[str] = None
+    odoo_vat: Optional[str] = None
+    odoo_registry: Optional[str] = None
+    odoo_email: Optional[str] = None
+    odoo_inv_total: int = 0
+    odoo_inv_2026: int = 0
+    siren: Optional[str] = Field(default=None, index=True)   # SIREN retenu
+    siren_source: Optional[str] = None                       # odoo / pennylane / annuaire / validé
+    siret: Optional[str] = None
+    tva: Optional[str] = None                                # n° TVA FR calculé depuis le SIREN
+    annuaire: Optional[str] = None                           # proposition annuaire (nom · ville · similarité)
+    pl_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger))   # tiers Pennylane canonique
+    pl_name: Optional[str] = None
+    pl_account: Optional[str] = None
+    pl_reg_no: Optional[str] = None
+    pl_vat: Optional[str] = None
+    pl_emails: Optional[str] = None
+    pl_reference: Optional[str] = None
+    pl_lines: int = 0
+    pl_lines_2026: int = 0
+    pl_solde: Optional[float] = None
+    pl_dups: Optional[str] = None                            # autres tiers PL du même client (à fusionner)
+    match_via: Optional[str] = None                          # identifiants communs ACTUELS (critères connecteur)
+    status: str = "unknown"
+    mode: str = "RIEN"                                       # RIEN / AUTO / A_VALIDER / SAISIE / MANUEL
+    action_user: Optional[str] = None
+    action_ia: Optional[str] = None
+    plan_pl: Optional[str] = None                            # JSON : champs à écrire côté Pennylane
+    plan_odoo: Optional[str] = None                          # JSON : champs à écrire côté Odoo
+    applied_pl_at: Optional[datetime] = None
+    applied_odoo_at: Optional[datetime] = None
+    last_synced: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

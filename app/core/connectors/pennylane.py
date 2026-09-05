@@ -204,6 +204,17 @@ class PennylaneClient:
             cur = d.get("next_cursor")
         return out
 
+    def send_json(self, method: str, path: str, body: dict):
+        """PUT/POST JSON générique (tiers, etc.). Renvoie (status_code, json|texte)."""
+        h = dict(self._h)
+        h["Content-Type"] = "application/json"
+        with httpx.Client(timeout=60) as c:
+            r = c.request(method, self.base_url + path, headers=h, json=body)
+        try:
+            return r.status_code, r.json()
+        except Exception:
+            return r.status_code, r.text[:300]
+
     def whoami(self) -> dict:
         """Identité du dossier détenteur du token (GET /me) : {name, reg_no, id, scopes}.
         Contrôle d'embarquement : confronter reg_no au SIREN attendu (évite un token croisé)."""

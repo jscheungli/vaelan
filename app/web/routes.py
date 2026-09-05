@@ -23,6 +23,7 @@ from app.packs.sterna_caisse.achats_kk import run_achats_kk
 from app.packs.isfahaan.odoo_clients import run_odoo_clients_sync
 from app.packs.isfahaan.inqom_justificatifs import run_inqom_justificatifs
 from app.packs.isfahaan.treso import run_treso_scan
+from app.packs.isfahaan.tiers import run_tiers_sync, run_tiers_apply
 from app.packs.sterna_caisse import payments as caisse_payments
 from app.packs.sterna_caisse import salaires as caisse_salaires
 
@@ -183,8 +184,8 @@ _TILES = [
      "Comptes, journaux et catégories analytiques de la société."),
     ("salaires", "Salaires", "bi-person-vcard", "/c/{code}/salaires",
      "Comptes 421 des salariés : grand-livre par salarié, navigation par exercice."),
-    ("odoo", "Clients Odoo ↔ Pennylane", "bi-diagram-3", "/c/{code}/odoo-clients",
-     "Correspondance des clients entre Odoo et Pennylane : doublons, matching, orphelins."),
+    ("odoo", "Tiers Odoo ↔ Pennylane", "bi-diagram-3", "/c/{code}/tiers",
+     "Clients (puis fournisseurs) : simulation du connecteur Pennylane, doublons, tiers canonique, plan d'écritures des deux côtés."),
     ("inqom", "Justificatifs Inqom", "bi-paperclip", "/c/{code}/inqom-justificatifs",
      "Accroche les documents des écritures Inqom aux écritures Pennylane (cadrage à blanc, puis accrochage)."),
     ("treso", "Trésorerie groupe", "bi-bank", "/c/{code}/treso",
@@ -234,7 +235,7 @@ def _feature_from_path(path: str):
         return "config"
     if "/salaires" in path:
         return "salaires"
-    if "/odoo-clients" in path:
+    if "/odoo-clients" in path or "/tiers" in path:
         return "odoo"
     if "/inqom-justificatifs" in path:
         return "inqom"
@@ -731,6 +732,58 @@ def odoo_clients_sync_action(request: Request, code: str):
     run_id = start_job("odoo_clients", lambda ctx: run_odoo_clients_sync(ctx, company.code),
                        company_id=company.id, pack="isfahaan", label=f"Clients Odoo ↔ Pennylane · {company.name}",
                        user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse("/jobs", status_code=303)
+
+
+# ----------------------------- ISFAHAAN : tiers Odoo ↔ Pennylane (moteur v2) -----------------------------
+@router.get("/c/{code}/tiers", response_class=HTMLResponse)
+def tiers_page(request: Request, code: str, kind: str = "client"):
+    from app.models import TiersMatch, Run
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    kind = kind if kind in ("client", "fournisseur") else "client"
+    with Session(engine) as s:
+        rows = s.exec(select(TiersMatch).where(TiersMatch.company_id == company.id, TiersMatch.kind == kind)).all()
+        latest = s.exec(select(Run).where(Run.company_id == company.id, Run.kind == "tiers_sync", Run.status == "ok")
+                        .order_by(Run.id.desc())).first()
+    order = {"MANUEL": 0, "A_VALIDER": 1, "SAISIE": 2, "AUTO": 3, "RIEN": 4}
+    rows = sorted(rows, key=lambda r: (0 if r.odoo_id else 1, order.get(r.mode, 9), -(r.odoo_inv_2026 or 0)))
+    counts, mcounts = {}, {}
+    for r in rows:
+        counts[r.status] = counts.get(r.status, 0) + 1
+        mcounts[r.mode] = mcounts.get(r.mode, 0) + 1
+    no_id = sum(1 for r in rows if r.odoo_id and r.pl_id and not r.match_via)
+    last = max((r.last_synced for r in rows if r.last_synced), default=None)
+    return templates.TemplateResponse(request, "tiers.html",
+                                      _ctx(request, company=company, rows=rows, counts=counts, mcounts=mcounts,
+                                           no_id=no_id, last_synced=last, kind=kind, latest_run=latest))
+
+
+@router.post("/c/{code}/tiers/sync")
+def tiers_sync_action(request: Request, code: str, kind: str = Form("client")):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    run_id = start_job("tiers_sync", lambda ctx: run_tiers_sync(ctx, company.code, kind=kind),
+                       company_id=company.id, pack="isfahaan",
+                       label=f"Tiers {kind}s Odoo ↔ Pennylane · analyse · {company.name}", user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse("/jobs", status_code=303)
+
+
+@router.post("/c/{code}/tiers/apply")
+def tiers_apply_action(request: Request, code: str, kind: str = Form("client"), target: str = Form("pennylane")):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    target = target if target in ("pennylane", "odoo") else "pennylane"
+    run_id = start_job("tiers_apply", lambda ctx: run_tiers_apply(ctx, company.code, kind=kind, target=target),
+                       company_id=company.id, pack="isfahaan",
+                       label=f"Tiers {kind}s → {target} · APPLICATION · {company.name}", user=current_user(request))
     if request.headers.get("HX-Request"):
         return _watch_fragment(run_id)
     return RedirectResponse("/jobs", status_code=303)
