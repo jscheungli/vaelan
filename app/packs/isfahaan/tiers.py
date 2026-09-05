@@ -634,8 +634,21 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane"):
     pl = pennylane.for_company(company_code)
     audit = [["cible", "id", "nom", "champs", "resultat"]]
     done = errs = skipped = 0
+
+    def _applicable(r):
+        """Seules les lignes SÛRES sont écrites : identifiants d'un tiers rapproché sans ambiguïté
+        (ok / sans identifiant commun / canonique d'un doublon Pennylane) et créations AUTO.
+        Jamais : SIREN à valider ou à rechercher, doublons Odoo (fiche survivante inconnue), conflits."""
+        if not r.odoo_id or r.mode in ("A_VALIDER", "SAISIE") or r.siren_source == "annuaire":
+            return False
+        if r.status in ("conflit_identifiant", "doublon_odoo", "sans_siren", "orphelin_pennylane"):
+            return False
+        if r.status == "absent_pennylane":
+            return r.mode == "AUTO"
+        return r.status in ("ok", "sans_identifiant_commun", "doublon_pennylane")
+
     for i, r in enumerate(rows):
-        if not r.odoo_id or r.siren_source == "annuaire" or r.status in ("conflit_identifiant",):
+        if not _applicable(r):
             continue
         plan = json.loads((r.plan_pl if target == "pennylane" else r.plan_odoo) or "{}")
         if not plan:
