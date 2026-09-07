@@ -85,13 +85,46 @@ def _settings(code):
     return out
 
 
-def _balances(pl, day, prefixes=("45", "46", "47", "411", "401", "16", "17", "27"), label_ok=None):
+def _tiers_balances(pl, day, label_ok=None, number_ok=None):
+    """Soldes (débit − crédit) au soir de `day` des comptes 401/411 nominatifs du groupe, par lignes."""
+    accs, cur = [], None
+    while True:
+        params = {"limit": 100}
+        if cur:
+            params["cursor"] = cur
+        d = pl.get("/ledger_accounts", **params)
+        for a in d.get("items") or []:
+            n = str(a.get("number", ""))
+            if n.startswith(("401", "411")) and ((label_ok and label_ok(a.get("label") or "")) or (number_ok and number_ok(n))):
+                accs.append(a)
+        if not d.get("has_more"):
+            break
+        cur = d.get("next_cursor")
+    fy, out = _fy_start(day), []
+    for a in accs:
+        try:
+            lines = pl.account_lines(a["id"])
+        except Exception:
+            continue
+        sol = round(sum(float(l.get("debit") or 0) - float(l.get("credit") or 0) for l in lines if fy <= (l.get("date") or "") <= day), 2)
+        if abs(sol) >= 0.005:
+            out.append((str(a["number"]), a.get("label") or "", sol))
+        time.sleep(0.05)
+    return out
+
+
+def _balances(pl, day, prefixes=("45", "46", "47", "411", "401", "16", "17", "27"), label_ok=None, number_ok=None):
     """Soldes (débit − crédit) des comptes concernés au soir de `day`. trial_balance si le scope
     est ouvert, sinon repli lent : lignes d'écritures par compte."""
     try:
         items = _trial_balance(pl, day)
-        return [(str(i["number"]), i.get("label") or "", round(float(i["debits"]) - float(i["credits"]), 2)) for i in items
-                if str(i["number"]).startswith(prefixes)], "trial_balance"
+        out = [(str(i["number"]), i.get("label") or "", round(float(i["debits"]) - float(i["credits"]), 2)) for i in items
+               if str(i["number"]).startswith(prefixes)]
+        # ⚠️ la balance Pennylane AGRÈGE les comptes auxiliaires clients/fournisseurs dans le collectif 401/411
+        # (constaté le 07/09/2026 : 401LACORPET absent, fondu dans « 401 ») -> on complète par les lignes
+        # des 401/411 nominatifs rattachés à une société du groupe.
+        out += _tiers_balances(pl, day, label_ok, number_ok)
+        return out, "trial_balance + lignes 401/411 groupe"
     except httpx.HTTPStatusError as e:
         if e.response.status_code != 403:
             raise
@@ -108,7 +141,8 @@ def _balances(pl, day, prefixes=("45", "46", "47", "411", "401", "16", "17", "27
         cur = d.get("next_cursor")
     # repli : seulement les comptes potentiellement interco (45/46/47/51/53, ou libellé taggé/alias)
     accs = [a for a in accs if str(a.get("number", ""))[:2] in ("45", "46", "47", "51", "53")
-            or TAGS.search(str(a.get("label") or "").upper()) or (label_ok and label_ok(a.get("label") or ""))]
+            or TAGS.search(str(a.get("label") or "").upper()) or (label_ok and label_ok(a.get("label") or ""))
+            or (number_ok and number_ok(a.get("number") or ""))]
     for a in accs:
         try:
             lines = pl.account_lines(a["id"], date_to=day)
@@ -130,11 +164,26 @@ def _aliases_and_params():
     return aliases, externes, params
 
 
-def _who(label, me, aliases):
+# codes abrégés utilisés dans les NUMÉROS de compte (411OTCSP, 401LACORPET, 411GLDCASA, 46718…) — après les alias de libellé
+NUMBER_CODES = {
+    "LACORP": ["LACORP"], "ISFAHAAN": ["ISFAHAA"], "JBIBFOOD": ["JBIB"], "JBFOOD": ["JBFOOD"],
+    "OTCSTPIERRE": ["OTCSP", "OTCSTPIERR"], "OTCRESERVE": ["OTCLR", "OTCRES"], "OTCBRASFUSIL": ["OTCBF", "OTCBRAS"],
+    "GLDSTDENIS": ["GLDSD", "GLDSTD"], "GLDCASABONA": ["GLDCASA", "GDCASA"], "GONGCHA": ["GONGCH"], "JAG": ["GLDCHAU", "JAG"],
+}
+
+
+def _who(label, me, aliases, number=None):
+    """Contrepartie d'un compte : d'abord le libellé (alias), sinon le numéro de compte (code abrégé)."""
     L = _clean(label)
     for c, al in aliases.items():
         if c != me and any(a and a in L for a in al):
             return c
+    if number:
+        N = re.sub(r"[^A-Z]", "", str(number).upper())      # partie alphabétique du numéro (411OTCSP -> OTCSP)
+        if N:
+            for c, cs in NUMBER_CODES.items():
+                if c != me and any(N.startswith(x) or x in N for x in cs):
+                    return c
     return None
 
 
@@ -145,7 +194,8 @@ def collect(ctx, codes, day, aliases):
         ctx.progress(k, len(codes) + 1, step=f"balance {code} au {day}…")
         pl = pennylane.for_company(code)
         bal, how = _balances(pl, day, prefixes=("45", "46", "47", "411", "401", "16", "17", "27", "51", "53"),
-                             label_ok=lambda lbl, code=code: _who(lbl, code, aliases) is not None)
+                             label_ok=lambda lbl, code=code: _who(lbl, code, aliases) is not None,
+                             number_ok=lambda num, code=code: _who("", code, aliases, number=num) is not None)
         raw[code] = bal
         src[code] = how
         cash[code] = round(sum(sol for n, l, sol in bal if n[:2] in ("51", "53")), 2)
@@ -160,7 +210,7 @@ def classify(codes, raw, aliases, externes):
             if n[:2] in ("51", "53") or abs(sol) < 0.005:
                 continue
             nat = _nature(n)
-            cp = _who(lbl, code, aliases)
+            cp = _who(lbl, code, aliases, number=n)
             L = _clean(lbl)
             ext = next((e for e in externes if e in L), None)
             tagged = bool(TAGS.search(str(lbl).upper()))
@@ -239,23 +289,52 @@ def analyse(codes, lines, cash, day, floor):
             anomalies.append({"type": "compte_courant_personne_physique", "gravite": "info", "societes": l["societe"], "montant": l["solde"],
                               "detail": f"{l['compte']} « {l['libelle']} » : {l['solde']:+,.2f} (hors périmètre groupe, pour information)"})
 
-    # ---- plan : dettes nettes non commerciales entre sœurs ----
-    pair_debt = {}
+    # ---- position NETTE toutes natures par paire, et compensation 411/467 possible ----
+    net_pos = []
+    for i, a in enumerate(codes):
+        for b in codes[i + 1:]:
+            ta, tb = round(sum(Mn[a][b].values()), 2), round(sum(Mn[b][a].values()), 2)
+            if abs(ta) < 0.005 and abs(tb) < 0.005:
+                continue
+            nc_a, co_a = _nc(Mn[a][b]), _co(Mn[a][b])
+            nc_b, co_b = _nc(Mn[b][a]), _co(Mn[b][a])
+            # compensation : quand une société porte à la fois une créance/dette commerciale et une position 467/455
+            # de sens opposé sur la même contrepartie, les deux se neutralisent par OD (pratique du cabinet en clôture)
+            comp_a = round(min(abs(nc_a), abs(co_a)), 2) if nc_a * co_a < 0 else 0.0
+            comp_b = round(min(abs(nc_b), abs(co_b)), 2) if nc_b * co_b < 0 else 0.0
+            net_pos.append({"a": a, "b": b, "net_a": ta, "net_b": tb, "ecart_net": round(ta + tb, 2), "ok": abs(ta + tb) < 1.0,
+                        "compensation_a": comp_a, "compensation_b": comp_b})
+
+    # ---- plan : dettes NETTES entre sœurs = position toutes natures APRÈS compensation 411/401 ↔ 467 ----
+    # (les règlements de factures imputés en 467 au lieu du lettrage gonflent 467 ET 411/401 : on neutralise d'abord)
+    pair_debt, gross_debt = {}, {}
     for i, a in enumerate(codes):
         for b in codes[i + 1:]:
             if HOLDING in (a, b):
                 continue
-            ab = sum(v for k, v in Mn[a][b].items() if k != "commercial")
-            ba = sum(v for k, v in Mn[b][a].items() if k != "commercial")
+            ab, ba = sum(Mn[a][b].values()), sum(Mn[b][a].values())            # positions nettes toutes natures
             net = round((ab - ba) / 2, 2) if abs(ab + ba) >= 1.0 else round(ab, 2)
             if abs(net) >= 1.0:
                 cred, deb = (a, b) if net > 0 else (b, a)
                 pair_debt[(deb, cred)] = abs(net)
+            gab = sum(v for k, v in Mn[a][b].items() if k != "commercial")
+            gba = sum(v for k, v in Mn[b][a].items() if k != "commercial")
+            gnet = round((gab - gba) / 2, 2) if abs(gab + gba) >= 1.0 else round(gab, 2)
+            if abs(gnet) >= 1.0:
+                cred, deb = (a, b) if gnet > 0 else (b, a)
+                gross_debt[(deb, cred)] = abs(gnet)
     need = defaultdict(float)
     for (deb, cred), amt in pair_debt.items():
         need[deb] += amt
     avail = {c: max(0.0, cash.get(c, 0.0) - floor) for c in codes if c != HOLDING}
     plan, n = [], 0
+    for x in net_pos:                                    # phase 0 : OD de compensation, sans trésorerie
+        for side, other, amt in ((x["a"], x["b"], x["compensation_a"]), (x["b"], x["a"], x["compensation_b"])):
+            if amt >= 1.0:
+                n += 1
+                plan.append({"ordre": n, "phase": "0 · OD compensation 411/401 ↔ 467 (sans trésorerie)", "de": side, "vers": other, "montant": amt,
+                             "libelle": f"COMPENSATION 411/401-467 {other} - arrete {day}",
+                             "condition": f"dans les livres de {side} : lettrer {amt:,.0f} € entre le compte commercial et le compte 467/455 de {other} (pratique de clôture du cabinet)"})
     descentes = {d: round(max(0.0, need[d] - avail.get(d, 0.0)), 2) for d in need}
     total_desc = sum(descentes.values())
     to_raise = max(0.0, total_desc - max(0.0, cash.get(HOLDING, 0.0) - floor))
@@ -285,7 +364,8 @@ def analyse(codes, lines, cash, day, floor):
     return {"day": day, "floor": floor, "codes": codes, "cash": cash,
             "matrix": {a: {b: round(M[a][b], 2) for b in codes} for a in codes},
             "matrix_nat": {a: {b: {k: round(v, 2) for k, v in Mn[a][b].items()} for b in codes} for a in codes},
-            "lines": lines, "recip": recip, "anomalies": anomalies, "plan": plan, "pair_debt": {f"{d}>{c}": v for (d, c), v in pair_debt.items()},
+            "lines": lines, "recip": recip, "net": net_pos, "anomalies": anomalies, "plan": plan,
+            "pair_debt": {f"{d}>{c}": v for (d, c), v in pair_debt.items()}, "gross_debt": {f"{d}>{c}": v for (d, c), v in gross_debt.items()},
             "generated": (datetime.utcnow() + _TZ).strftime("%d/%m/%Y %H:%M")}
 
 
@@ -354,6 +434,15 @@ def excel(result):
         for j, v in enumerate(vals, 1):
             c = w2.cell(row=i, column=j, value=v); c.font = base; c.border = thin
             if j in (3, 4, 5, 7, 8, 9) and isinstance(v, (int, float)): c.number_format = "#,##0.00;[Red]-#,##0.00"
+            if j == 6: c.fill = green if x["ok"] else red; c.font = bold
+
+    wn = wb.create_sheet("Position nette")
+    head(wn, ["Société A", "Société B", "A dit (net toutes natures)", "B dit (net)", "Écart net", "Réciproque ?", "Compensation 411/401↔467 chez A", "Compensation chez B"], [14, 14, 22, 18, 14, 11, 26, 20])
+    for i, x in enumerate(sorted(result.get("net", []), key=lambda x: -abs(x["ecart_net"])), 2):
+        vals = [x["a"], x["b"], x["net_a"], x["net_b"], x["ecart_net"], "OUI" if x["ok"] else "NON", x["compensation_a"], x["compensation_b"]]
+        for j, v in enumerate(vals, 1):
+            c = wn.cell(row=i, column=j, value=v); c.font = base; c.border = thin
+            if j in (3, 4, 5, 7, 8): c.number_format = "#,##0.00;[Red]-#,##0.00"
             if j == 6: c.fill = green if x["ok"] else red; c.font = bold
 
     w3 = wb.create_sheet("Anomalies")
