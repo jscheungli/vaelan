@@ -1,7 +1,7 @@
 """ISFAHAAN — Trésorerie groupe : scan des balances Pennylane de toutes les sociétés.
 
 Pour chaque société du groupe disposant d'un token Pennylane, lit la balance
-générale CUMULÉE (GET /trial_balance, du 01/01/1990 à une date d'arrêté) à
+générale de l'exercice (GET /trial_balance, du 1er jour de l'exercice — AN inclus — à la date d'arrêté) à
 plusieurs fins de mois, et en tire les grandes masses :
 
   trésorerie   comptes 51 + 53 (concours bancaires 519 inclus, en négatif)
@@ -43,11 +43,19 @@ def _month_ends(n):
     return sorted(out) + [today.isoformat()]
 
 
+def _fy_start(day):
+    """Début de l'exercice contenant `day` (exercices civils dans le groupe)."""
+    return f"{str(day)[:4]}-01-01"
+
+
 def _trial_balance(pl, day):
-    """Balance cumulée au soir de `day` (liste des comptes, paginée)."""
+    """Balance au soir de `day` = à-nouveaux (datés du 1er jour de l'exercice) + mouvements de
+    l'exercice jusqu'à `day`. ⚠️ Ne JAMAIS cumuler depuis l'origine : les dossiers contiennent
+    l'historique FEC de plusieurs exercices ET les AN de chacun -> chaque clôture serait recomptée
+    (constaté le 07/09/2026 : compte 467 « LACORP » chez JB&IB à 4,74 M€ au lieu de 2,00 M€)."""
     items, cursor = [], None
     for _ in range(30):
-        params = {"period_start": _EPOCH, "period_end": day, "limit": 1000}
+        params = {"period_start": _fy_start(day), "period_end": day, "limit": 1000}
         if cursor:
             params["cursor"] = cursor
         with httpx.Client(timeout=120) as c:

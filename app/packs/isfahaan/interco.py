@@ -28,7 +28,7 @@ from app.core.db import engine
 from app.core.connectors import pennylane
 from app.models import Setting
 from . import config
-from .treso import _trial_balance
+from .treso import _trial_balance, _fy_start
 
 _TZ = timedelta(hours=4)
 HOLDING = "ISFAHAAN"
@@ -114,7 +114,8 @@ def _balances(pl, day, prefixes=("45", "46", "47", "411", "401", "16", "17", "27
             lines = pl.account_lines(a["id"], date_to=day)
         except TypeError:
             lines = [l for l in pl.account_lines(a["id"]) if (l.get("date") or "") <= day]
-        sol = round(sum(float(l.get("debit") or 0) - float(l.get("credit") or 0) for l in lines if (l.get("date") or "") <= day), 2)
+        fy = _fy_start(day)      # même règle que la balance : AN de l'exercice + mouvements jusqu'à la date
+        sol = round(sum(float(l.get("debit") or 0) - float(l.get("credit") or 0) for l in lines if fy <= (l.get("date") or "") <= day), 2)
         if abs(sol) >= 0.005:
             out.append((str(a["number"]), a.get("label") or "", sol))
         time.sleep(0.05)
