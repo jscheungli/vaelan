@@ -53,10 +53,10 @@
 <h3 class="h6 text-uppercase text-muted">Réciprocité — {{ (data.recip|length) - (bad_r|length) }} paires OK / {{ data.recip|length }}</h3>
 <div class="table-responsive mb-3">
 <table class="table table-sm" style="font-size:.78rem;">
-  <thead class="table-light"><tr><th>Paire</th><th class="text-end">A dit (B doit à A)</th><th class="text-end">B dit (A doit à B)</th><th class="text-end">Écart</th><th>Natures A / B</th></tr></thead>
-  <tbody>{% for r in bad_r | sort(attribute='ecart', reverse=True) %}
-  <tr><td>{{ r.a }} ↔ {{ r.b }}</td><td class="text-end">{{ '{:,.2f}'.format(r.a_dit) }}</td><td class="text-end">{{ '{:,.2f}'.format(r.b_dit) }}</td>
-      <td class="text-end text-danger fw-bold">{{ '{:,.2f}'.format(r.ecart) }}</td><td class="small text-muted">{{ r.a_nat }} / {{ r.b_nat }}</td></tr>
+  <thead class="table-light"><tr><th>Paire</th><th class="text-end">Hors commercial : A dit</th><th class="text-end">Hors commercial : B dit</th><th class="text-end">Écart</th><th>Natures A / B</th></tr></thead>
+  <tbody>{% for r in bad_r | sort(attribute="ecart_nc", reverse=True) %}
+  <tr><td>{{ r.a }} ↔ {{ r.b }}</td><td class="text-end">{{ "{:,.2f}".format(r.nc_a) }}</td><td class="text-end">{{ "{:,.2f}".format(r.nc_b) }}</td>
+      <td class="text-end text-danger fw-bold">{{ "{:,.2f}".format(r.ecart_nc) }}</td><td class="small text-muted">{{ r.a_nat }} / {{ r.b_nat }}</td></tr>
   {% else %}<tr><td colspan="5" class="text-success">Toutes les paires sont réciproques.</td></tr>{% endfor %}</tbody>
 </table>
 </div>

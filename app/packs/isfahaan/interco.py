@@ -179,20 +179,40 @@ def analyse(codes, lines, cash, day, floor):
         if l["contrepartie"]:
             M[l["societe"]][l["contrepartie"]] += l["solde"]
             Mn[l["societe"]][l["contrepartie"]][l["nature"]] += l["solde"]
+    # réciprocité PAR NATURE : hors commercial (455/467/47/prêts = ce que la règle groupe vise) et commercial
+    # (411/401 : invérifiable quand une société loge la contrepartie dans un 401/411 collectif, ex. « 401ZEOP »)
+    def _nc(d):
+        return round(sum(v for k, v in d.items() if k != "commercial"), 2)
+
+    def _co(d):
+        return round(d.get("commercial", 0.0), 2)
+
     recip = []
     for i, a in enumerate(codes):
         for b in codes[i + 1:]:
             ab, ba = round(M[a][b], 2), round(M[b][a], 2)
             if abs(ab) < 0.005 and abs(ba) < 0.005:
                 continue
-            ecart = round(ab + ba, 2)
-            recip.append({"a": a, "b": b, "a_dit": ab, "b_dit": ba, "ecart": ecart, "ok": abs(ecart) < 1.0,
+            nc_a, nc_b = _nc(Mn[a][b]), _nc(Mn[b][a])
+            co_a, co_b = _co(Mn[a][b]), _co(Mn[b][a])
+            ecart_nc = round(nc_a + nc_b, 2)
+            co_verif = bool(Mn[a][b].get("commercial") is not None and Mn[b][a].get("commercial") is not None)
+            ecart_co = round(co_a + co_b, 2) if co_verif else None
+            recip.append({"a": a, "b": b, "a_dit": ab, "b_dit": ba, "ecart": round(ab + ba, 2),
+                          "nc_a": nc_a, "nc_b": nc_b, "ecart_nc": ecart_nc, "ok": abs(ecart_nc) < 1.0,
+                          "co_a": co_a, "co_b": co_b, "ecart_co": ecart_co, "co_verifiable": co_verif,
                           "a_nat": dict(Mn[a][b]), "b_nat": dict(Mn[b][a])})
     anomalies = []
     for r in recip:
         if not r["ok"]:
-            anomalies.append({"type": "non_reciprocite", "gravite": "haute", "societes": f"{r['a']} ↔ {r['b']}", "montant": r["ecart"],
-                              "detail": f"{r['a']} voit {r['a_dit']:+,.2f} ; {r['b']} voit {r['b_dit']:+,.2f} (attendu opposés) — écart {r['ecart']:+,.2f}"})
+            anomalies.append({"type": "non_reciprocite_hors_commercial", "gravite": "haute", "societes": f"{r['a']} ↔ {r['b']}", "montant": r["ecart_nc"],
+                              "detail": f"hors 411/401 : {r['a']} voit {r['nc_a']:+,.2f} ; {r['b']} voit {r['nc_b']:+,.2f} (attendu opposés) — écart {r['ecart_nc']:+,.2f}"})
+        if r["co_verifiable"] and abs(r["ecart_co"]) >= 1.0:
+            anomalies.append({"type": "non_reciprocite_commerciale", "gravite": "moyenne", "societes": f"{r['a']} ↔ {r['b']}", "montant": r["ecart_co"],
+                              "detail": f"411/401 : {r['a']} voit {r['co_a']:+,.2f} ; {r['b']} voit {r['co_b']:+,.2f} — écart {r['ecart_co']:+,.2f} (factures non comptabilisées d'un côté / décalage)"})
+        elif not r["co_verifiable"] and (abs(r["co_a"]) >= 1.0 or abs(r["co_b"]) >= 1.0):
+            anomalies.append({"type": "commercial_non_verifiable", "gravite": "info", "societes": f"{r['a']} ↔ {r['b']}", "montant": r["co_a"] or r["co_b"],
+                              "detail": "une des deux sociétés n'a pas de compte 411/401 nominatif pour l'autre (compte collectif) : réciprocité commerciale invérifiable"})
     for a in codes:
         for b in codes:
             if a == b or HOLDING in (a, b):
@@ -324,13 +344,15 @@ def excel(result):
         ws.cell(row=r + 1, column=j, value=result["sources"].get(b)).font = Font(name=A, size=8, color="777777")
 
     w2 = wb.create_sheet("Réciprocité")
-    head(w2, ["Société A", "Société B", "A dit (B doit à A)", "B dit (A doit à B)", "Écart (attendu 0)", "OK", "Natures côté A", "Natures côté B"], [14, 14, 18, 18, 16, 6, 34, 34])
-    for i, x in enumerate(sorted(result["recip"], key=lambda x: -abs(x["ecart"])), 2):
-        vals = [x["a"], x["b"], x["a_dit"], x["b_dit"], x["ecart"], "OUI" if x["ok"] else "NON",
+    head(w2, ["Société A", "Société B", "HORS COMMERCIAL : A dit", "HORS COMMERCIAL : B dit", "Écart hors commercial", "Réciproque ?",
+              "COMMERCIAL : A dit", "COMMERCIAL : B dit", "Écart commercial", "Natures côté A", "Natures côté B"], [14, 14, 18, 18, 16, 11, 16, 16, 16, 34, 34])
+    for i, x in enumerate(sorted(result["recip"], key=lambda x: -abs(x["ecart_nc"])), 2):
+        vals = [x["a"], x["b"], x["nc_a"], x["nc_b"], x["ecart_nc"], "OUI" if x["ok"] else "NON",
+                x["co_a"], x["co_b"], (x["ecart_co"] if x["co_verifiable"] else "invérifiable"),
                 ", ".join(f"{k} {v:+,.0f}" for k, v in x["a_nat"].items()), ", ".join(f"{k} {v:+,.0f}" for k, v in x["b_nat"].items())]
         for j, v in enumerate(vals, 1):
             c = w2.cell(row=i, column=j, value=v); c.font = base; c.border = thin
-            if j in (3, 4, 5): c.number_format = "#,##0.00;[Red]-#,##0.00"
+            if j in (3, 4, 5, 7, 8, 9) and isinstance(v, (int, float)): c.number_format = "#,##0.00;[Red]-#,##0.00"
             if j == 6: c.fill = green if x["ok"] else red; c.font = bold
 
     w3 = wb.create_sheet("Anomalies")
@@ -377,11 +399,11 @@ def run_interco_job(ctx, day=None, floor=25000.0):
     hi = sum(1 for a in res["anomalies"] if a["gravite"] == "haute")
     bad = sum(1 for r in res["recip"] if not r["ok"])
     L = [f"INTERCOS GROUPE ISFAHAAN — arrêté {res['day']} — tâche #{ctx.run_id} — {res['generated']}", "",
-         f"  sociétés : {len(res['codes'])} · paires en relation : {len(res['recip'])} · réciprocité fausse : {bad}",
+         f"  sociétés : {len(res['codes'])} · paires en relation : {len(res['recip'])} · réciprocité HORS COMMERCIAL fausse : {bad}",
          f"  anomalies : {len(res['anomalies'])} dont {hi} de gravité haute · virements proposés : {len(res['plan'])}", "",
          "== RÉCIPROCITÉ (écarts) =="] + \
-        [f"  {r['a']:13s} ↔ {r['b']:13s} A dit {r['a_dit']:>14,.2f} · B dit {r['b_dit']:>14,.2f} · écart {r['ecart']:>14,.2f}"
-         for r in sorted(res["recip"], key=lambda x: -abs(x["ecart"])) if not r["ok"]] + \
+        [f"  {r['a']:13s} ↔ {r['b']:13s} hors commercial : A dit {r['nc_a']:>14,.2f} · B dit {r['nc_b']:>14,.2f} · écart {r['ecart_nc']:>14,.2f}"
+         for r in sorted(res["recip"], key=lambda x: -abs(x["ecart_nc"])) if not r["ok"]] + \
         ["", "== PLAN DE VIREMENTS =="] + [f"  {p['ordre']:>2}. [{p['phase']}] {p['de']} → {p['vers']} : {p['montant']:,.2f} € — {p['libelle']}" for p in res["plan"]] + \
         ["", "Excel joint : Matrice · Réciprocité · Anomalies · Plan de virements · Détail comptes."]
     ctx.set_report("\n".join(L))
