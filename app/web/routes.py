@@ -24,6 +24,7 @@ from app.packs.isfahaan.odoo_clients import run_odoo_clients_sync
 from app.packs.isfahaan.inqom_justificatifs import run_inqom_justificatifs
 from app.packs.isfahaan.treso import run_treso_scan
 from app.packs.isfahaan.tiers import run_tiers_sync, run_tiers_apply
+from app.packs.isfahaan.interco import run_interco_job
 from app.packs.sterna_caisse import payments as caisse_payments
 from app.packs.sterna_caisse import salaires as caisse_salaires
 
@@ -190,6 +191,8 @@ _TILES = [
      "Accroche les documents des écritures Inqom aux écritures Pennylane (cadrage à blanc, puis accrochage)."),
     ("treso", "Trésorerie groupe", "bi-bank", "/c/{code}/treso",
      "Grandes masses des balances Pennylane de toutes les sociétés du groupe : trésorerie, dettes fournisseurs, créances, emprunts."),
+    ("interco", "Intercos groupe", "bi-arrow-left-right", "/c/{code}/interco",
+     "Dettes intra-groupe à une date : matrice société × société, réciprocité, anomalies, plan de virements de régularisation."),
     ("jobs", "Tâches", "bi-list-task", "/jobs",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
@@ -241,6 +244,8 @@ def _feature_from_path(path: str):
         return "inqom"
     if "/treso" in path:
         return "treso"
+    if "/interco" in path:
+        return "interco"
     if "/paiements" in path:
         return "paiements"
     if "/clients" in path:
@@ -784,6 +789,48 @@ def tiers_apply_action(request: Request, code: str, kind: str = Form("client"), 
     run_id = start_job("tiers_apply", lambda ctx: run_tiers_apply(ctx, company.code, kind=kind, target=target),
                        company_id=company.id, pack="isfahaan",
                        label=f"Tiers {kind}s → {target} · APPLICATION · {company.name}", user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse("/jobs", status_code=303)
+
+
+# ----------------------------- ISFAHAAN : intercos groupe -----------------------------
+@router.get("/c/{code}/interco", response_class=HTMLResponse)
+def interco_page(request: Request, code: str):
+    import json as _json
+    from datetime import date as _date, timedelta as _td
+    from app.models import Run, JobArtifact
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        runs = s.exec(select(Run).where(Run.company_id == company.id, Run.kind == "interco")
+                      .order_by(Run.id.desc()).limit(8)).all()
+        latest = next((r for r in runs if r.status == "ok"), None)
+        data = None
+        if latest:
+            art = s.exec(select(JobArtifact).where(JobArtifact.run_id == latest.id, JobArtifact.kind == "json")).first()
+            if art:
+                try:
+                    data = _json.loads(art.data.decode("utf-8"))
+                except Exception:
+                    data = None
+    default_day = (_date.today().replace(day=1) - _td(days=1)).isoformat()
+    bad = {(r["a"], r["b"]) for r in (data or {}).get("recip", []) if not r["ok"]}
+    bad |= {(b, a) for a, b in bad}
+    return templates.TemplateResponse(request, "interco.html",
+                                      _ctx(request, company=company, runs=runs, latest=latest, data=data,
+                                           bad=bad, default_day=default_day))
+
+
+@router.post("/c/{code}/interco/run")
+def interco_run(request: Request, code: str, day: str = Form(""), floor: float = Form(25000.0)):
+    company, redir = _company_or_redirect(request, code)
+    if redir:
+        return redir
+    run_id = start_job("interco", lambda ctx: run_interco_job(ctx, day=(day or None), floor=floor),
+                       company_id=company.id, pack="isfahaan",
+                       label=f"Intercos groupe · arrêté {day or 'fin de mois précédent'}", user=current_user(request))
     if request.headers.get("HX-Request"):
         return _watch_fragment(run_id)
     return RedirectResponse("/jobs", status_code=303)

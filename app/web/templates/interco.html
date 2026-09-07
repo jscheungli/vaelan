@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Intercos groupe · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Intercos groupe</li>
+</ol></nav>
+
+<h1 class="h4 mb-1">Dettes intra-groupe ISFAHAAN</h1>
+<p class="text-muted small">Règle cible : entre deux sociétés <strong>sœurs</strong>, seules des dettes <strong>commerciales</strong> (411/401) peuvent subsister ;
+  toute autre position (455 compte courant, 467 tiers, virements en transit, prêts) doit être portée par <strong>ISFAHAAN</strong>.
+  Vaelan lit les balances Pennylane à la date d'arrêté, identifie les contreparties par libellé (convention « Société #GISF #GJ » + alias),
+  vérifie la <strong>réciprocité</strong> (A → B = −(B → A)), liste les anomalies et propose un plan de virements. Lecture seule.</p>
+
+<div class="card shadow-sm mb-3" style="max-width:720px;">
+  <div class="card-body">
+    <form hx-post="/c/{{ company.code }}/interco/run" hx-target="#run-result" hx-swap="innerHTML" hx-disabled-elt="find button" class="row g-2 align-items-end">
+      <div class="col-auto"><label class="form-label small text-muted mb-1">Date d'arrêté</label>
+        <input type="date" name="day" value="{{ default_day }}" class="form-control form-control-sm"></div>
+      <div class="col-auto"><label class="form-label small text-muted mb-1">Plancher de trésorerie par société (€)</label>
+        <input type="number" name="floor" value="25000" step="1000" class="form-control form-control-sm" style="width:140px;"></div>
+      <div class="col-auto"><button class="btn btn-sm btn-dark"><i class="bi bi-arrow-left-right"></i> Analyser</button></div>
+      {% if latest %}<div class="col-auto"><a class="btn btn-sm btn-outline-secondary" href="/jobs/{{ latest.id }}/artifact/xlsx"><i class="bi bi-file-earmark-excel"></i> Excel (matrice, réciprocité, anomalies, plan)</a></div>{% endif %}
+    </form>
+    <div id="run-result" class="mt-2"></div>
+  </div>
+</div>
+
+{% if data %}
+{% set codes = data.codes %}
+<h3 class="h6 text-uppercase text-muted">Matrice au {{ data.day }} <span class="fw-normal">(tâche #{{ latest.id }}) — ligne = livres de la société ; cellule = ce que la colonne lui doit (+) ou ce qu'elle doit à la colonne (−), en k€</span></h3>
+<div class="table-responsive mb-3">
+<table class="table table-sm table-bordered align-middle text-end" style="font-size:.76rem;">
+  <thead class="table-light"><tr><th class="text-start">livres de ↓ · doit à →</th>{% for b in codes %}<th>{{ b }}</th>{% endfor %}<th>Trésorerie</th></tr></thead>
+  <tbody>
+  {% for a in codes %}
+  <tr><th class="text-start">{{ a }}</th>
+    {% for b in codes %}
+      {% set v = data.matrix[a][b] %}
+      {% if a == b %}<td class="table-secondary"></td>
+      {% elif v|abs < 1 %}<td class="text-muted">·</td>
+      {% else %}<td class="{{ 'table-danger' if (a, b) in bad else 'table-success' }}" title="{{ data.matrix_nat[a][b] }}">{{ '{:,.0f}'.format(v / 1000).replace(',', ' ') }}</td>{% endif %}
+    {% endfor %}
+    <td class="{{ 'text-danger' if data.cash[a] < 0 else '' }}">{{ '{:,.0f}'.format(data.cash[a] / 1000).replace(',', ' ') }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="small text-muted">Vert = réciprocité vérifiée (écart &lt; 1 €) · rouge = réciprocité fausse · survol = détail par nature (cca / tiers / transit / commercial / pret).</p>
+
+{% set bad_r = data.recip | rejectattr('ok') | list %}
+<h3 class="h6 text-uppercase text-muted">Réciprocité — {{ (data.recip|length) - (bad_r|length) }} paires OK / {{ data.recip|length }}</h3>
+<div class="table-responsive mb-3">
+<table class="table table-sm" style="font-size:.78rem;">
+  <thead class="table-light"><tr><th>Paire</th><th class="text-end">A dit (B doit à A)</th><th class="text-end">B dit (A doit à B)</th><th class="text-end">Écart</th><th>Natures A / B</th></tr></thead>
+  <tbody>{% for r in bad_r | sort(attribute='ecart', reverse=True) %}
+  <tr><td>{{ r.a }} ↔ {{ r.b }}</td><td class="text-end">{{ '{:,.2f}'.format(r.a_dit) }}</td><td class="text-end">{{ '{:,.2f}'.format(r.b_dit) }}</td>
+      <td class="text-end text-danger fw-bold">{{ '{:,.2f}'.format(r.ecart) }}</td><td class="small text-muted">{{ r.a_nat }} / {{ r.b_nat }}</td></tr>
+  {% else %}<tr><td colspan="5" class="text-success">Toutes les paires sont réciproques.</td></tr>{% endfor %}</tbody>
+</table>
+</div>
+
+<h3 class="h6 text-uppercase text-muted">Anomalies ({{ data.anomalies|length }})</h3>
+<div class="table-responsive mb-3">
+<table class="table table-sm" style="font-size:.78rem;">
+  <thead class="table-light"><tr><th>Gravité</th><th>Type</th><th>Sociétés</th><th class="text-end">Montant</th><th>Détail</th></tr></thead>
+  <tbody>{% for x in data.anomalies %}
+  <tr><td><span class="badge text-bg-{{ 'danger' if x.gravite == 'haute' else ('warning' if x.gravite == 'moyenne' else 'secondary') }}">{{ x.gravite }}</span></td>
+      <td>{{ x.type }}</td><td>{{ x.societes }}</td><td class="text-end">{{ '{:,.0f}'.format(x.montant or 0) }}</td><td class="small">{{ x.detail }}</td></tr>
+  {% endfor %}</tbody>
+</table>
+</div>
+
+<h3 class="h6 text-uppercase text-muted">Plan de virements proposé ({{ data.plan|length }}) — plancher {{ '{:,.0f}'.format(data.floor) }} €</h3>
+<div class="table-responsive mb-3">
+<table class="table table-sm" style="font-size:.78rem;">
+  <thead class="table-light"><tr><th>#</th><th>Phase</th><th>De</th><th>Vers</th><th class="text-end">Montant</th><th>Libellé</th><th>Condition</th></tr></thead>
+  <tbody>{% for p in data.plan %}
+  <tr><td>{{ p.ordre }}</td><td>{{ p.phase }}</td><td>{{ p.de }}</td><td>{{ p.vers }}</td><td class="text-end">{{ '{:,.2f}'.format(p.montant) }}</td><td class="small"><code>{{ p.libelle }}</code></td><td class="small text-muted">{{ p.condition }}</td></tr>
+  {% else %}<tr><td colspan="7" class="text-muted">Aucun virement à prévoir.</td></tr>{% endfor %}</tbody>
+</table>
+</div>
+{% endif %}
+
+<h3 class="h6 text-uppercase text-muted">Dernières exécutions</h3>
+<div class="table-responsive">
+<table class="table table-sm align-middle" style="font-size:.82rem;">
+  <thead class="table-light"><tr class="small text-muted"><th>#</th><th>Lancée (Réunion)</th><th>Libellé</th><th>Statut</th><th>Résumé</th><th></th></tr></thead>
+  <tbody>{% for r in runs %}
+    <tr><td>{{ r.id }}</td><td class="text-nowrap">{{ r.started_at | dtlocal }}</td><td>{{ (r.label or '')[:48] }}</td>
+      <td><span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('danger' if r.status in ('error','failed') else 'secondary') }}">{{ r.status }}</span></td>
+      <td class="small">{{ (r.summary or '')[:100] }}</td>
+      <td class="text-nowrap"><a href="/jobs/{{ r.id }}/artifact/xlsx" class="small"><i class="bi bi-file-earmark-excel"></i> Excel</a></td></tr>
+  {% else %}<tr><td colspan="6" class="text-muted small">Aucune exécution — lance une analyse.</td></tr>{% endfor %}</tbody>
+</table>
+</div>
+{% endblock %}
