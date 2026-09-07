@@ -231,10 +231,10 @@ def analyse(codes, lines, cash, day, floor):
         if not l["contrepartie"] and l["tagged"] and not l["externe"]:
             anomalies.append({"type": "interco_non_identifie", "gravite": "moyenne", "societes": l["societe"], "montant": l["solde"],
                               "detail": f"{l['compte']} « {l['libelle']} » : {l['solde']:+,.2f} — libellé taggé groupe mais société inconnue (ajouter un alias)"})
-        if not l["contrepartie"] and l["collectif"] and abs(l["solde"]) >= 1000:
+        if not l["contrepartie"] and l.get("collectif") and abs(l["solde"]) >= 1000:
             anomalies.append({"type": "compte_collectif_non_individualise", "gravite": "haute", "societes": l["societe"], "montant": l["solde"],
                               "detail": f"{l['compte']} « {l['libelle']} » : {l['solde']:+,.2f} — contrepartie non identifiable, réciprocité invérifiable (à éclater par société)"})
-        if l["perso"] and abs(l["solde"]) >= 1000:
+        if l.get("perso") and abs(l["solde"]) >= 1000:
             anomalies.append({"type": "compte_courant_personne_physique", "gravite": "info", "societes": l["societe"], "montant": l["solde"],
                               "detail": f"{l['compte']} « {l['libelle']} » : {l['solde']:+,.2f} (hors périmètre groupe, pour information)"})
 
