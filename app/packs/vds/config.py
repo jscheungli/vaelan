@@ -9,7 +9,7 @@ avec suivi des réservations, invitations, relances et alertes. Réglages persis
 COMPANY_CODE = "VDS"
 
 VILLA = {
-    "name": "Villa des Sables du Lagon",
+    "name": "La Villa des Sables du Lagon",
     "legal": "SCI LES SABLES DU LAGON",
     "rcs": "RCS Saint-Denis de La Réunion 821 948 163",
     "address": "6 ruelle Mazeau, 97400 Saint-Denis, La Réunion",
@@ -118,7 +118,7 @@ MARKETING = [
     ("sms", "Oui, uniquement par SMS", "Yes, by SMS only"),
     ("both", "Oui, par email et par SMS", "Yes, by email and SMS"),
     ("none", "Non, je ne souhaite pas recevoir d'offres promotionnelles de la Villa des Sables du Lagon",
-     "No, I do not wish to receive promotional offers from Villa des Sables du Lagon"),
+     "No, I do not wish to receive promotional offers from La Villa des Sables du Lagon"),
 ]
 
 # Réglages par défaut (surchargés par Setting VDS / checkin:params)

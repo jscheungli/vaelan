@@ -7,7 +7,7 @@
   <li class="breadcrumb-item active">Check-in voyageurs</li>
 </ol></nav>
 <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
-  <h1 class="h4 mb-0 me-auto">Formulaires d'arrivée — Villa des Sables du Lagon</h1>
+  <h1 class="h4 mb-0 me-auto">Formulaires d'arrivée — La Villa des Sables du Lagon</h1>
   <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/export.xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
   <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/config"><i class="bi bi-gear"></i> Configuration</a>
   <button class="btn btn-sm btn-dark" data-bs-toggle="collapse" data-bs-target="#newres"><i class="bi bi-plus-lg"></i> Réservation manuelle</button>
@@ -57,7 +57,7 @@
   <tr class="{{ 'table-danger' if r.status == 'refused' else ('table-warning' if r.arrival and (r.arrival - today).days <= 7 and r.status in ('pending','sent','reminded') else '') }}">
     <td class="text-nowrap">{{ r.arrival.strftime('%d/%m/%Y') if r.arrival else '—' }}{% if r.arrival and r.arrival >= today %} <span class="text-muted">J-{{ (r.arrival - today).days }}</span>{% endif %}</td>
     <td class="text-nowrap">{{ r.departure.strftime('%d/%m/%Y') if r.departure else '—' }}</td>
-    <td class="text-nowrap">{{ channel_logo(r.channel, 18) }} <span class="small">{{ channels[r.channel].label if r.channel in channels else r.channel }}</span></td>
+    <td class="text-center">{{ channel_logo(r.channel, 26) }}</td>
     <td><code>{{ r.booking_ref or '—' }}</code></td>
     <td>{{ r.guest_name or '—' }} <span class="text-muted small">{{ r.lang|upper }}</span></td>
     <td class="small">{{ r.guest_email or '<span class="text-danger">aucun</span>'|safe }}</td>

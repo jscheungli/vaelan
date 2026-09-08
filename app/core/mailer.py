@@ -2,7 +2,7 @@
 
 Configuration par variables d'environnement (Render : dashboard → Environment) :
   SMTP_HOST (ex. smtp.postmarkapp.com)  SMTP_PORT (587 = STARTTLS, 465 = SSL)  SMTP_USER  SMTP_PASSWORD
-  SMTP_FROM  (ex. « Villa des Sables du Lagon <contact@villa-des-sables-du-lagon.com> »)
+  SMTP_FROM  (ex. « La Villa des Sables du Lagon <contact@villa-des-sables-du-lagon.com> »)
   SMTP_MESSAGE_STREAM (optionnel, Postmark : en-tête X-PM-Message-Stream, ex. « outbound » — inutile
   avec un SMTP Token, qui est déjà lié à un flux)
 Postmark : SMTP_USER = Access Key, SMTP_PASSWORD = Secret Key du SMTP Token ; l'expéditeur (SMTP_FROM)
@@ -91,7 +91,7 @@ VAELAN_URL = "https://vaelan.com"
 
 
 def branded_from(brand: dict) -> str:
-    """« Villa des Sables du Lagon via Vaelan <villa-des-sables-du-lagon@vaelan.com> »."""
+    """« La Villa des Sables du Lagon via Vaelan <villa-des-sables-du-lagon@vaelan.com> »."""
     name, addr = parseaddr(brand.get("address") or sender())
     label = brand.get("name") or name or "Vaelan"
     if "vaelan" not in label.lower():

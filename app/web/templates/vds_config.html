@@ -20,7 +20,7 @@
   </div>
   <h3 class="h6 text-uppercase text-muted">Envois</h3>
   <div class="mb-2"><label class="form-label small mb-0">Alertes internes — destinataires (virgules)</label><input name="alert_emails" class="form-control form-control-sm" value="{{ p.alert_emails }}" placeholder="vous@…, gestionnaire@…"></div>
-  <div class="mb-2"><label class="form-label small mb-0">Adresse d'envoi (vide = villa-des-sables-du-lagon@vaelan.com) — le nom affiché est « Villa des Sables du Lagon via Vaelan » ; l'adresse doit être sur un domaine vérifié chez Postmark</label><input name="from_email" class="form-control form-control-sm" value="{{ p.from_email }}" placeholder="villa-des-sables-du-lagon@vaelan.com"></div>
+  <div class="mb-2"><label class="form-label small mb-0">Adresse d'envoi (vide = villa-des-sables-du-lagon@vaelan.com) — le nom affiché est « La Villa des Sables du Lagon via Vaelan » ; l'adresse doit être sur un domaine vérifié chez Postmark</label><input name="from_email" class="form-control form-control-sm" value="{{ p.from_email }}" placeholder="villa-des-sables-du-lagon@vaelan.com"></div>
   <div class="mb-2"><label class="form-label small mb-0">Adresse de réponse (Reply-To) des emails voyageurs</label><input name="reply_to" class="form-control form-control-sm" value="{{ p.reply_to }}"></div>
   <div class="form-check small mb-3"><input class="form-check-input" type="checkbox" name="auto_invite" value="1" id="ai" {% if p.auto_invite %}checked{% endif %}><label class="form-check-label" for="ai">Invitation automatique dès qu'une réservation confirmée (Booked) arrive de Lodgify avec un email</label></div>
   <h3 class="h6 text-uppercase text-muted">Relances</h3>

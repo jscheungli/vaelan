@@ -295,7 +295,7 @@ def admin_test_mail(request: Request, code: str):
     to = [to] if isinstance(to, str) else to
     if not to:
         return RedirectResponse(f"/c/{code}/checkin/config?msg=Aucune adresse de test ni d'alerte renseignée.", status_code=303)
-    subject = "Email de test — formulaire d'arrivée Villa des Sables du Lagon"
+    subject = "Email de test — formulaire d'arrivée La Villa des Sables du Lagon"
     body = (f"Bonjour,\n\nCeci est un email de test envoyé par Vaelan le {service.now_local():%d/%m/%Y à %H:%M} (heure de La Réunion).\n\n"
             f"Expéditeur : {mailer.branded_from(service.brand())}\nRéponse vers : {p.get('reply_to') or '— (non renseigné)'}\n\n"
             f"Si vous le recevez, la configuration SMTP est opérationnelle.")
