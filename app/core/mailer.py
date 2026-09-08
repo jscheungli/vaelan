@@ -1,8 +1,12 @@
 """Envoi d'emails (SMTP, bibliothèque standard) — utilisé par les modules qui notifient des tiers.
 
 Configuration par variables d'environnement (Render : dashboard → Environment) :
-  SMTP_HOST (ex. smtp.gmail.com)  SMTP_PORT (587 = STARTTLS, 465 = SSL)  SMTP_USER  SMTP_PASSWORD
+  SMTP_HOST (ex. smtp.postmarkapp.com)  SMTP_PORT (587 = STARTTLS, 465 = SSL)  SMTP_USER  SMTP_PASSWORD
   SMTP_FROM  (ex. « Villa des Sables du Lagon <contact@villa-des-sables-du-lagon.com> »)
+  SMTP_MESSAGE_STREAM (optionnel, Postmark : en-tête X-PM-Message-Stream, ex. « outbound » — inutile
+  avec un SMTP Token, qui est déjà lié à un flux)
+Postmark : SMTP_USER = Access Key, SMTP_PASSWORD = Secret Key du SMTP Token ; l'expéditeur (SMTP_FROM)
+doit être une Sender Signature ou un domaine vérifié dans Postmark.
 En local : section "smtp" de ~/.config/vaelan/credentials.json (chargée par localenv).
 Sans configuration, send() renvoie (False, "SMTP non configuré") : les appelants journalisent
 l'envoi comme « skipped » et proposent le lien à copier.
@@ -25,8 +29,10 @@ def sender() -> str:
 
 def send(to: List[str], subject: str, text: str, html: Optional[str] = None,
          attachments: Optional[List[Tuple[str, bytes, str]]] = None,
-         reply_to: Optional[str] = None, bcc: Optional[List[str]] = None) -> Tuple[bool, str]:
-    """Envoie un email ; renvoie (ok, message). attachments = [(nom, bytes, content_type)]."""
+         reply_to: Optional[str] = None, bcc: Optional[List[str]] = None,
+         sender_override: Optional[str] = None) -> Tuple[bool, str]:
+    """Envoie un email ; renvoie (ok, message). attachments = [(nom, bytes, content_type)].
+    sender_override : expéditeur propre à un module (doit être vérifié chez le fournisseur SMTP)."""
     to = [t.strip() for t in (to or []) if t and t.strip()]
     if not to:
         return False, "destinataire vide"
@@ -36,9 +42,11 @@ def send(to: List[str], subject: str, text: str, html: Optional[str] = None,
     port = int(os.getenv("SMTP_PORT") or 587)
     user = os.getenv("SMTP_USER") or ""
     pwd = os.getenv("SMTP_PASSWORD") or ""
-    name, addr = parseaddr(sender())
+    name, addr = parseaddr(sender_override or sender())
     msg = EmailMessage()
     msg["From"] = formataddr((name, addr)) if name else addr
+    if os.getenv("SMTP_MESSAGE_STREAM"):
+        msg["X-PM-Message-Stream"] = os.getenv("SMTP_MESSAGE_STREAM")
     msg["To"] = ", ".join(to)
     msg["Subject"] = subject
     if reply_to:

@@ -123,6 +123,7 @@ DEFAULT_PARAMS = {
     "test_email": "jscheungli@gmail.com",
     "alert_emails": "jscheungli@gmail.com",   # destinataires des alertes internes (virgules)
     "reply_to": "",            # adresse de réponse des emails voyageurs
+    "from_email": "",          # expéditeur des emails voyageurs (vide = SMTP_FROM) — doit être vérifié chez Postmark
     "max_upload_mb": 12,
     "base_url": "",            # racine des liens publics (vide = PUBLIC_BASE_URL ou https://vaelan.com) ; cible : https://scilessablesdulagon.vaelan.com
 }

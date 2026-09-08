@@ -44,13 +44,13 @@ services:
       # VDS — check-in voyageurs (SCI Les Sables du Lagon)
       - key: LODGIFY_VDS_APIKEY      # alias accepté : LODGIFY_LESSABLESDULAGON_APIKEY
         sync: false
-      - key: SMTP_HOST               # ex. smtp.gmail.com — envoi des invitations / relances / confirmations
+      - key: SMTP_HOST               # Postmark : smtp.postmarkapp.com — envoi des invitations / relances / confirmations
         sync: false
-      - key: SMTP_PORT               # 587 (STARTTLS) ou 465 (SSL)
+      - key: SMTP_PORT               # 587 (STARTTLS)
         sync: false
-      - key: SMTP_USER
+      - key: SMTP_USER               # Postmark : Access Key du SMTP Token
         sync: false
-      - key: SMTP_PASSWORD
+      - key: SMTP_PASSWORD           # Postmark : Secret Key du SMTP Token
         sync: false
       - key: SMTP_FROM               # « Villa des Sables du Lagon <adresse@…> »
         sync: false

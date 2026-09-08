@@ -225,7 +225,9 @@ def guest_send(res: VdsReservation, kind: str, to: str, subject: str, body: str,
         subject = f"[BÊTA → {to}] {subject}"
         body = f"*** MODE BÊTA — ce message était destiné à {to} ; il vous est redirigé pour validation. ***\n\n" + body
         to = test
-    ok, info = mailer.send([to], subject, body, attachments=attachments, reply_to=params().get("reply_to") or None)
+    p = params()
+    ok, info = mailer.send([to], subject, body, attachments=attachments, reply_to=p.get("reply_to") or None,
+                           sender_override=p.get("from_email") or None)
     log_message(res.id, kind, f"{to} (bêta · réel : {real_to})" if test else to, subject, body, ok, info)
     return ok, info
 
@@ -256,7 +258,7 @@ def send_alert(res: Optional[VdsReservation], subject: str, body: str, kind: str
     if not to:
         log_message(res.id if res else None, kind, "", subject, body, False, "alertes : aucun destinataire (configuration)")
         return False, "aucun destinataire"
-    ok, info = mailer.send(to, subject, body)
+    ok, info = mailer.send(to, subject, body, sender_override=params().get("from_email") or None)
     log_message(res.id if res else None, kind, ", ".join(to), subject, body, ok, info)
     return ok, info
 

@@ -254,6 +254,7 @@ async def admin_config_save(request: Request, code: str):
     form = await request.form()
     before = service.params()
     vals = {"alert_emails": (form.get("alert_emails") or "").strip(), "reply_to": (form.get("reply_to") or "").strip(),
+            "from_email": (form.get("from_email") or "").strip(),
             "auto_invite": bool(form.get("auto_invite")), "beta": bool(form.get("beta")),
             "test_email": (form.get("test_email") or "").strip()}
     if vals["beta"] and not vals["test_email"]:
@@ -286,6 +287,25 @@ async def admin_config_save(request: Request, code: str):
             service.set_reference_file("erp", erp.filename, blob, erp.content_type or "application/pdf")
             msg += " État des risques chargé."
     return RedirectResponse(f"/c/{code}/checkin/config?msg={msg}", status_code=303)
+
+
+@router.post("/c/{code}/checkin/config/test-mail")
+def admin_test_mail(request: Request, code: str):
+    """Email de test vers l'adresse de test (bêta) ou les alertes : valide la configuration SMTP."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    p = service.params()
+    to = (p.get("test_email") or "").strip() or service.alert_emails()[:1]
+    to = [to] if isinstance(to, str) else to
+    if not to:
+        return RedirectResponse(f"/c/{code}/checkin/config?msg=Aucune adresse de test ni d'alerte renseignée.", status_code=303)
+    ok, info = mailer.send(to, "[Vaelan] Email de test — check-in Villa des Sables du Lagon",
+                           f"Ceci est un email de test envoyé par Vaelan ({service.now_local():%d/%m/%Y %H:%M}, heure de La Réunion).\n"
+                           f"Expéditeur : {p.get('from_email') or mailer.sender()}\nSi vous le recevez, la configuration SMTP est opérationnelle.",
+                           sender_override=p.get("from_email") or None)
+    service.log_message(None, "test", ", ".join(to), "[Vaelan] Email de test", "", ok, info)
+    return RedirectResponse(f"/c/{code}/checkin/config?msg={'✅ Email de test envoyé à ' + ', '.join(to) if ok else '❌ Échec : ' + info}", status_code=303)
 
 
 @router.post("/c/{code}/checkin/import")
