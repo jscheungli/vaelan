@@ -185,6 +185,8 @@ def admin_list(request: Request, code: str, view: str = "avenir"):
               "completes": sum(1 for r in rs if r.status == "completed"), "refus": sum(1 for r in rs if r.status == "refused")}
     p = service.params()
     warns = []
+    if p.get("beta"):
+        warns.append(f"MODE BÊTA : tous les emails voyageurs (invitations, relances, confirmations, état des risques) sont redirigés vers {p.get('test_email')} — rien ne part aux clients. À désactiver dans la configuration après validation.")
     if not mailer.configured():
         warns.append("Envoi d'emails non configuré (variables SMTP_HOST / SMTP_FROM / SMTP_USER / SMTP_PASSWORD sur Render) : les invitations ne partent pas, copiez les liens.")
     if not p.get("alert_emails"):
@@ -231,8 +233,12 @@ async def admin_config_save(request: Request, code: str):
     if redir:
         return redir
     form = await request.form()
+    before = service.params()
     vals = {"alert_emails": (form.get("alert_emails") or "").strip(), "reply_to": (form.get("reply_to") or "").strip(),
-            "auto_invite": bool(form.get("auto_invite"))}
+            "auto_invite": bool(form.get("auto_invite")), "beta": bool(form.get("beta")),
+            "test_email": (form.get("test_email") or "").strip()}
+    if vals["beta"] and not vals["test_email"]:
+        vals["test_email"] = before.get("test_email") or "jscheungli@gmail.com"
     for k in ("reminder_days", "max_reminders", "purge_id_days", "max_upload_mb"):
         v = (form.get(k) or "").strip()
         if v.isdigit():
@@ -242,6 +248,17 @@ async def admin_config_save(request: Request, code: str):
         vals[k] = v
     service.save_params(vals)
     msg = "Réglages enregistrés."
+    if before.get("beta") and not vals["beta"]:
+        # sortie de bêta : les invitations/relances envoyées à l'adresse de test n'ont jamais atteint les
+        # voyageurs -> on remet ces réservations « à inviter » pour que le vrai cycle reparte
+        n = 0
+        with Session(engine) as s:
+            for r in s.exec(select(VdsReservation).where(VdsReservation.status.in_(["sent", "reminded"]))).all():
+                r.status, r.invited_at, r.reminded_at, r.reminder_count, r.alerted_at = "pending", None, None, 0, None
+                s.add(r)
+                n += 1
+            s.commit()
+        msg += f" Sortie du mode bêta : {n} réservation(s) remise(s) « à inviter »."
     erp = form.get("erp")
     if erp is not None and getattr(erp, "filename", ""):
         blob = await erp.read()

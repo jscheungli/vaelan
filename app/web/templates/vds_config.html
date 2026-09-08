@@ -12,6 +12,12 @@
 <div class="col-lg-7">
 <div class="card shadow-sm mb-3"><div class="card-body">
 <form method="post" enctype="multipart/form-data">
+  <div class="p-2 mb-3 rounded border {{ 'border-warning bg-warning-subtle' if p.beta else 'border-success bg-success-subtle' }}">
+    <div class="form-check"><input class="form-check-input" type="checkbox" name="beta" value="1" id="beta" {% if p.beta %}checked{% endif %}>
+      <label class="form-check-label fw-semibold" for="beta">Mode bêta — rediriger TOUS les emails voyageurs vers l'adresse de test</label></div>
+    <div class="row g-2 mt-1"><div class="col-md-7"><input name="test_email" type="email" class="form-control form-control-sm" value="{{ p.test_email }}" placeholder="adresse de test"></div></div>
+    <div class="small text-muted mt-1">Invitations, relances, confirmations signées et état des risques partent à cette adresse avec le destinataire réel dans le sujet ([BÊTA → …]). Rien n'atteint les clients. À la désactivation, les réservations « invitées / relancées » pendant la bêta sont remises « à inviter ».</div>
+  </div>
   <h3 class="h6 text-uppercase text-muted">Envois</h3>
   <div class="mb-2"><label class="form-label small mb-0">Alertes internes — destinataires (virgules)</label><input name="alert_emails" class="form-control form-control-sm" value="{{ p.alert_emails }}" placeholder="vous@…, gestionnaire@…"></div>
   <div class="mb-2"><label class="form-label small mb-0">Adresse de réponse (Reply-To) des emails voyageurs</label><input name="reply_to" class="form-control form-control-sm" value="{{ p.reply_to }}"></div>

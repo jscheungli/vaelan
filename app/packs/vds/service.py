@@ -209,6 +209,27 @@ def _mail_vars(res: VdsReservation) -> dict:
             "checkin": config.VILLA["checkin"], "checkout": config.VILLA["checkout"]}
 
 
+def beta_redirect() -> Optional[str]:
+    """Adresse de test si le mode bêta est actif (tous les emails voyageurs y sont redirigés)."""
+    p = params()
+    return (p.get("test_email") or "").strip() if p.get("beta") else None
+
+
+def guest_send(res: VdsReservation, kind: str, to: str, subject: str, body: str,
+               attachments=None) -> Tuple[bool, str]:
+    """Envoi d'un email au VOYAGEUR, journalisé. En mode bêta, redirigé vers l'adresse de test
+    (sujet préfixé du destinataire réel) — rien ne part au client."""
+    test = beta_redirect()
+    real_to = to
+    if test:
+        subject = f"[BÊTA → {to}] {subject}"
+        body = f"*** MODE BÊTA — ce message était destiné à {to} ; il vous est redirigé pour validation. ***\n\n" + body
+        to = test
+    ok, info = mailer.send([to], subject, body, attachments=attachments, reply_to=params().get("reply_to") or None)
+    log_message(res.id, kind, f"{to} (bêta · réel : {real_to})" if test else to, subject, body, ok, info)
+    return ok, info
+
+
 def send_invitation(res: VdsReservation, reminder: bool = False) -> Tuple[bool, str]:
     """Invitation (ou relance) par email au voyageur. Sans email : journalisé « skipped »."""
     kind = "reminder" if reminder else "invitation"
@@ -219,8 +240,7 @@ def send_invitation(res: VdsReservation, reminder: bool = False) -> Tuple[bool, 
     if not res.guest_email:
         log_message(res.id, kind, "", subject, body, False, "pas d'email : envoyer le lien via la messagerie de la plateforme")
         return False, "pas d'email"
-    ok, info = mailer.send([res.guest_email], subject, body, reply_to=params().get("reply_to") or None)
-    log_message(res.id, kind, res.guest_email, subject, body, ok, info)
+    ok, info = guest_send(res, kind, res.guest_email, subject, body)
     if ok:
         now = datetime.utcnow()
         if reminder:
@@ -250,9 +270,7 @@ def send_erp(res: VdsReservation) -> Tuple[bool, str]:
     v = _mail_vars(res)
     subject = t(res.lang, "mail_erp_subject", **v)
     body = t(res.lang, "mail_erp_body", **v).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
-    ok, info = mailer.send([res.guest_email], subject, body, attachments=[(erp.name, erp.data, erp.content_type)],
-                           reply_to=params().get("reply_to") or None)
-    log_message(res.id, "erp", res.guest_email, subject, body, ok, info)
+    ok, info = guest_send(res, "erp", res.guest_email, subject, body, attachments=[(erp.name, erp.data, erp.content_type)])
     if ok:
         update_reservation(res.id, erp_sent_at=datetime.utcnow())
     return ok, info
@@ -321,9 +339,7 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
     if to:
         subject = t(lang, "mail_confirm_subject", **v)
         body = t(lang, "mail_confirm_body", **v).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
-        ok, info = mailer.send([to], subject, body, attachments=[(recap.name, pdf, "application/pdf")],
-                               reply_to=params().get("reply_to") or None)
-        log_message(res.id, "confirmation", to, subject, body, ok, info)
+        guest_send(res, "confirmation", to, subject, body, attachments=[(recap.name, pdf, "application/pdf")])
     send_alert(res, f"[VDS] Formulaire d'arrivée signé — {res.guest_name} · {config.CHANNELS[res.channel]['label']} · "
                     f"{fmt_date(res.arrival)} → {fmt_date(res.departure)}",
                f"Réservation {res.booking_ref or res.id} ({config.CHANNELS[res.channel]['label']})\n"

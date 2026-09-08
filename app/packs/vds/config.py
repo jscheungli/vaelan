@@ -83,7 +83,9 @@ DEFAULT_PARAMS = {
     "purge_id_days": 180,      # suppression des pièces d'identité N jours après le départ
     "auto_invite": False,      # invitation automatique dès la synchro Lodgify (statut Booked) — à activer une fois le SMTP en place
     "sync_statuses": ["Booked"],
-    "alert_emails": "",        # destinataires des alertes internes (virgules)
+    "beta": True,              # MODE BÊTA : tous les emails voyageurs sont redirigés vers test_email (rien ne part aux clients)
+    "test_email": "jscheungli@gmail.com",
+    "alert_emails": "jscheungli@gmail.com",   # destinataires des alertes internes (virgules)
     "reply_to": "",            # adresse de réponse des emails voyageurs
     "max_upload_mb": 12,
 }
