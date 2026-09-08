@@ -8,6 +8,12 @@ services:
     autoDeploy: true           # redéploie à chaque push sur la branche suivie
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # domaines personnalisés (DNS Namecheap : CNAME -> vaelan.onrender.com) ; à déclarer aussi
+    # dans le dashboard si le service n'est pas piloté par ce Blueprint
+    domains:
+      - vaelan.com
+      - www.vaelan.com
+      - scilessablesdulagon.vaelan.com   # formulaire d'arrivée VDS
     envVars:
       - key: PYTHON_VERSION       # figer une version stable (éviter le 3.14 bleeding-edge)
         value: "3.12.8"

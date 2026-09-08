@@ -68,8 +68,8 @@ def save_params(values: dict) -> None:
 
 
 def base_url() -> str:
-    """Racine publique des liens (PUBLIC_BASE_URL sur Render ; sinon l'URL de prod)."""
-    return (os.getenv("PUBLIC_BASE_URL") or "https://vaelan.onrender.com").rstrip("/")
+    """Racine publique des liens : réglage `base_url` (config), sinon PUBLIC_BASE_URL, sinon vaelan.com."""
+    return (params().get("base_url") or os.getenv("PUBLIC_BASE_URL") or "https://vaelan.com").rstrip("/")
 
 
 def public_url(res: VdsReservation) -> str:

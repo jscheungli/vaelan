@@ -38,7 +38,23 @@ CHANNELS = {
 RULES = [
     {"key": "horaires", "confirm": False,
      "fr": "Les horaires : arrivée entre 16h et 20h, départ entre 8h et 9h. En dehors de ces plages, il faut notre accord écrit préalable.",
-     "en": "Times: check-in between 4 pm and 8 pm, check-out between 8 am and 9 am. Outside these windows, our prior written agreement is required."},
+     "en": "Times: check-in between 4 pm and 8 pm, check-out between 8 am and 9 am. Outside these windows, our prior written agreement is required.",
+     "more_q_fr": "Besoin d'arriver plus tôt ou de partir plus tard ?",
+     "more_q_en": "Need to arrive earlier or leave later?",
+     "more_fr": "Nous louons la villa à la nuitée. Lorsqu'un départ a lieu le jour de votre arrivée, ou une arrivée le jour de votre départ, "
+                "notre équipe a besoin de ce créneau pour remettre en état une grande villa : c'est la raison de ces horaires. "
+                "S'il n'y a ni départ le jour de votre arrivée, ni arrivée le jour de votre départ, nous sommes beaucoup plus souples, et gratuitement : "
+                "vous pourrez prendre possession des lieux plus tôt ou les quitter plus tard. Comme nous acceptons des réservations jusqu'à 3 jours avant l'arrivée, "
+                "nous pourrons vous le confirmer 3 jours avant votre séjour. Et même s'il y a un départ le jour de votre arrivée, contactez-nous : "
+                "il est en général possible de déposer vos bagages, ou de profiter des espaces extérieurs en fin de matinée ou en début d'après-midi, "
+                "le temps que nous terminions la préparation des pièces intérieures.",
+     "more_en": "The villa is rented per night. When a departure takes place on the day of your arrival, or an arrival on the day of your departure, "
+                "our team needs that window to get a large villa ready again: that is the reason for these times. "
+                "If there is neither a departure on your arrival day nor an arrival on your departure day, we are much more flexible, free of charge: "
+                "you can take possession of the villa earlier or leave later. As we accept bookings up to 3 days before arrival, "
+                "we can confirm it to you 3 days before your stay. And even if there is a departure on your arrival day, get in touch: "
+                "it is usually possible to drop off your luggage, or to enjoy the outdoor areas from late morning or early afternoon, "
+                "while we finish preparing the indoor rooms."},
     {"key": "capacite", "confirm": False,
      "fr": "La capacité maximale est de 12 personnes, visiteurs compris. Aucune personne supplémentaire ne peut occuper ou dormir dans la villa sans notre accord écrit.",
      "en": "Maximum occupancy is 12 people, visitors included. No additional person may stay or sleep at the villa without our written agreement."},
@@ -46,7 +62,27 @@ RULES = [
      "fr": "Aucun événement, réception, fête ou soirée n'est autorisé, et aucune sono ou enceinte à l'extérieur. La villa est louée pour un séjour de vacances, pas pour un événement.",
      "en": "No events, receptions, parties or gatherings are allowed, and no sound system or speakers outdoors. The villa is rented for a holiday stay, not for an event.",
      "confirm_fr": "Je comprends qu'une fête ou un événement organisé dans la villa entraîne la retenue de la caution de 1 000 € et la fin immédiate du séjour, sans remboursement.",
-     "confirm_en": "I understand that a party or event held at the villa results in the 1,000 € deposit being withheld and the immediate end of the stay, without refund."},
+     "confirm_en": "I understand that a party or event held at the villa results in the 1,000 € deposit being withheld and the immediate end of the stay, without refund.",
+     "more_q_fr": "Vous envisagez un événement ?",
+     "more_q_en": "Are you planning an event?",
+     # variante « site direct »
+     "more_fr": "La règle générale est l'interdiction : ce que nous voulons éviter avant tout, ce sont les nuisances sonores pour le voisinage. "
+                "Si vous êtes certain qu'un événement se déroulerait sans aucune nuisance sonore, contactez-nous avant votre séjour : "
+                "chaque demande est étudiée au cas par cas et peut faire l'objet d'une acceptation, avec un forfait événement qui s'ajoute au tarif de la location. "
+                "Ce forfait dépend du nombre de personnes, du moment (journée ou soirée), du type d'événement et de la date.",
+     "more_en": "The general rule is that events are prohibited: what we want to avoid above all is noise disturbance for the neighbourhood. "
+                "If you are certain that an event would take place without any noise disturbance, contact us before your stay: "
+                "each request is reviewed case by case and may be accepted, with an event package added to the rental price. "
+                "This package depends on the number of people, the time (daytime or evening), the type of event and the date.",
+     # variante « plateformes » (Airbnb / Booking / Abritel)
+     "more_platform_fr": "La règle générale est l'interdiction : ce que nous voulons éviter avant tout, ce sont les nuisances sonores pour le voisinage. "
+                         "Les événements ne sont pas autorisés pour les réservations effectuées via une plateforme ({platform}). "
+                         "Ils ne peuvent être étudiés, au cas par cas et avec un forfait événement qui s'ajoute au tarif de la location, "
+                         "que pour les réservations passées directement sur notre site www.villa-des-sables-du-lagon.com.",
+     "more_platform_en": "The general rule is that events are prohibited: what we want to avoid above all is noise disturbance for the neighbourhood. "
+                         "Events are not allowed for bookings made through a platform ({platform}). "
+                         "They can only be considered, case by case and with an event package added to the rental price, "
+                         "for bookings made directly on our website www.villa-des-sables-du-lagon.com."},
     {"key": "bruit", "confirm": True,
      "fr": "Aucune nuisance sonore, de jour comme de nuit : la villa se trouve dans un quartier résidentiel calme, avec des voisins proches. Musique à volume modéré à l'intérieur uniquement, silence complet à l'extérieur après 22h.",
      "en": "No noise disturbance, day or night: the villa is in a quiet residential area with close neighbours. Music at moderate volume indoors only, complete silence outdoors after 10 pm.",
@@ -88,4 +124,6 @@ DEFAULT_PARAMS = {
     "alert_emails": "jscheungli@gmail.com",   # destinataires des alertes internes (virgules)
     "reply_to": "",            # adresse de réponse des emails voyageurs
     "max_upload_mb": 12,
+    "base_url": "",            # racine des liens publics (vide = PUBLIC_BASE_URL ou https://vaelan.com) ; cible : https://scilessablesdulagon.vaelan.com
 }
+PUBLIC_HOST = "scilessablesdulagon.vaelan.com"   # sous-domaine cible du formulaire (à déclarer dans Render → Custom Domains)

@@ -50,7 +50,9 @@ def _ctx(request: Request, **extra):
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return RedirectResponse("/companies" if current_user(request) else "/login", status_code=303)
+    if current_user(request):
+        return RedirectResponse("/companies", status_code=303)
+    return templates.TemplateResponse(request, "landing.html", {"version": APP_VERSION})
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -195,7 +197,7 @@ _TILES = [
      "Dettes intra-groupe à une date : matrice société × société, réciprocité, anomalies, plan de virements de régularisation."),
     ("checkin", "Check-in voyageurs", "bi-clipboard-check", "/c/{code}/checkin",
      "Formulaires d'arrivée (règles, identité, signature) par canal Airbnb / Booking / site : invitations, relances, réponses."),
-    ("jobs", "Tâches", "bi-list-task", "/jobs",
+    ("jobs", "Tâches", "bi-list-task", "/jobs?c={code}",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
 
@@ -209,6 +211,7 @@ def dashboard(request: Request, code: str):
         company = s.exec(select(Company).where(Company.code == code)).first()
     if not company or role_for(user, company) is None:
         return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
+    request.session["company"] = company.code          # contexte courant (page Tâches filtrée)
     feats = features_for(role_for(user, company), user.is_superuser) & company_features(company.code)
     tiles = [{"label": l, "icon": ic, "href": h.format(code=code), "desc": d}
              for f, l, ic, h, d in _TILES if f in feats]
@@ -270,6 +273,7 @@ def _company_or_redirect(request: Request, code: str, feature: str = None):
     feat = feature or _feature_from_path(request.url.path)
     if feat and not can(user, company, feat):   # gating par fonctionnalité (rôle)
         return None, templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
+    request.session["company"] = company.code          # contexte courant (page Tâches filtrée)
     return company, None
 
 
@@ -980,14 +984,38 @@ def _has_general_access(user) -> bool:
     return bool(feats - {"salaires"})
 
 
+def _jobs_scope(request: Request, user, c: str = ""):
+    """Société dont on affiche les tâches : ?c=CODE, sinon la société courante (session), sinon
+    TOUTES celles accessibles à l'utilisateur. Renvoie (company | None, liste d'ids autorisés)."""
+    allowed = user_companies(user)
+    code = c or request.session.get("company") or ""
+    company = next((x for x in allowed if x.code == code), None)
+    if company:
+        return company, [company.id]
+    return None, [x.id for x in allowed]
+
+
+def _run_allowed(user, run) -> bool:
+    """L'utilisateur peut-il voir cette tâche (société accessible) ?"""
+    if not user or not run:
+        return False
+    if user.is_superuser:
+        return True
+    return run.company_id in {x.id for x in user_companies(user)}
+
+
 @router.get("/jobs", response_class=HTMLResponse)
-def jobs_page(request: Request):
+def jobs_page(request: Request, c: str = ""):
     u = current_user(request)
     if not u:
         return RedirectResponse("/login", status_code=303)
     if not _can_jobs(u):
         return templates.TemplateResponse(request, "forbidden.html", _ctx(request), status_code=403)
-    return templates.TemplateResponse(request, "jobs.html", _ctx(request))
+    company, _ = _jobs_scope(request, u, c)
+    if company:
+        request.session["company"] = company.code
+    return templates.TemplateResponse(request, "jobs.html", _ctx(request, company=company,
+                                                                 all_companies=(c == "all" and u.is_superuser)))
 
 
 @router.post("/jobs/{run_id}/cancel")
@@ -996,25 +1024,37 @@ def jobs_cancel(request: Request, run_id: int):
     if not u or not _can_jobs(u):
         return RedirectResponse("/login", status_code=303)
     from app.core.jobs import request_cancel
-    request_cancel(run_id)
+    with Session(engine) as s:
+        run = s.get(Run, run_id)
+    if _run_allowed(u, run):
+        request_cancel(run_id)
     return RedirectResponse("/jobs", status_code=303)
 
 
 @router.get("/jobs/feed", response_class=HTMLResponse)
-def jobs_feed(request: Request, page: int = 1):
+def jobs_feed(request: Request, page: int = 1, c: str = ""):
     u = current_user(request)
     if not u or not _can_jobs(u):
         return RedirectResponse("/login", status_code=303)
     from sqlalchemy import func
     PER_PAGE = 10
     page = max(1, page)
+    # CLOISONNEMENT : une société à la fois (?c=CODE ou société courante) ; « all » = toutes
+    # les sociétés accessibles (superuser uniquement) ; jamais les tâches d'une société non autorisée.
+    if c == "all" and u.is_superuser:
+        company, ids = None, [x.id for x in user_companies(u)]
+    else:
+        company, ids = _jobs_scope(request, u, c)
+    scope = Run.company_id.in_(ids) if ids else (Run.id < 0)
+    if u.is_superuser and not company:
+        scope = scope | (Run.company_id == None)   # noqa: E711 — tâches sans société (démo) pour l'admin
     with Session(engine) as s:
-        running = s.exec(select(Run).where(Run.status == "running").order_by(Run.id.desc())).all()
-        total = s.exec(select(func.count()).select_from(Run).where(Run.status != "running")).one()
+        running = s.exec(select(Run).where(Run.status == "running", scope).order_by(Run.id.desc())).all()
+        total = s.exec(select(func.count()).select_from(Run).where(Run.status != "running", scope)).one()
         total = total[0] if isinstance(total, tuple) else total
         total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
         page = min(page, total_pages)
-        recent = s.exec(select(Run).where(Run.status != "running").order_by(Run.id.desc())
+        recent = s.exec(select(Run).where(Run.status != "running", scope).order_by(Run.id.desc())
                         .offset((page - 1) * PER_PAGE).limit(PER_PAGE)).all()
         cmap = {c.id: c.name for c in s.exec(select(Company)).all()}
         # quels runs ont quels artefacts (requête légère : run_id + kind, sans les données)
@@ -1030,17 +1070,19 @@ def jobs_feed(request: Request, page: int = 1):
     status = 200 if running else 286
     return templates.TemplateResponse(request, "_jobs_feed.html",
                                       _ctx(request, running=running, recent=recent, cmap=cmap, arts=arts,
-                                           page=page, total_pages=total_pages, total=total),
+                                           page=page, total_pages=total_pages, total=total,
+                                           c=(c if c == "all" else (company.code if company else ""))),
                                       status_code=status)
 
 
 @router.get("/jobs/{run_id}/report")
 def job_report(request: Request, run_id: int):
-    if not current_user(request):
+    u = current_user(request)
+    if not u:
         return RedirectResponse("/login", status_code=303)
     with Session(engine) as s:
         run = s.get(Run, run_id)
-    if not run or not run.report:
+    if not run or not run.report or not _run_allowed(u, run):
         return RedirectResponse("/jobs", status_code=303)
     from fastapi.responses import PlainTextResponse
     fname = f"compte_rendu_{run.kind}_{run_id}.txt"
@@ -1066,20 +1108,27 @@ def _watch_fragment(run_id):
 
 @router.get("/jobs/{run_id}/watch", response_class=HTMLResponse)
 def job_watch(request: Request, run_id: int):
-    if not current_user(request):
+    u = current_user(request)
+    if not u:
+        return HTMLResponse("")
+    with Session(engine) as s:
+        run = s.get(Run, run_id)
+    if not _run_allowed(u, run):
         return HTMLResponse("")
     return _watch_fragment(run_id)
 
 
 @router.get("/jobs/{run_id}/artifact/{kind}")
 def job_artifact(request: Request, run_id: int, kind: str):
-    if not current_user(request):
+    u = current_user(request)
+    if not u:
         return RedirectResponse("/login", status_code=303)
     from fastapi.responses import Response
     with Session(engine) as s:
+        run = s.get(Run, run_id)
         art = s.exec(select(JobArtifact).where(
             JobArtifact.run_id == run_id, JobArtifact.kind == kind)).first()
-    if not art:
+    if not art or not _run_allowed(u, run):
         return RedirectResponse("/jobs", status_code=303)
     return Response(content=art.data, media_type=art.content_type, headers={
         "Content-Disposition": f'attachment; filename="{art.name}"'})

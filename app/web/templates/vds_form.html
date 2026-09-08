@@ -1,8 +1,14 @@
 {% extends "vds_public_base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center lang">
-  <span class="text-muted">{{ t('welcome_res', ref=res.booking_ref or res.id, arrival=fmt_date(res.arrival, lang), departure=fmt_date(res.departure, lang), guests=res.guests or '—') }}</span>
-  <a href="?lang={{ other_lang }}" class="ms-2 text-nowrap">{{ T.lang_switch }}</a>
+<div class="d-flex justify-content-between align-items-center lang gap-2">
+  <span class="text-muted d-flex align-items-center gap-2">
+    {% include "_vds_channel_logo.html" %}
+    <span>{{ t('welcome_res', ref=res.booking_ref or res.id, arrival=fmt_date(res.arrival, lang), departure=fmt_date(res.departure, lang), guests=res.guests or '—') }}</span>
+  </span>
+  <span class="flags text-nowrap">
+    <a href="?lang=fr" class="{{ 'on' if lang == 'fr' }}" title="Français" aria-label="Français"><svg viewBox="0 0 3 2" width="28" height="19"><rect width="1" height="2" x="0" fill="#0055A4"/><rect width="1" height="2" x="1" fill="#fff"/><rect width="1" height="2" x="2" fill="#EF4135"/></svg></a>
+    <a href="?lang=en" class="{{ 'on' if lang == 'en' }}" title="English" aria-label="English"><svg viewBox="0 0 60 30" width="28" height="19"><clipPath id="uk"><path d="M0 0v30h60V0z"/></clipPath><path d="M0 0v30h60V0z" fill="#012169"/><path d="M0 0l60 30m0-30L0 30" stroke="#fff" stroke-width="6"/><path d="M0 0l60 30m0-30L0 30" clip-path="url(#uk)" stroke="#C8102E" stroke-width="4"/><path d="M30 0v30M0 15h60" stroke="#fff" stroke-width="10"/><path d="M30 0v30M0 15h60" stroke="#C8102E" stroke-width="6"/></svg></a>
+  </span>
 </div>
 {% if request.query_params.get('err') %}
 <div class="alert alert-danger mt-2 small">{% if request.query_params.get('err') == 'sign' %}{{ T.sign_missing }}{% elif request.query_params.get('err') == 'id' %}{{ T.id_intro }}{% else %}{{ T.required }}{% endif %}</div>
@@ -42,6 +48,9 @@
     </div>
     {% endif %}
     <div class="hint text-danger d-none mt-2 no-hint">{{ T.rule_no_hint }}</div>
+    {% if more.get(r.key) %}
+    <details class="more mt-2"><summary><i class="bi bi-question-circle"></i> {{ more[r.key].q }}</summary><div class="hint mt-1">{{ more[r.key].txt }}</div></details>
+    {% endif %}
   </div>
   {% endfor %}
   <div class="d-flex gap-2 mt-3"><button type="button" class="btn btn-outline-vds prev">{{ T.prev }}</button><button type="button" class="btn btn-vds flex-grow-1 next">{{ T.next }} <i class="bi bi-arrow-right"></i></button></div>

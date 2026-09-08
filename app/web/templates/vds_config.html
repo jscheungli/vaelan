@@ -29,6 +29,10 @@
     <div class="col-6 col-md-3"><label class="form-label small mb-0">Relances avant l'arrivée (J-)</label><input name="pre_arrival_days" class="form-control form-control-sm" value="{{ p.pre_arrival_days|join(', ') }}"></div>
     <div class="col-6 col-md-3"><label class="form-label small mb-0">Alertes internes (J-)</label><input name="alert_days" class="form-control form-control-sm" value="{{ p.alert_days|join(', ') }}"></div>
   </div>
+  <h3 class="h6 text-uppercase text-muted">Liens publics</h3>
+  <div class="mb-3"><label class="form-label small mb-0">Racine des liens du formulaire (vide = https://vaelan.com)</label>
+    <input name="base_url" class="form-control form-control-sm" value="{{ p.base_url }}" placeholder="https://scilessablesdulagon.vaelan.com">
+    <div class="small text-muted">Cible : <code>https://scilessablesdulagon.vaelan.com</code> — à renseigner une fois le sous-domaine déclaré dans Render (Settings → Custom Domains) et servi en HTTPS.</div></div>
   <h3 class="h6 text-uppercase text-muted">Données</h3>
   <div class="row g-2 mb-3">
     <div class="col-6 col-md-4"><label class="form-label small mb-0">Purge des pièces d'identité (jours après départ)</label><input name="purge_id_days" type="number" class="form-control form-control-sm" value="{{ p.purge_id_days }}"></div>
@@ -56,7 +60,7 @@
   <h3 class="h6 text-uppercase text-muted">État technique</h3>
   <div>SMTP : {% if smtp %}<span class="text-success">configuré</span> — expéditeur {{ smtp_from }}{% else %}<span class="text-danger">non configuré</span> (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM){% endif %}</div>
   <div>Lodgify : {% if lodgify_ok %}<span class="text-success">clé présente</span>{% else %}<span class="text-danger">clé absente</span> (LODGIFY_VDS_APIKEY){% endif %}</div>
-  <div>Racine des liens publics : <code>{{ base }}</code> (PUBLIC_BASE_URL)</div>
+  <div>Racine des liens publics : <code>{{ base }}</code></div>
   <hr>
   <h3 class="h6 text-uppercase text-muted">Liens génériques par canal</h3>
   <p class="text-muted">À utiliser dans les messages automatiques Lodgify / Airbnb / Booking tant que l'invitation personnelle n'est pas envoyée : le voyageur saisit son n° de réservation, puis reçoit son formulaire.</p>

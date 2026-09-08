@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vaelan — outils de gestion sur mesure, par Anvael</title>
+  <meta name="description" content="Vaelan : des outils de gestion développés sur mesure par le cabinet Anvael, connectés à vos logiciels (comptabilité, caisse, ERP, réservations).">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root { --navy:#0A2540; --ink:#1d2b3a; --soft:#f3f5f8; --line:#dfe5ec; --accent:#1f6f8b; }
+    body { margin:0; color:var(--ink); background:#fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    h1,h2,h3,.serif { font-family: Georgia, "Times New Roman", serif; color:var(--navy); }
+    .wrap { max-width:1040px; margin:0 auto; padding:0 22px; }
+    header { padding:22px 0; display:flex; align-items:center; justify-content:space-between; }
+    header img { height:40px; }
+    .btn-navy { background:var(--navy); color:#fff; border-radius:8px; padding:.55rem 1.1rem; font-weight:600; border:0; }
+    .btn-navy:hover { background:#143a5e; color:#fff; }
+    .btn-ghost { border:1.5px solid var(--navy); color:var(--navy); border-radius:8px; padding:.5rem 1.1rem; font-weight:600; background:#fff; }
+    .hero { padding:56px 0 40px; border-bottom:1px solid var(--line); }
+    .hero h1 { font-size:clamp(2.2rem, 5vw, 3.4rem); margin:0 0 6px; letter-spacing:-.01em; }
+    .hero .tag { font-size:clamp(1.15rem, 2.2vw, 1.45rem); color:var(--navy); font-family:Georgia, serif; margin-bottom:14px; }
+    .hero p.lead { font-size:1.05rem; color:#445261; max-width:640px; }
+    .kicker { text-transform:uppercase; letter-spacing:.14em; font-size:.74rem; color:var(--accent); font-weight:700; }
+    section { padding:48px 0; }
+    section + section { border-top:1px solid var(--line); }
+    .tile { border:1px solid var(--line); border-radius:12px; padding:22px; height:100%; background:#fff; }
+    .tile i { font-size:1.5rem; color:var(--accent); }
+    .tile h3 { font-size:1.15rem; margin:10px 0 6px; }
+    .tile p { font-size:.93rem; color:#4c5a68; margin:0; }
+    .chips { display:flex; flex-wrap:wrap; gap:10px; }
+    .chip { border:1px solid var(--line); border-radius:999px; padding:.45rem .95rem; font-weight:600; color:var(--navy); background:var(--soft); font-size:.92rem; display:flex; align-items:center; gap:8px; }
+    .chip img { height:16px; }
+    .steps { counter-reset: s; display:grid; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:18px; }
+    .step { position:relative; padding-left:54px; }
+    .step::before { counter-increment:s; content:counter(s); position:absolute; left:0; top:0; width:38px; height:38px; border-radius:50%; background:var(--navy); color:#fff; font-family:Georgia, serif; font-size:1.15rem; display:flex; align-items:center; justify-content:center; }
+    .step h3 { font-size:1.05rem; margin:6px 0 4px; }
+    .step p { font-size:.92rem; color:#4c5a68; margin:0; }
+    .cta { background:var(--navy); color:#fff; border-radius:16px; padding:36px 30px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:18px; }
+    .cta h2 { color:#fff; margin:0 0 4px; font-size:1.6rem; }
+    .cta p { margin:0; color:#c9d5e2; }
+    .cta a { background:#fff; color:var(--navy); border-radius:8px; padding:.65rem 1.2rem; font-weight:700; text-decoration:none; }
+    footer { padding:26px 0 34px; font-size:.82rem; color:#7a8794; border-top:1px solid var(--line); display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; }
+    footer a { color:#7a8794; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="https://anvael.com" title="Anvael"><img src="/static/anvael_logo.png" alt="Anvael"></a>
+    <a class="btn-ghost text-decoration-none" href="/login"><i class="bi bi-box-arrow-in-right"></i> Accès clients</a>
+  </header>
+
+  <div class="hero">
+    <div class="kicker">Par le cabinet Anvael</div>
+    <h1>Vaelan</h1>
+    <div class="tag">Des outils de gestion sur mesure, connectés à vos logiciels.</div>
+    <p class="lead">Chaque entreprise a ses propres flux, ses propres contrôles, ses propres habitudes. Vaelan est la plateforme sur laquelle Anvael
+      développe, pour chacun de ses clients, les outils qui automatisent leur quotidien : ce que les logiciels du marché ne font pas, ou pas ensemble.</p>
+    <div class="d-flex flex-wrap gap-2 mt-3">
+      <a class="btn-navy text-decoration-none" href="mailto:js@anvael.com?subject=Vaelan%20%E2%80%94%20prise%20de%20contact"><i class="bi bi-envelope"></i> Parlons de votre besoin</a>
+    </div>
+  </div>
+
+  <section>
+    <div class="kicker">Ce que nous développons</div>
+    <h2 class="mb-4">Trois familles d'outils</h2>
+    <div class="row g-3">
+      <div class="col-md-4"><div class="tile"><i class="bi bi-diagram-3"></i><h3>Intégrations</h3>
+        <p>Faire dialoguer vos logiciels entre eux : caisse et comptabilité, ERP et facturation, plateformes de réservation et suivi client. Les données circulent sans ressaisie.</p></div></div>
+      <div class="col-md-4"><div class="tile"><i class="bi bi-shield-check"></i><h3>Contrôles &amp; rapprochements</h3>
+        <p>Cadrages, lettrage, justificatifs, détection d'anomalies, vision consolidée d'un groupe de sociétés. Ce qui doit être vérifié l'est, chaque mois, automatiquement.</p></div></div>
+      <div class="col-md-4"><div class="tile"><i class="bi bi-magic"></i><h3>Parcours &amp; automatisations</h3>
+        <p>Formulaires, signatures, relances, alertes, documents générés : des parcours simples pour vos clients et vos équipes, sans intervention manuelle.</p></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Déjà connecté à</div>
+    <h2 class="mb-3">Vos logiciels, réunis</h2>
+    <p class="text-muted mb-3" style="max-width:640px;">Vaelan s'appuie sur les interfaces (API) des outils que vous utilisez déjà. Quelques-unes des intégrations en production :</p>
+    <div class="chips">
+      <span class="chip"><i class="bi bi-journal-check"></i> Pennylane</span>
+      <span class="chip"><i class="bi bi-boxes"></i> Odoo</span>
+      <span class="chip"><i class="bi bi-receipt"></i> TopOrder</span>
+      <span class="chip"><i class="bi bi-house-heart"></i> Lodgify</span>
+      <span class="chip"><i class="bi bi-folder2-open"></i> Inqom</span>
+      <span class="chip"><img src="https://cdn.simpleicons.org/airbnb/FF5A5F" alt=""> Airbnb</span>
+      <span class="chip"><img src="https://cdn.simpleicons.org/bookingdotcom/003580" alt=""> Booking.com</span>
+      <span class="chip"><i class="bi bi-bank"></i> Annuaire des entreprises (API gouv)</span>
+      <span class="chip"><i class="bi bi-envelope-paper"></i> Email &amp; documents PDF</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Comment ça marche</div>
+    <h2 class="mb-4">Du besoin à l'outil en production</h2>
+    <div class="steps">
+      <div class="step"><h3>Diagnostic</h3><p>Nous partons de vos flux réels et de ce qui vous coûte du temps ou de la fiabilité.</p></div>
+      <div class="step"><h3>Développement sur mesure</h3><p>Un outil dédié à votre société, livré par étapes, testé sur vos données, ajusté avec vos équipes.</p></div>
+      <div class="step"><h3>Exploitation &amp; évolutions</h3><p>Hébergé et sécurisé en Europe, suivi dans le temps, enrichi au fil de vos besoins.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="cta">
+      <div><h2 class="serif">Un flux à automatiser, un contrôle à fiabiliser ?</h2><p>Décrivez-nous votre situation, nous vous dirons rapidement ce qu'un outil sur mesure peut changer.</p></div>
+      <a href="mailto:js@anvael.com?subject=Vaelan%20%E2%80%94%20prise%20de%20contact">Écrire à Anvael</a>
+    </div>
+  </section>
+
+  <footer>
+    <span>© 2026 Anvael — Vaelan est une plateforme développée et opérée par le cabinet Anvael.</span>
+    <span><a href="https://anvael.com">anvael.com</a> · <a href="/login">Accès clients</a> · v{{ version }}</span>
+  </footer>
+</div>
+</body>
+</html>

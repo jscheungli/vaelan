@@ -1,0 +1,5 @@
+{# petit logo du canal de réservation (sans le nom) #}
+{% if res.channel == 'airbnb' %}<img class="chlogo" src="https://cdn.simpleicons.org/airbnb/FF5A5F" alt="Airbnb" title="Airbnb" style="height:22px">
+{% elif res.channel == 'booking' %}<img class="chlogo" src="https://cdn.simpleicons.org/bookingdotcom/003580" alt="Booking.com" title="Booking.com" style="height:20px">
+{% elif res.channel == 'abritel' %}<img class="chlogo" src="https://cdn.simpleicons.org/vrbo/245ABC" alt="Abritel / Vrbo" title="Abritel / Vrbo" style="height:20px">
+{% else %}<img class="chlogo" src="/static/vds/lodgify.png" alt="Lodgify" title="Réservation directe" style="height:18px">{% endif %}

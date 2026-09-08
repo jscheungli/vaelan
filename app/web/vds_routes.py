@@ -47,6 +47,22 @@ def _ip(request: Request) -> str:
     return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")) or ""
 
 
+def _more_texts(channel: str, lang: str) -> dict:
+    """Encarts « en savoir plus » (question + réponse) par règle, selon le canal."""
+    out = {}
+    platform = vcfg.CHANNELS[channel]["platform"]
+    for r in vcfg.RULES:
+        q = r.get(f"more_q_{lang}") or r.get("more_q_fr")
+        if not q:
+            continue
+        if platform and r.get(f"more_platform_{lang}"):
+            txt = r[f"more_platform_{lang}"].format(platform=vcfg.CHANNELS[channel]["label"])
+        else:
+            txt = r.get(f"more_{lang}") or r.get("more_fr")
+        out[r["key"]] = {"q": q, "txt": txt}
+    return out
+
+
 # ============================== PUBLIC ==============================
 @router.get("/checkin/{token}", response_class=HTMLResponse)
 def public_form(request: Request, token: str):
@@ -76,7 +92,8 @@ def public_form(request: Request, token: str):
     return templates.TemplateResponse(request, "vds_form.html",
                                       _public_ctx(request, res, lang, rules_intro=intro, max_birth=max_birth,
                                                   max_mb=service.params().get("max_upload_mb", 12),
-                                                  rule_txt={r["key"]: (r.get(lang) or r["fr"]) for r in vcfg.RULES}))
+                                                  rule_txt={r["key"]: (r.get(lang) or r["fr"]) for r in vcfg.RULES},
+                                                  more=_more_texts(res.channel, lang)))
 
 
 @router.post("/checkin/{token}", response_class=HTMLResponse)
@@ -239,6 +256,7 @@ async def admin_config_save(request: Request, code: str):
             "test_email": (form.get("test_email") or "").strip()}
     if vals["beta"] and not vals["test_email"]:
         vals["test_email"] = before.get("test_email") or "jscheungli@gmail.com"
+    vals["base_url"] = (form.get("base_url") or "").strip().rstrip("/")
     for k in ("reminder_days", "max_reminders", "purge_id_days", "max_upload_mb"):
         v = (form.get(k) or "").strip()
         if v.isdigit():

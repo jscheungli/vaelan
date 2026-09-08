@@ -1,12 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Tâches · {{ app_name }}{% endblock %}
 {% block content %}
-<div class="d-flex align-items-center mb-3">
-  <h1 class="h4 mb-0">Tâches</h1>
+{% if company %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Tâches</li>
+</ol></nav>
+{% endif %}
+<div class="d-flex align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="h4 mb-0">Tâches{% if company %} — {{ company.name }}{% elif all_companies %} — toutes les sociétés{% endif %}</h1>
+  {% if user.is_superuser and company %}<a class="btn btn-sm btn-outline-secondary ms-auto" href="/jobs?c=all">Toutes les sociétés</a>{% endif %}
 </div>
-<p class="text-muted small">Suivi en direct des exécutions (imports, calculs, remédiations…).</p>
+<p class="text-muted small">Suivi en direct des exécutions (imports, calculs, remédiations…){% if company %} de la société <strong>{{ company.name }}</strong>{% endif %}.</p>
 
-<div id="jobs-feed" hx-get="/jobs/feed" hx-trigger="load, every 2s" hx-swap="innerHTML">
+<div id="jobs-feed" hx-get="/jobs/feed?c={{ 'all' if all_companies else (company.code if company else '') }}" hx-trigger="load, every 2s" hx-swap="innerHTML">
   <div class="text-muted small">chargement…</div>
 </div>
 {% endblock %}
