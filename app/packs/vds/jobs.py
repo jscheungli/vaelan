@@ -25,7 +25,7 @@ def run_lodgify_sync(ctx, invite: bool = True, stays=("Upcoming", "Current")) ->
         raise RuntimeError("clé Lodgify absente (LODGIFY_VDS_APIKEY)")
     p = service.params()
     keep = set(p.get("sync_statuses") or ["Booked"])
-    raw_all, created, updated, cancelled, invited, skipped = [], 0, 0, 0, 0, 0
+    raw_all, created, updated, cancelled, invited, skipped, alerts = [], 0, 0, 0, 0, 0, 0
     for k, stay in enumerate(stays):
         ctx.progress(k, len(stays), step=f"Lodgify · {stay}…")
         raw_all += cl.bookings(stay=stay)
@@ -70,6 +70,15 @@ def run_lodgify_sync(ctx, invite: bool = True, stays=("Upcoming", "Current")) ->
             created += 1
             ctx.log(f"+ {r.booking_ref} {config.CHANNELS[r.channel]['label']} · {r.guest_name} · {r.arrival} → {r.departure}"
                     + ("" if r.guest_email else " · SANS EMAIL") + (" · formulaire déjà renseigné (note Lodgify)" if legacy_done else ""))
+            # invitation à la main (Marie) : plateformes, ou site direct sans invitation automatique possible
+            if not legacy_done and r.arrival and r.arrival >= date.today():
+                auto_ok = r.channel == "lodgify" and bool(p.get("auto_invite")) and bool(r.guest_email)
+                if not auto_ok:
+                    reason = ("réservation via " + config.CHANNELS[r.channel]["label"]) if r.channel != "lodgify" else \
+                             ("pas d'email" if not r.guest_email else "invitation automatique désactivée")
+                    ok, info = service.send_new_booking_alert(r, reason)
+                    ctx.log(f"  🔔 alerte « à inviter à la main » : {info}")
+                    alerts += 1 if ok else 0
         else:
             upd = {}
             for k in ("guest_name", "guest_email", "guest_phone", "arrival", "departure", "guests", "notes"):
@@ -101,7 +110,7 @@ def run_lodgify_sync(ctx, invite: bool = True, stays=("Upcoming", "Current")) ->
     ctx.add_artifact("json", f"lodgify_bookings_{datetime.utcnow():%Y%m%d}.json",
                      json.dumps(raw_all, ensure_ascii=False, default=str).encode(), "application/json")
     return (f"Lodgify : {len(seen)} réservations · {created} créées · {updated} mises à jour · {cancelled} annulées · "
-            f"{invited} invitations envoyées · {skipped} ignorées (non confirmées)")
+            f"{invited} invitations envoyées · {alerts} alerte(s) « à inviter à la main » · {skipped} ignorées (non confirmées)")
 
 
 def run_reminders(ctx) -> str:

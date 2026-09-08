@@ -43,7 +43,13 @@ def _register_schedules():
             c = s.exec(select(Company).where(Company.code == "VDS")).first()
         start_job("vds_daily", vds_jobs.run_daily, company_id=c.id if c else None, pack="vds",
                   label="Passe quotidienne check-in (Lodgify, invitations, relances, alertes, ERP)")
+    def _vds_sync_pm():
+        with Session(engine) as s:
+            c = s.exec(select(Company).where(Company.code == "VDS")).first()
+        start_job("vds_sync", lambda ctx: vds_jobs.run_lodgify_sync(ctx, invite=True), company_id=c.id if c else None, pack="vds",
+                  label="Synchro Lodgify (après-midi) — nouvelles réservations, alertes, invitations")
     scheduler.register("vds_daily", 8, _vds_daily)
+    scheduler.register("vds_sync_pm", 17, _vds_sync_pm)
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

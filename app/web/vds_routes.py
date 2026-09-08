@@ -256,6 +256,7 @@ async def admin_config_save(request: Request, code: str):
     before = service.params()
     vals = {"alert_emails": (form.get("alert_emails") or "").strip(), "reply_to": (form.get("reply_to") or "").strip(),
             "from_email": (form.get("from_email") or "").strip(),
+            "new_booking_emails": (form.get("new_booking_emails") or "").strip(),
             "auto_invite": bool(form.get("auto_invite")), "beta": bool(form.get("beta")),
             "test_email": (form.get("test_email") or "").strip()}
     if vals["beta"] and not vals["test_email"]:

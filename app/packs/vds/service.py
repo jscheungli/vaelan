@@ -303,6 +303,37 @@ def send_alert(res: Optional[VdsReservation], subject: str, body: str, kind: str
     return ok, info
 
 
+def send_new_booking_alert(res: VdsReservation, reason: str) -> Tuple[bool, str]:
+    """Nouvelle réservation qui ne recevra PAS d'invitation automatique : alerte à la personne qui invite
+    à la main (Marie), avec le texte prêt à copier. En mode bêta, redirigée vers l'adresse de test."""
+    p = params()
+    to = [e.strip() for e in re.split(r"[;,\s]+", p.get("new_booking_emails") or "") if "@" in e]
+    label = config.CHANNELS.get(res.channel, {}).get("label", res.channel)
+    sug = suggested_texts(res)
+    txt = sug["nolink"] if res.channel == "airbnb" else sug["short"]
+    subject = f"[VDS] Nouvelle réservation {label} à inviter — {res.guest_name or '?'} · {fmt_date(res.arrival)} → {fmt_date(res.departure)}"
+    body = (f"Bonjour,\n\nUne nouvelle réservation vient d'arriver et ne recevra pas d'invitation automatique ({reason}).\n\n"
+            f"Canal : {label}\nVoyageur : {res.guest_name or '?'}\nSéjour : {fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} personnes\n"
+            f"Référence : {res.booking_ref or res.id}\nTéléphone : {res.guest_phone or '— inconnu'}\nEmail : {res.guest_email or '— inconnu'}\n\n"
+            f"Merci de lui demander de remplir le formulaire d'arrivée via la messagerie {label if res.channel != 'lodgify' else ''}, "
+            f"par SMS ou WhatsApp, puis d'enregistrer l'envoi sur la fiche : {base_url()}/c/VDS/checkin/{res.id}\n\n"
+            f"Lien du formulaire : {public_url(res)}\n\nMessage suggéré ({'sans lien, Airbnb refuse les liens' if res.channel == 'airbnb' else 'SMS / WhatsApp'}) :\n"
+            f"----------------------------------------\n{txt}\n----------------------------------------\n")
+    test = beta_redirect()
+    real = ", ".join(to)
+    if test:
+        subject = f"[BÊTA → {real or '—'}] {subject}"
+        body = f"*** MODE BÊTA — cette alerte était destinée à {real or '—'}. ***\n\n" + body
+        to = [test]
+    if not to:
+        log_message(res.id, "new_booking", "", subject, body, False, "nouvelle réservation : aucun destinataire (configuration)")
+        return False, "aucun destinataire"
+    b = brand()
+    ok, info = mailer.send_branded(to, subject, body, b, lang="fr")
+    log_message(res.id, "new_booking", f"{to[0]} (bêta · réel : {real})" if test else real, subject, body, ok, info, sender=mailer.branded_from(b))
+    return ok, info
+
+
 def send_erp(res: VdsReservation) -> Tuple[bool, str]:
     erp = reference_file("erp")
     if not erp:

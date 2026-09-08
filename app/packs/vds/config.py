@@ -133,6 +133,8 @@ DEFAULT_PARAMS = {
     "beta": True,              # MODE BÊTA : tous les emails voyageurs sont redirigés vers test_email (rien ne part aux clients)
     "test_email": "jscheungli@gmail.com",
     "alert_emails": "jscheungli@gmail.com",   # destinataires des alertes internes (virgules)
+    # nouvelle réservation à inviter À LA MAIN (Airbnb / Booking / Abritel, ou site direct sans email / sans invitation auto)
+    "new_booking_emails": "contact@villa-des-sables-du-lagon.com",
     "reply_to": "",            # adresse de réponse des emails voyageurs
     "from_email": "",          # adresse d'envoi (vide = FROM_ADDRESS) ; le nom affiché est toujours « Villa … via Vaelan »
     "max_upload_mb": 12,
