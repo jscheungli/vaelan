@@ -300,10 +300,10 @@ def admin_test_mail(request: Request, code: str):
     to = [to] if isinstance(to, str) else to
     if not to:
         return RedirectResponse(f"/c/{code}/checkin/config?msg=Aucune adresse de test ni d'alerte renseignée.", status_code=303)
-    ok, info = mailer.send(to, "[Vaelan] Email de test — check-in Villa des Sables du Lagon",
-                           f"Ceci est un email de test envoyé par Vaelan ({service.now_local():%d/%m/%Y %H:%M}, heure de La Réunion).\n"
-                           f"Expéditeur : {p.get('from_email') or mailer.sender()}\nSi vous le recevez, la configuration SMTP est opérationnelle.",
-                           sender_override=p.get("from_email") or None)
+    ok, info = mailer.send_branded(to, "Email de test — formulaire d'arrivée Villa des Sables du Lagon",
+                                   f"Bonjour,\n\nCeci est un email de test envoyé par Vaelan le {service.now_local():%d/%m/%Y à %H:%M} (heure de La Réunion).\n\n"
+                                   f"Expéditeur : {mailer.branded_from(service.brand())}\nRéponse vers : {p.get('reply_to') or '— (non renseigné)'}\n\n"
+                                   f"Si vous le recevez, la configuration SMTP est opérationnelle.", service.brand(), lang="fr")
     service.log_message(None, "test", ", ".join(to), "[Vaelan] Email de test", "", ok, info)
     return RedirectResponse(f"/c/{code}/checkin/config?msg={'✅ Email de test envoyé à ' + ', '.join(to) if ok else '❌ Échec : ' + info}", status_code=303)
 

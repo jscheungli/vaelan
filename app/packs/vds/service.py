@@ -209,6 +209,14 @@ def _mail_vars(res: VdsReservation) -> dict:
             "checkin": config.VILLA["checkin"], "checkout": config.VILLA["checkout"]}
 
 
+def brand() -> dict:
+    """Identité d'envoi du module : la villa en expéditeur (« … via Vaelan »), réponses vers sa boîte."""
+    p = params()
+    return {"name": config.VILLA["name"], "address": p.get("from_email") or config.FROM_ADDRESS,
+            "reply_to": p.get("reply_to") or None, "logo": f"{base_url()}/static/vds/logo.png",
+            "site": config.VILLA["site"], "color": config.VILLA["color"]}
+
+
 def beta_redirect() -> Optional[str]:
     """Adresse de test si le mode bêta est actif (tous les emails voyageurs y sont redirigés)."""
     p = params()
@@ -225,9 +233,7 @@ def guest_send(res: VdsReservation, kind: str, to: str, subject: str, body: str,
         subject = f"[BÊTA → {to}] {subject}"
         body = f"*** MODE BÊTA — ce message était destiné à {to} ; il vous est redirigé pour validation. ***\n\n" + body
         to = test
-    p = params()
-    ok, info = mailer.send([to], subject, body, attachments=attachments, reply_to=p.get("reply_to") or None,
-                           sender_override=p.get("from_email") or None)
+    ok, info = mailer.send_branded([to], subject, body, brand(), lang=res.lang or "fr", attachments=attachments)
     log_message(res.id, kind, f"{to} (bêta · réel : {real_to})" if test else to, subject, body, ok, info)
     return ok, info
 
@@ -258,7 +264,7 @@ def send_alert(res: Optional[VdsReservation], subject: str, body: str, kind: str
     if not to:
         log_message(res.id if res else None, kind, "", subject, body, False, "alertes : aucun destinataire (configuration)")
         return False, "aucun destinataire"
-    ok, info = mailer.send(to, subject, body, sender_override=params().get("from_email") or None)
+    ok, info = mailer.send_branded(to, subject, body, brand(), lang="fr")
     log_message(res.id if res else None, kind, ", ".join(to), subject, body, ok, info)
     return ok, info
 
