@@ -61,7 +61,8 @@
     <td>{{ r.guest_name or '—' }} <span class="text-muted small">{{ r.lang|upper }}</span></td>
     <td class="small">{{ r.guest_email or '<span class="text-danger">aucun</span>'|safe }}</td>
     <td class="text-center">{{ r.guests or '' }}</td>
-    <td><span class="badge text-bg-{{ lab[1] }}">{{ lab[0] }}</span>{% if r.reminder_count %} <span class="text-muted small">×{{ r.reminder_count }}</span>{% endif %}</td>
+    <td>{% if r.status == 'completed' and r.id not in answered %}<span class="badge text-bg-light border text-success" title="Marquée complétée d'après la note Lodgify « {{ r.notes or '' }} » — réponse non importée dans Vaelan">Complété · note Lodgify</span>
+        {% else %}<span class="badge text-bg-{{ lab[1] }}">{{ lab[0] }}</span>{% endif %}{% if r.reminder_count %} <span class="text-muted small">×{{ r.reminder_count }}</span>{% endif %}</td>
     <td class="small text-muted text-nowrap">{{ fmt_dt(r.reminded_at or r.invited_at) if (r.reminded_at or r.invited_at) else '' }}</td>
     <td class="text-end text-nowrap">
       <a class="btn btn-sm btn-outline-secondary py-0" href="/c/{{ company.code }}/checkin/{{ r.id }}">détail</a>

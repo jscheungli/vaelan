@@ -69,7 +69,11 @@
       </div>
       {% if data.signature_url %}<div class="small text-muted mt-2">Import SurveySparrow : signature <a href="{{ data.signature_url }}" target="_blank">lien</a>{% if data.id_urls %} · pièces {{ data.id_urls }}{% endif %}</div>{% endif %}
     </div></div>
-    {% else %}<div class="card shadow-sm"><div class="card-body text-muted small">Pas encore de réponse.</div></div>{% endif %}
+    {% else %}<div class="card shadow-sm"><div class="card-body small">
+      {% if res.status == 'completed' %}<div class="text-success fw-semibold"><i class="bi bi-info-circle"></i> Marquée « complétée » d'après la note Lodgify{% if res.notes %} : « {{ res.notes }} »{% endif %}.</div>
+        <div class="text-muted mt-1">La réponse elle-même n'est pas dans Vaelan : elle a été saisie sur l'ancien formulaire SurveySparrow. Importez les exports CSV (Configuration → Historique SurveySparrow) : la réponse sera rattachée automatiquement à cette réservation si la référence, l'email ou le nom correspondent.</div>
+      {% else %}<span class="text-muted">Pas encore de réponse.</span>{% endif %}
+    </div></div>{% endif %}
   </div>
 </div>
 {% endblock %}

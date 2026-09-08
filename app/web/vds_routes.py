@@ -198,6 +198,8 @@ def admin_list(request: Request, code: str, view: str = "avenir"):
         runs = s.exec(select(Run).where(Run.company_id == company.id, Run.kind.in_(["vds_sync", "vds_reminders", "vds_daily"]))
                       .order_by(Run.id.desc()).limit(6)).all()
     rs.sort(key=lambda r: (r.arrival or date.max, r.id), reverse=(view == "passes"))
+    with Session(engine) as s:
+        answered = {(x[0] if isinstance(x, (tuple, list)) else x) for x in s.exec(select(VdsResponse.reservation_id)).all()}
     counts = {"a_inviter": sum(1 for r in rs if r.status == "pending"), "incomplets": sum(1 for r in rs if r.status in ("sent", "reminded")),
               "completes": sum(1 for r in rs if r.status == "completed"), "refus": sum(1 for r in rs if r.status == "refused")}
     p = service.params()
@@ -215,7 +217,7 @@ def admin_list(request: Request, code: str, view: str = "avenir"):
     return templates.TemplateResponse(request, "vds_checkin.html",
                                       _ctx(request, company=company, rs=rs, view=view, counts=counts, runs=runs, warns=warns,
                                            labels=STATUS_LABEL, channels=vcfg.CHANNELS, today=today, base=service.base_url(),
-                                           smtp=mailer.configured(), fmt_dt=service.fmt_dt))
+                                           smtp=mailer.configured(), fmt_dt=service.fmt_dt, answered=answered))
 
 
 @router.post("/c/{code}/checkin/new")
