@@ -123,7 +123,9 @@ DEFAULT_PARAMS = {
     "test_email": "jscheungli@gmail.com",
     "alert_emails": "jscheungli@gmail.com",   # destinataires des alertes internes (virgules)
     "reply_to": "",            # adresse de réponse des emails voyageurs
-    "from_email": "",          # expéditeur des emails voyageurs (vide = SMTP_FROM) — doit être vérifié chez Postmark
+    # expéditeur des emails voyageurs : nom de la villa, adresse sur le domaine vérifié chez Postmark (vaelan.com) ;
+    # les réponses vont à reply_to (boîte de la villa)
+    "from_email": "Villa des Sables du Lagon <villa-des-sables-du-lagon@vaelan.com>",
     "max_upload_mb": 12,
     "base_url": "",            # racine des liens publics (vide = PUBLIC_BASE_URL ou https://vaelan.com) ; cible : https://scilessablesdulagon.vaelan.com
 }
