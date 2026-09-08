@@ -1,0 +1,368 @@
+"""VDS — routes du check-in voyageurs : formulaire PUBLIC (/checkin/<token>) et back-office (/c/VDS/checkin)."""
+import json
+from datetime import date, datetime, timedelta
+from typing import List, Optional
+
+from fastapi import APIRouter, Request, Form, UploadFile, File
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from sqlmodel import Session, select
+
+from app.core.db import engine
+from app.core.jobs import start_job
+from app.core import mailer
+from app.core.connectors import lodgify
+from app.core.security import current_user
+from app.models import VdsReservation, VdsResponse, VdsFile, Run
+from app.packs.vds import config as vcfg, service, jobs as vjobs
+from app.packs.vds.texts import t, T
+from app.web.routes import templates, _ctx, _company_or_redirect, _watch_fragment
+
+router = APIRouter()
+CODE = vcfg.COMPANY_CODE
+STATUS_LABEL = {"pending": ("À inviter", "secondary"), "sent": ("Invité", "info"), "reminded": ("Relancé", "warning"),
+                "completed": ("Complété", "success"), "refused": ("Règles refusées", "danger"), "cancelled": ("Annulée", "dark")}
+
+
+def _lang(request: Request, res: Optional[VdsReservation] = None) -> str:
+    q = request.query_params.get("lang")
+    if q in ("fr", "en"):
+        return q
+    if res and res.lang in ("fr", "en"):
+        return res.lang                     # langue de la réservation (Lodgify / admin), bascule explicite via ?lang=
+    al = (request.headers.get("accept-language") or "").lower()
+    return "en" if al.startswith("en") else "fr"
+
+
+def _public_ctx(request: Request, res: Optional[VdsReservation], lang: str, **extra):
+    ch = vcfg.CHANNELS.get(res.channel if res else "lodgify", vcfg.CHANNELS["lodgify"])
+    base = {"lang": lang, "T": T.get(lang, T["fr"]), "t": lambda k, **kw: t(lang, k, **kw), "res": res, "ch": ch,
+            "villa": vcfg.VILLA, "rules": vcfg.RULES, "marketing": vcfg.MARKETING, "fmt_date": service.fmt_date,
+            "other_lang": "en" if lang == "fr" else "fr"}
+    base.update(extra)
+    return base
+
+
+def _ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")) or ""
+
+
+# ============================== PUBLIC ==============================
+@router.get("/checkin/{token}", response_class=HTMLResponse)
+def public_form(request: Request, token: str):
+    res = service.by_token(token)
+    lang = _lang(request, res)
+    if not res or res.status == "cancelled":
+        return templates.TemplateResponse(request, "vds_message.html",
+                                          _public_ctx(request, None, lang, title=t(lang, "invalid_title"), body=t(lang, "invalid_body")), status_code=404)
+    if res.status == "completed":
+        resp = service.latest_response(res.id)
+        if request.query_params.get("done"):
+            email = (resp.email if resp else None) or res.guest_email
+            return templates.TemplateResponse(request, "vds_message.html",
+                                              _public_ctx(request, res, lang, title=t(lang, "done_title"),
+                                                          body=t(lang, "done_body", email=(f" ({email})" if email else "")), ok=True))
+        return templates.TemplateResponse(request, "vds_message.html",
+                                          _public_ctx(request, res, lang, title=t(lang, "already_title"),
+                                                      body=t(lang, "already_body", date=service.fmt_dt(resp.submitted_at if resp else None, lang))))
+    if res.status == "refused":
+        return templates.TemplateResponse(request, "vds_message.html",
+                                          _public_ctx(request, res, lang, title=t(lang, "refused_done_title"), body=t(lang, "refused_done_body")))
+    if res.lang != lang and request.query_params.get("lang") in ("fr", "en"):
+        service.update_reservation(res.id, lang=lang)      # choix explicite du voyageur (bascule de langue)
+    listing = t(lang, f"listing_{res.channel}")
+    intro = t(lang, "rules_intro_platform", listing=listing) if vcfg.CHANNELS[res.channel]["platform"] else t(lang, "rules_intro_direct")
+    max_birth = (date.today() - timedelta(days=18 * 365 + 5)).isoformat()
+    return templates.TemplateResponse(request, "vds_form.html",
+                                      _public_ctx(request, res, lang, rules_intro=intro, max_birth=max_birth,
+                                                  max_mb=service.params().get("max_upload_mb", 12),
+                                                  rule_txt={r["key"]: (r.get(lang) or r["fr"]) for r in vcfg.RULES}))
+
+
+@router.post("/checkin/{token}", response_class=HTMLResponse)
+async def public_submit(request: Request, token: str):
+    res = service.by_token(token)
+    lang = _lang(request, res)
+    if not res or res.status in ("cancelled", "completed"):
+        return RedirectResponse(f"/checkin/{token}?lang={lang}", status_code=303)
+    form = await request.form()
+    fields = {k: v for k, v in form.multi_items() if not hasattr(v, "filename")}
+    lang = "en" if fields.get("lang") == "en" else "fr"
+    # règles : toutes doivent être « yes » (sinon la voie « refus » est dédiée)
+    missing = [r["key"] for r in vcfg.RULES if fields.get(f"rule_{r['key']}") != "yes"]
+    if missing:
+        return RedirectResponse(f"/checkin/{token}?lang={lang}&err=rules", status_code=303)
+    sig = fields.get("signature") or ""
+    if not sig.startswith("data:image/png;base64,"):
+        return RedirectResponse(f"/checkin/{token}?lang={lang}&err=sign", status_code=303)
+    import base64
+    try:
+        sig_png = base64.b64decode(sig.split(",", 1)[1])
+    except Exception:
+        return RedirectResponse(f"/checkin/{token}?lang={lang}&err=sign", status_code=303)
+    max_bytes = int(service.params().get("max_upload_mb", 12)) * 1024 * 1024
+    uploads = []
+    for k, v in form.multi_items():
+        if hasattr(v, "filename") and v.filename:
+            blob = await v.read()
+            if not blob or len(blob) > max_bytes:
+                continue
+            uploads.append((v.filename, blob, v.content_type or "application/octet-stream"))
+        if len(uploads) >= 3:
+            break
+    if vcfg.CHANNELS[res.channel]["id_required"] and not uploads:
+        return RedirectResponse(f"/checkin/{token}?lang={lang}&err=id", status_code=303)
+    service.save_response(res, fields, uploads, _ip(request), request.headers.get("user-agent", ""), sig_png)
+    return RedirectResponse(f"/checkin/{token}?lang={lang}&done=1", status_code=303)
+
+
+@router.post("/checkin/{token}/refus", response_class=HTMLResponse)
+async def public_refuse(request: Request, token: str):
+    res = service.by_token(token)
+    if not res or res.status in ("cancelled", "completed"):
+        return RedirectResponse(f"/checkin/{token}", status_code=303)
+    form = await request.form()
+    lang = "en" if form.get("lang") == "en" else "fr"
+    refused = [r["key"] for r in vcfg.RULES if form.get(f"rule_{r['key']}") == "no"]
+    service.save_refusal(res, refused, lang, _ip(request))
+    return RedirectResponse(f"/checkin/{token}?lang={lang}", status_code=303)
+
+
+@router.get("/checkin/nouveau/{channel}", response_class=HTMLResponse)
+def public_new_form(request: Request, channel: str):
+    """Point d'entrée générique par canal (lien / QR sans jeton) : le voyageur identifie sa réservation,
+    puis est redirigé vers son formulaire personnel."""
+    if channel not in vcfg.CHANNELS:
+        return RedirectResponse("/", status_code=303)
+    lang = _lang(request)
+    return templates.TemplateResponse(request, "vds_new.html", _public_ctx(request, None, lang, channel=channel,
+                                                                              ch=vcfg.CHANNELS[channel], min_arrival=date.today().isoformat()))
+
+
+@router.post("/checkin/nouveau/{channel}")
+async def public_new_submit(request: Request, channel: str):
+    if channel not in vcfg.CHANNELS:
+        return RedirectResponse("/", status_code=303)
+    form = await request.form()
+    lang = "en" if form.get("lang") == "en" else "fr"
+    if form.get("website"):                     # pot de miel anti-robots
+        return RedirectResponse("/", status_code=303)
+    ref = (form.get("booking_ref") or "").strip().upper().replace("#", "")
+    with Session(engine) as s:
+        existing = s.exec(select(VdsReservation).where(VdsReservation.booking_ref == ref,
+                                                       VdsReservation.status.in_(["pending", "sent", "reminded"]))).first() if ref else None
+    if existing:
+        return RedirectResponse(f"/checkin/{existing.token}?lang={lang}", status_code=303)
+    res = service.create_reservation(channel, booking_ref=ref, guest_name=form.get("guest_name"), guest_email=form.get("guest_email"),
+                                     arrival=form.get("arrival") or None, lang=lang, source="link")
+    return RedirectResponse(f"/checkin/{res.token}?lang={lang}", status_code=303)
+
+
+# ============================== BACK-OFFICE ==============================
+def _guard(request: Request, code: str):
+    return _company_or_redirect(request, code, feature="checkin")
+
+
+@router.get("/c/{code}/checkin", response_class=HTMLResponse)
+def admin_list(request: Request, code: str, view: str = "avenir"):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    today = service.now_local().date()
+    with Session(engine) as s:
+        q = select(VdsReservation)
+        if view == "avenir":
+            q = q.where(VdsReservation.status != "cancelled", (VdsReservation.arrival >= today - timedelta(days=1)) | (VdsReservation.arrival == None))  # noqa: E711
+        elif view == "incomplets":
+            q = q.where(VdsReservation.status.in_(["pending", "sent", "reminded", "refused"]), VdsReservation.arrival >= today - timedelta(days=1))
+        elif view == "passes":
+            q = q.where(VdsReservation.arrival < today)
+        rs = list(s.exec(q).all())
+        runs = s.exec(select(Run).where(Run.company_id == company.id, Run.kind.in_(["vds_sync", "vds_reminders", "vds_daily"]))
+                      .order_by(Run.id.desc()).limit(6)).all()
+    rs.sort(key=lambda r: (r.arrival or date.max, r.id), reverse=(view == "passes"))
+    counts = {"a_inviter": sum(1 for r in rs if r.status == "pending"), "incomplets": sum(1 for r in rs if r.status in ("sent", "reminded")),
+              "completes": sum(1 for r in rs if r.status == "completed"), "refus": sum(1 for r in rs if r.status == "refused")}
+    p = service.params()
+    warns = []
+    if not mailer.configured():
+        warns.append("Envoi d'emails non configuré (variables SMTP_HOST / SMTP_FROM / SMTP_USER / SMTP_PASSWORD sur Render) : les invitations ne partent pas, copiez les liens.")
+    if not p.get("alert_emails"):
+        warns.append("Aucun destinataire d'alertes internes : renseignez-le dans la configuration.")
+    if not lodgify.for_company(CODE):
+        warns.append("Clé Lodgify absente (LODGIFY_VDS_APIKEY) : la synchro automatique des réservations est inactive.")
+    if not service.reference_file("erp"):
+        warns.append("État des risques (ERP) non chargé : l'envoi automatique J-1 est inactif (document à charger dans la configuration, validité 6 mois).")
+    return templates.TemplateResponse(request, "vds_checkin.html",
+                                      _ctx(request, company=company, rs=rs, view=view, counts=counts, runs=runs, warns=warns,
+                                           labels=STATUS_LABEL, channels=vcfg.CHANNELS, today=today, base=service.base_url(),
+                                           smtp=mailer.configured(), fmt_dt=service.fmt_dt))
+
+
+@router.post("/c/{code}/checkin/new")
+def admin_new(request: Request, code: str, channel: str = Form(...), booking_ref: str = Form(""), guest_name: str = Form(""),
+              guest_email: str = Form(""), guest_phone: str = Form(""), arrival: str = Form(""), departure: str = Form(""),
+              guests: str = Form(""), lang: str = Form("fr"), invite: str = Form("")):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    res = service.create_reservation(channel, booking_ref=booking_ref, guest_name=guest_name, guest_email=guest_email,
+                                     guest_phone=guest_phone, arrival=arrival or None, departure=departure or None,
+                                     guests=int(guests) if guests.isdigit() else None, lang=lang, source="manual")
+    if invite and res.guest_email:
+        service.send_invitation(res)
+    return RedirectResponse(f"/c/{code}/checkin/{res.id}", status_code=303)
+
+
+@router.get("/c/{code}/checkin/config", response_class=HTMLResponse)
+def admin_config(request: Request, code: str, msg: str = ""):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    return templates.TemplateResponse(request, "vds_config.html",
+                                      _ctx(request, company=company, p=service.params(), erp=service.reference_file("erp"),
+                                           smtp=mailer.configured(), smtp_from=mailer.sender(), lodgify_ok=bool(lodgify.for_company(CODE)),
+                                           msg=msg, base=service.base_url(), channels=vcfg.CHANNELS))
+
+
+@router.post("/c/{code}/checkin/config")
+async def admin_config_save(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    form = await request.form()
+    vals = {"alert_emails": (form.get("alert_emails") or "").strip(), "reply_to": (form.get("reply_to") or "").strip(),
+            "auto_invite": bool(form.get("auto_invite"))}
+    for k in ("reminder_days", "max_reminders", "purge_id_days", "max_upload_mb"):
+        v = (form.get(k) or "").strip()
+        if v.isdigit():
+            vals[k] = int(v)
+    for k in ("pre_arrival_days", "alert_days"):
+        v = [int(x) for x in (form.get(k) or "").replace(";", ",").split(",") if x.strip().isdigit()]
+        vals[k] = v
+    service.save_params(vals)
+    msg = "Réglages enregistrés."
+    erp = form.get("erp")
+    if erp is not None and getattr(erp, "filename", ""):
+        blob = await erp.read()
+        if blob:
+            service.set_reference_file("erp", erp.filename, blob, erp.content_type or "application/pdf")
+            msg += " État des risques chargé."
+    return RedirectResponse(f"/c/{code}/checkin/config?msg={msg}", status_code=303)
+
+
+@router.post("/c/{code}/checkin/import")
+async def admin_import(request: Request, code: str, channel: str = Form(...), file: UploadFile = File(...)):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    blob = await file.read()
+    created, skipped = service.import_surveysparrow(blob, channel)
+    return RedirectResponse(f"/c/{code}/checkin/config?msg=Import {vcfg.CHANNELS[channel]['label']} : {created} réponses importées, {skipped} déjà présentes.", status_code=303)
+
+
+@router.post("/c/{code}/checkin/sync")
+def admin_sync(request: Request, code: str, invite: str = Form("")):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    run_id = start_job("vds_sync", lambda ctx: vjobs.run_lodgify_sync(ctx, invite=bool(invite)), company_id=company.id,
+                       pack="vds", label="Synchro Lodgify" + (" + invitations" if invite else " (sans invitation)"), user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse(f"/c/{code}/checkin", status_code=303)
+
+
+@router.post("/c/{code}/checkin/reminders")
+def admin_reminders(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    run_id = start_job("vds_reminders", vjobs.run_reminders, company_id=company.id, pack="vds",
+                       label="Relances / alertes check-in", user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse(f"/c/{code}/checkin", status_code=303)
+
+
+@router.get("/c/{code}/checkin/export.xlsx")
+def admin_export(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    data = service.excel_export()
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{datetime.utcnow():%Y%m%d} checkin VDS.xlsx"'})
+
+
+@router.get("/c/{code}/checkin/file/{fid}")
+def admin_file(request: Request, code: str, fid: int):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        f = s.get(VdsFile, fid)
+    if not f:
+        return RedirectResponse(f"/c/{code}/checkin", status_code=303)
+    disp = "inline" if f.content_type in ("image/jpeg", "image/png", "application/pdf") else "attachment"
+    return Response(content=f.data, media_type=f.content_type, headers={"Content-Disposition": f'{disp}; filename="{f.name}"'})
+
+
+@router.get("/c/{code}/checkin/{rid}", response_class=HTMLResponse)
+def admin_detail(request: Request, code: str, rid: int, msg: str = ""):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        res = s.get(VdsReservation, rid)
+        if not res:
+            return RedirectResponse(f"/c/{code}/checkin", status_code=303)
+        resps = list(s.exec(select(VdsResponse).where(VdsResponse.reservation_id == rid).order_by(VdsResponse.id.desc())).all())
+    resp = resps[0] if resps else None
+    data = json.loads(resp.data or "{}") if resp else {}
+    files = service.files_for(rid)
+    msgs = service.messages_for(rid)
+    lang = res.lang if res.lang in ("fr", "en") else "fr"
+    invite_text = t(lang, "mail_invite_body", **service._mail_vars(res)).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
+    return templates.TemplateResponse(request, "vds_reservation.html",
+                                      _ctx(request, company=company, res=res, resp=resp, data=data, files=files, msgs=msgs,
+                                           labels=STATUS_LABEL, channels=vcfg.CHANNELS, rules=vcfg.RULES, marketing=dict((m[0], m[1]) for m in vcfg.MARKETING),
+                                           url=service.public_url(res), invite_text=invite_text, msg=msg, smtp=mailer.configured(),
+                                           fmt_dt=service.fmt_dt, fmt_date=service.fmt_date, erp=bool(service.reference_file("erp"))))
+
+
+@router.post("/c/{code}/checkin/{rid}/action")
+def admin_action(request: Request, code: str, rid: int, action: str = Form(...)):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        res = s.get(VdsReservation, rid)
+    if not res:
+        return RedirectResponse(f"/c/{code}/checkin", status_code=303)
+    msg = ""
+    if action == "invite":
+        ok, info = service.send_invitation(res)
+        msg = f"Invitation : {info}"
+    elif action == "remind":
+        ok, info = service.send_invitation(res, reminder=True)
+        msg = f"Relance : {info}"
+    elif action == "erp":
+        ok, info = service.send_erp(res)
+        msg = f"État des risques : {info}"
+    elif action == "cancel":
+        service.update_reservation(rid, status="cancelled")
+        msg = "Réservation annulée (lien désactivé)."
+    elif action == "reopen":
+        service.update_reservation(rid, status="pending")
+        msg = "Réservation réouverte (formulaire à nouveau accessible)."
+    elif action == "mark_sent":
+        service.update_reservation(rid, status="sent", invited_at=datetime.utcnow())
+        msg = "Marquée « invitée » (lien envoyé manuellement)."
+    elif action == "delete_ids":
+        with Session(engine) as s:
+            for f in s.exec(select(VdsFile).where(VdsFile.reservation_id == rid, VdsFile.kind == "id_document")).all():
+                s.delete(f)
+            s.commit()
+        msg = "Pièces d'identité supprimées."
+    return RedirectResponse(f"/c/{code}/checkin/{rid}?msg={msg}", status_code=303)

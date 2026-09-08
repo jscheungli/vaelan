@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Check-in voyageurs · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Check-in voyageurs</li>
+</ol></nav>
+<div class="d-flex align-items-center flex-wrap gap-2 mb-2">
+  <h1 class="h4 mb-0 me-auto">Formulaires d'arrivée — Villa des Sables du Lagon</h1>
+  <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/export.xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+  <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/config"><i class="bi bi-gear"></i> Configuration</a>
+  <button class="btn btn-sm btn-dark" data-bs-toggle="collapse" data-bs-target="#newres"><i class="bi bi-plus-lg"></i> Réservation manuelle</button>
+</div>
+{% for w in warns %}<div class="alert alert-warning py-2 small mb-2"><i class="bi bi-exclamation-triangle"></i> {{ w }}</div>{% endfor %}
+
+<div class="collapse mb-3" id="newres"><div class="card shadow-sm"><div class="card-body">
+  <form method="post" action="/c/{{ company.code }}/checkin/new" class="row g-2 align-items-end">
+    <div class="col-6 col-md-2"><label class="form-label small mb-0">Canal</label><select name="channel" class="form-select form-select-sm">{% for k, c in channels.items() %}<option value="{{ k }}">{{ c.label }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label small mb-0">N° réservation</label><input name="booking_ref" class="form-control form-control-sm"></div>
+    <div class="col-md-3"><label class="form-label small mb-0">Voyageur</label><input name="guest_name" class="form-control form-control-sm"></div>
+    <div class="col-md-3"><label class="form-label small mb-0">Email</label><input name="guest_email" type="email" class="form-control form-control-sm"></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Téléphone</label><input name="guest_phone" class="form-control form-control-sm"></div>
+    <div class="col-6 col-md-2"><label class="form-label small mb-0">Arrivée</label><input name="arrival" type="date" class="form-control form-control-sm"></div>
+    <div class="col-6 col-md-2"><label class="form-label small mb-0">Départ</label><input name="departure" type="date" class="form-control form-control-sm"></div>
+    <div class="col-4 col-md-1"><label class="form-label small mb-0">Pers.</label><input name="guests" type="number" min="1" max="12" class="form-control form-control-sm"></div>
+    <div class="col-4 col-md-1"><label class="form-label small mb-0">Langue</label><select name="lang" class="form-select form-select-sm"><option value="fr">FR</option><option value="en">EN</option></select></div>
+    <div class="col-4 col-md-2"><div class="form-check small"><input class="form-check-input" type="checkbox" name="invite" value="1" id="inv" {% if smtp %}checked{% endif %}><label class="form-check-label" for="inv">Inviter par email</label></div></div>
+    <div class="col-md-2"><button class="btn btn-sm btn-dark w-100">Créer</button></div>
+  </form>
+</div></div></div>
+
+<div class="card shadow-sm mb-3"><div class="card-body py-2">
+  <div class="d-flex flex-wrap gap-2 align-items-center">
+    <form hx-post="/c/{{ company.code }}/checkin/sync" hx-target="#run-result" hx-swap="innerHTML" hx-disabled-elt="find button" class="d-flex gap-2 align-items-center">
+      <button class="btn btn-sm btn-outline-dark"><i class="bi bi-arrow-repeat"></i> Synchroniser Lodgify</button>
+      <div class="form-check small mb-0"><input class="form-check-input" type="checkbox" name="invite" value="1" id="syncinv" {% if smtp %}checked{% endif %}><label class="form-check-label" for="syncinv">et inviter les nouvelles</label></div>
+    </form>
+    <form hx-post="/c/{{ company.code }}/checkin/reminders" hx-target="#run-result" hx-swap="innerHTML" hx-disabled-elt="find button">
+      <button class="btn btn-sm btn-outline-dark"><i class="bi bi-bell"></i> Relances / alertes maintenant</button>
+    </form>
+    <span class="small text-muted ms-auto">Passe automatique chaque matin à 8h (heure Réunion) : synchro Lodgify, invitations, relances, alertes, état des risques J-1.</span>
+  </div>
+  <div id="run-result"></div>
+</div></div>
+
+<ul class="nav nav-pills nav-sm mb-2 small">
+  {% for v, l in [('avenir', 'À venir'), ('incomplets', 'Incomplets'), ('passes', 'Séjours passés'), ('tous', 'Tous')] %}
+  <li class="nav-item"><a class="nav-link py-1 {{ 'active' if view == v }}" href="?view={{ v }}">{{ l }}</a></li>{% endfor %}
+  <li class="nav-item ms-auto text-muted align-self-center">{{ rs|length }} réservations · {{ counts.a_inviter }} à inviter · {{ counts.incomplets }} en attente · {{ counts.completes }} complétées{% if counts.refus %} · <span class="text-danger">{{ counts.refus }} refus</span>{% endif %}</li>
+</ul>
+<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.84rem;">
+  <thead class="table-light"><tr><th>Arrivée</th><th>Départ</th><th>Canal</th><th>Réf.</th><th>Voyageur</th><th>Email</th><th>Pers.</th><th>Statut</th><th>Dernier envoi</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rs %}
+  {% set lab = labels.get(r.status, (r.status, 'secondary')) %}
+  <tr class="{{ 'table-danger' if r.status == 'refused' else ('table-warning' if r.arrival and (r.arrival - today).days <= 7 and r.status in ('pending','sent','reminded') else '') }}">
+    <td class="text-nowrap">{{ r.arrival.strftime('%d/%m/%Y') if r.arrival else '—' }}{% if r.arrival and r.arrival >= today %} <span class="text-muted">J-{{ (r.arrival - today).days }}</span>{% endif %}</td>
+    <td class="text-nowrap">{{ r.departure.strftime('%d/%m/%Y') if r.departure else '—' }}</td>
+    <td>{{ channels[r.channel].label if r.channel in channels else r.channel }}</td>
+    <td><code>{{ r.booking_ref or '—' }}</code></td>
+    <td>{{ r.guest_name or '—' }} <span class="text-muted small">{{ r.lang|upper }}</span></td>
+    <td class="small">{{ r.guest_email or '<span class="text-danger">aucun</span>'|safe }}</td>
+    <td class="text-center">{{ r.guests or '' }}</td>
+    <td><span class="badge text-bg-{{ lab[1] }}">{{ lab[0] }}</span>{% if r.reminder_count %} <span class="text-muted small">×{{ r.reminder_count }}</span>{% endif %}</td>
+    <td class="small text-muted text-nowrap">{{ fmt_dt(r.reminded_at or r.invited_at) if (r.reminded_at or r.invited_at) else '' }}</td>
+    <td class="text-end text-nowrap">
+      <a class="btn btn-sm btn-outline-secondary py-0" href="/c/{{ company.code }}/checkin/{{ r.id }}">détail</a>
+      {% if r.status in ('pending','sent','reminded') %}<button class="btn btn-sm btn-outline-secondary py-0" onclick="navigator.clipboard.writeText('{{ base }}/checkin/{{ r.token }}');this.textContent='copié'" title="Copier le lien du formulaire"><i class="bi bi-link-45deg"></i></button>{% endif %}
+    </td>
+  </tr>
+  {% else %}<tr><td colspan="10" class="text-muted">Aucune réservation dans cette vue. Synchronisez Lodgify ou créez une réservation manuelle.</td></tr>{% endfor %}
+  </tbody></table></div>
+
+{% if runs %}<h3 class="h6 text-uppercase text-muted mt-3">Dernières tâches</h3>
+<ul class="small mb-0">{% for r in runs %}<li>#{{ r.id }} · {{ r.started_at|dtlocal }} · {{ r.label }} — <span class="{{ 'text-success' if r.status=='ok' else 'text-danger' }}">{{ r.summary or r.status }}</span></li>{% endfor %}</ul>{% endif %}
+{% endblock %}

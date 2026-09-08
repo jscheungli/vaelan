@@ -35,6 +35,21 @@ services:
         sync: false
       - key: TOPORDER_KOOKABURA_KEY
         sync: false
+      # VDS — check-in voyageurs (SCI Les Sables du Lagon)
+      - key: LODGIFY_VDS_APIKEY      # alias accepté : LODGIFY_LESSABLESDULAGON_APIKEY
+        sync: false
+      - key: SMTP_HOST               # ex. smtp.gmail.com — envoi des invitations / relances / confirmations
+        sync: false
+      - key: SMTP_PORT               # 587 (STARTTLS) ou 465 (SSL)
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM               # « Villa des Sables du Lagon <adresse@…> »
+        sync: false
+      - key: PUBLIC_BASE_URL         # racine des liens publics (défaut https://vaelan.onrender.com)
+        sync: false
 
 databases:
   - name: vaelan-db

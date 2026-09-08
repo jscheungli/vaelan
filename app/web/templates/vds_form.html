@@ -1,0 +1,226 @@
+{% extends "vds_public_base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center lang">
+  <span class="text-muted">{{ t('welcome_res', ref=res.booking_ref or res.id, arrival=fmt_date(res.arrival, lang), departure=fmt_date(res.departure, lang), guests=res.guests or '—') }}</span>
+  <a href="?lang={{ other_lang }}" class="ms-2 text-nowrap">{{ T.lang_switch }}</a>
+</div>
+{% if request.query_params.get('err') %}
+<div class="alert alert-danger mt-2 small">{% if request.query_params.get('err') == 'sign' %}{{ T.sign_missing }}{% elif request.query_params.get('err') == 'id' %}{{ T.id_intro }}{% else %}{{ T.required }}{% endif %}</div>
+{% endif %}
+
+<div class="mt-2 mb-3">
+  <div class="progress"><div class="progress-bar" id="bar" style="width:8%"></div></div>
+  <div class="steps" id="steplabels"></div>
+</div>
+
+<form id="f" method="post" action="/checkin/{{ res.token }}" enctype="multipart/form-data" novalidate>
+<input type="hidden" name="lang" value="{{ lang }}">
+<input type="hidden" name="signature" id="signature">
+
+<!-- 0 · accueil -->
+<div class="step active card" data-title=""><div class="card-body p-4">
+  <h1 class="h3">{{ T.welcome_title }}</h1>
+  <p>{{ T.welcome_body|safe }}</p>
+  <button type="button" class="btn btn-vds w-100 mt-2 next">{{ T.start }} <i class="bi bi-arrow-right"></i></button>
+</div></div>
+
+<!-- 1 · règles -->
+<div class="step card" data-title="{{ T.step_rules }}"><div class="card-body p-4">
+  <h2 class="h4">{{ T.rules_title }}</h2>
+  <p class="hint">{{ rules_intro }}</p>
+  {% for r in rules %}
+  <div class="rule" id="rule-{{ r.key }}">
+    <div class="txt"><span class="badge rounded-pill text-bg-light me-1">{{ loop.index }}</span>{{ r[lang] if lang in r else r.fr }}</div>
+    <div class="choice">
+      <input type="radio" name="rule_{{ r.key }}" id="r-{{ r.key }}-y" value="yes" required><label for="r-{{ r.key }}-y" class="yes"><i class="bi bi-check-lg"></i> {{ T.yes }}</label>
+      <input type="radio" name="rule_{{ r.key }}" id="r-{{ r.key }}-n" value="no"><label for="r-{{ r.key }}-n" class="no">{{ T.no }}</label>
+    </div>
+    {% if r.confirm %}
+    <div class="confirm d-none" id="confirm-{{ r.key }}">
+      <div class="form-check"><input class="form-check-input" type="checkbox" name="confirm_{{ r.key }}" id="c-{{ r.key }}" value="1">
+        <label class="form-check-label" for="c-{{ r.key }}">{{ r['confirm_' + lang] if ('confirm_' + lang) in r else r.confirm_fr }}</label></div>
+    </div>
+    {% endif %}
+    <div class="hint text-danger d-none mt-2 no-hint">{{ T.rule_no_hint }}</div>
+  </div>
+  {% endfor %}
+  <div class="d-flex gap-2 mt-3"><button type="button" class="btn btn-outline-vds prev">{{ T.prev }}</button><button type="button" class="btn btn-vds flex-grow-1 next">{{ T.next }} <i class="bi bi-arrow-right"></i></button></div>
+</div></div>
+
+<!-- 2 · identité -->
+<div class="step card" data-title="{{ T.step_identity }}"><div class="card-body p-4">
+  <h2 class="h4">{{ T.identity_title }}</h2>
+  <p class="hint">{{ T.identity_intro }}</p>
+  <div class="mb-3"><label class="form-label">{{ T.full_name }} *</label><input class="form-control" name="full_name" value="{{ res.guest_name or '' }}" required autocomplete="name"></div>
+  <div class="row g-2">
+    <div class="col-6 mb-3"><label class="form-label">{{ T.birth_date }} *</label><input class="form-control" type="date" name="birth_date" max="{{ max_birth }}" required></div>
+    <div class="col-6 mb-3"><label class="form-label">{{ T.birth_place }} *</label><input class="form-control" name="birth_place" required></div>
+  </div>
+  <div class="mb-3"><label class="form-label">{{ T.nationality }}</label><input class="form-control" name="nationality" autocomplete="country-name"></div>
+  <div class="mb-3"><label class="form-label">{{ T.street }} *</label><input class="form-control" name="street" required autocomplete="street-address"></div>
+  <div class="row g-2">
+    <div class="col-4 mb-3"><label class="form-label">{{ T.postal_code }} *</label><input class="form-control" name="postal_code" required autocomplete="postal-code"></div>
+    <div class="col-8 mb-3"><label class="form-label">{{ T.city }} *</label><input class="form-control" name="city" required autocomplete="address-level2"></div>
+  </div>
+  <div class="mb-3"><label class="form-label">{{ T.country }} *</label><input class="form-control" name="country" required autocomplete="country-name" value="{{ 'France' if lang == 'fr' else '' }}"></div>
+  <div class="mb-3"><label class="form-label">{{ T.email }} *</label><input class="form-control" type="email" name="email" value="{{ res.guest_email or '' }}" required autocomplete="email" inputmode="email"></div>
+  <div class="mb-3"><label class="form-label">{{ T.phone }} *</label><input class="form-control" type="tel" name="phone" value="{{ res.guest_phone or '' }}" required autocomplete="tel" inputmode="tel"></div>
+  <div class="row g-2">
+    <div class="col-6 mb-3"><label class="form-label">{{ T.arrival_time }} *</label>
+      <select class="form-select" name="arrival_time" required>
+        <option value="">—</option>
+        {% for h in ['16:00','16:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00'] %}<option>{{ h }}</option>{% endfor %}
+        <option value="?">{{ T.arrival_time_unknown }}</option>
+      </select></div>
+    <div class="col-6 mb-3"><label class="form-label">{{ T.occupants }} *</label><input class="form-control" type="number" name="occupants" min="1" max="{{ villa.capacity }}" value="{{ res.guests or '' }}" required inputmode="numeric"></div>
+  </div>
+  <div class="mb-2"><label class="form-label">{{ T.occupants_list }}</label><textarea class="form-control" name="occupants_list" rows="3"></textarea></div>
+  <div class="d-flex gap-2 mt-3"><button type="button" class="btn btn-outline-vds prev">{{ T.prev }}</button><button type="button" class="btn btn-vds flex-grow-1 next">{{ T.next }} <i class="bi bi-arrow-right"></i></button></div>
+</div></div>
+
+{% if ch.id_required %}
+<!-- 3 · pièce d'identité -->
+<div class="step card" data-title="{{ T.step_id }}"><div class="card-body p-4">
+  <h2 class="h4">{{ T.id_title }}</h2>
+  <p class="hint">{{ T.id_intro }}</p>
+  <div class="mb-2"><label class="form-label">{{ T.id_files }} *</label>
+    <input class="form-control" type="file" name="id_files" id="idfiles" accept="image/*,.pdf,.heic,.heif" multiple required>
+    <div class="hint mt-1">{{ T.file_type }} · max {{ max_mb }} MB</div>
+    <div id="idlist" class="small mt-2"></div></div>
+  <div class="d-flex gap-2 mt-3"><button type="button" class="btn btn-outline-vds prev">{{ T.prev }}</button><button type="button" class="btn btn-vds flex-grow-1 next">{{ T.next }} <i class="bi bi-arrow-right"></i></button></div>
+</div></div>
+{% endif %}
+
+<!-- 4 · consentements -->
+<div class="step card" data-title="{{ T.step_consents }}"><div class="card-body p-4">
+  <h2 class="h4">{{ T.consents_title }}</h2>
+  <div class="rule"><div class="form-check"><input class="form-check-input" type="checkbox" name="erp" id="erp" value="1" required>
+    <label class="form-check-label" for="erp">{{ T.erp_label }} *</label></div><div class="hint mt-1">{{ T.erp_hint }}</div></div>
+  <div class="rule"><div class="fw-semibold mb-1">{{ T.marketing_title }} *</div><div class="hint mb-2">{{ T.marketing_hint }}</div>
+    {% for m in marketing %}
+    <div class="form-check"><input class="form-check-input mkt" type="radio" name="marketing" id="mkt-{{ m[0] }}" value="{{ m[0] }}" required>
+      <label class="form-check-label" for="mkt-{{ m[0] }}">{{ m[1] if lang == 'fr' else m[2] }}</label></div>
+    {% endfor %}
+    <div class="mt-2 d-none" id="mkt-email"><label class="form-label">{{ T.mkt_email }}</label><input class="form-control" type="email" name="mkt_email" value="{{ res.guest_email or '' }}"></div>
+    <div class="mt-2 d-none" id="mkt-phone"><label class="form-label">{{ T.mkt_phone }}</label><input class="form-control" type="tel" name="mkt_phone" value="{{ res.guest_phone or '' }}"></div>
+  </div>
+  <div class="rule"><div class="form-check"><input class="form-check-input" type="checkbox" name="rgpd" id="rgpd" value="1" required>
+    <label class="form-check-label" for="rgpd">{{ T.rgpd_label }} *</label></div>
+    <details class="mt-2"><summary class="hint">RGPD</summary><div class="hint mt-1">{{ t('rgpd_text', rgpd_email=villa.rgpd_email) }}</div></details></div>
+  <div class="d-flex gap-2 mt-3"><button type="button" class="btn btn-outline-vds prev">{{ T.prev }}</button><button type="button" class="btn btn-vds flex-grow-1 next">{{ T.next }} <i class="bi bi-arrow-right"></i></button></div>
+</div></div>
+
+<!-- 5 · signature -->
+<div class="step card" data-title="{{ T.step_sign }}"><div class="card-body p-4">
+  <h2 class="h4">{{ T.sign_title }}</h2>
+  <p class="hint">{{ T.sign_intro }}</p>
+  <canvas id="sigpad"></canvas>
+  <div class="d-flex justify-content-between align-items-center mt-2">
+    <button type="button" class="btn btn-sm btn-link text-muted p-0" id="sigclear"><i class="bi bi-eraser"></i> {{ T.sign_clear }}</button>
+    <span class="hint">{{ T.sign_legal }}</span>
+  </div>
+  <div class="text-danger small d-none mt-2" id="sigerr">{{ T.sign_missing }}</div>
+  <div class="d-flex gap-2 mt-3"><button type="button" class="btn btn-outline-vds prev">{{ T.prev }}</button><button type="submit" class="btn btn-vds flex-grow-1" id="submitbtn"><i class="bi bi-pen"></i> {{ T.submit }}</button></div>
+</div></div>
+</form>
+
+<!-- refus -->
+<div class="modal fade" id="refuse" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="border-radius:14px">
+  <div class="modal-body p-4">
+    <h3 class="h5">{{ T.refuse_title }}</h3>
+    <p class="small" id="refuse-body"></p>
+    <form method="post" action="/checkin/{{ res.token }}/refus" id="refuseform"><input type="hidden" name="lang" value="{{ lang }}"></form>
+    <div class="d-grid gap-2">
+      <button type="button" class="btn btn-vds" data-bs-dismiss="modal">{{ T.refuse_review }}</button>
+      <button type="button" class="btn btn-outline-danger" id="refusesend">{{ T.refuse_send }}</button>
+    </div>
+  </div>
+</div></div></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
+<script>
+(function () {
+  const steps = Array.from(document.querySelectorAll('.step'));
+  const labels = document.getElementById('steplabels'), bar = document.getElementById('bar');
+  const titles = steps.map(s => s.dataset.title).filter(Boolean);
+  const REFUSE_TPL = {{ T.refuse_body|tojson }};
+  const RULE_TXT = {{ rule_txt | tojson }};
+  let cur = 0;
+  function render() {
+    steps.forEach((s, i) => s.classList.toggle('active', i === cur));
+    bar.style.width = Math.max(8, Math.round(cur / (steps.length - 1) * 100)) + '%';
+    labels.innerHTML = titles.map((t, i) => `<span class="${i + 1 === cur ? 'cur' : ''}">${t}</span>`).join('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function validate(step) {
+    let ok = true;
+    step.querySelectorAll('input, select, textarea').forEach(el => {
+      if (el.type === 'radio') { const grp = step.querySelectorAll(`input[name="${el.name}"]`); const any = Array.from(grp).some(x => x.checked);
+        if (el.required && !any) { ok = false; grp.forEach(x => x.closest('.rule, .form-check')?.classList.add('border-danger')); } return; }
+      el.classList.remove('is-invalid');
+      if (!el.checkValidity()) { ok = false; el.classList.add('is-invalid'); }
+    });
+    if (!ok) { const first = step.querySelector('.is-invalid, .border-danger'); first && first.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    return ok;
+  }
+  // règles : état visuel, confirmation, refus
+  document.querySelectorAll('.rule input[type=radio]').forEach(r => r.addEventListener('change', () => {
+    const box = r.closest('.rule'), key = r.name.replace('rule_', '');
+    box.classList.remove('border-danger'); box.classList.toggle('ok', r.value === 'yes'); box.classList.toggle('ko', r.value === 'no');
+    box.querySelector('.no-hint')?.classList.toggle('d-none', r.value !== 'no');
+    const c = document.getElementById('confirm-' + key);
+    if (c) { c.classList.toggle('d-none', r.value !== 'yes'); c.querySelector('input').required = (r.value === 'yes'); if (r.value !== 'yes') c.querySelector('input').checked = false; }
+  }));
+  document.querySelectorAll('.next').forEach(b => b.addEventListener('click', () => {
+    const step = steps[cur];
+    if (cur > 0 && !validate(step)) return;
+    if (step.dataset.title === {{ T.step_rules|tojson }}) {
+      const nos = Array.from(step.querySelectorAll('input[value=no]:checked')).map(x => x.name.replace('rule_', ''));
+      if (nos.length) {
+        document.getElementById('refuse-body').textContent = REFUSE_TPL.replace('{rules}', nos.map(k => '« ' + RULE_TXT[k].slice(0, 70) + '… »').join(', '));
+        new bootstrap.Modal('#refuse').show(); return;
+      }
+    }
+    cur = Math.min(cur + 1, steps.length - 1); render();
+  }));
+  document.querySelectorAll('.prev').forEach(b => b.addEventListener('click', () => { cur = Math.max(cur - 1, 0); render(); }));
+  document.getElementById('refusesend').addEventListener('click', () => {
+    const f = document.getElementById('refuseform');
+    document.querySelectorAll('.rule input[type=radio]:checked').forEach(r => { const i = document.createElement('input'); i.type = 'hidden'; i.name = r.name; i.value = r.value; f.appendChild(i); });
+    f.submit();
+  });
+  // marketing conditionnel
+  document.querySelectorAll('.mkt').forEach(r => r.addEventListener('change', () => {
+    const v = r.value; const e = document.getElementById('mkt-email'), p = document.getElementById('mkt-phone');
+    e.classList.toggle('d-none', !(v === 'email' || v === 'both')); p.classList.toggle('d-none', !(v === 'sms' || v === 'both'));
+    e.querySelector('input').required = (v === 'email' || v === 'both'); p.querySelector('input').required = (v === 'sms' || v === 'both');
+  }));
+  // pièces d'identité : taille
+  const idf = document.getElementById('idfiles');
+  if (idf) idf.addEventListener('change', () => {
+    const max = {{ max_mb }} * 1024 * 1024; const list = document.getElementById('idlist'); list.innerHTML = '';
+    let bad = false;
+    Array.from(idf.files).slice(0, 3).forEach(f => { const ok = f.size <= max; bad = bad || !ok;
+      list.innerHTML += `<div class="${ok ? 'text-success' : 'text-danger'}"><i class="bi ${ok ? 'bi-check-circle' : 'bi-x-circle'}"></i> ${f.name} · ${(f.size / 1048576).toFixed(1)} MB</div>`; });
+    idf.setCustomValidity(bad || idf.files.length > 3 ? 'size' : '');
+  });
+  // signature
+  const canvas = document.getElementById('sigpad');
+  const pad = new SignaturePad(canvas, { backgroundColor: 'rgb(255,255,255)', penColor: '#1d2b3a' });
+  function resize() { const ratio = Math.max(window.devicePixelRatio || 1, 1); const data = pad.toData();
+    canvas.width = canvas.offsetWidth * ratio; canvas.height = canvas.offsetHeight * ratio; canvas.getContext('2d').scale(ratio, ratio); pad.clear(); pad.fromData(data); }
+  window.addEventListener('resize', resize); new ResizeObserver(resize).observe(canvas);
+  document.getElementById('sigclear').addEventListener('click', () => pad.clear());
+  document.getElementById('f').addEventListener('submit', e => {
+    const step = steps[cur];
+    if (pad.isEmpty()) { e.preventDefault(); document.getElementById('sigerr').classList.remove('d-none'); return; }
+    document.getElementById('signature').value = pad.toDataURL('image/png');
+    const b = document.getElementById('submitbtn'); b.disabled = true; b.innerHTML = '<span class="spinner-border spinner-border-sm"></span> …';
+  });
+  render();
+})();
+</script>
+{% endblock %}

@@ -19,6 +19,7 @@ _COMPANIES = [
     ("GLDCASABONA", "GLD CASABONA"),       # groupe ISFAHAAN (SIREN 952182764)
     ("ISFAHAAN", "Isfahaan"),      # holding du groupe (SIREN 981355589)
     ("GONGCHA", "GONG CHA"),       # groupe ISFAHAAN (SIREN 953142080)
+    ("VDS", "SCI Les Sables du Lagon"),   # villa en location saisonnière (SIREN 821948163) — check-in voyageurs
 ]
 
 

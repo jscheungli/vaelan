@@ -1,0 +1,9 @@
+{% extends "vds_public_base.html" %}
+{% block content %}
+<div class="card mt-3"><div class="card-body p-4 text-center">
+  {% if ok %}<div class="display-5 mb-2" style="color:var(--vds-accent)"><i class="bi bi-check-circle-fill"></i></div>{% endif %}
+  <h1 class="h3">{{ title }}</h1>
+  <p class="mt-3">{{ body }}</p>
+  {% if res %}<p class="hint mb-0">{{ t('welcome_res', ref=res.booking_ref or res.id, arrival=fmt_date(res.arrival, lang), departure=fmt_date(res.departure, lang), guests=res.guests or '—') }}</p>{% endif %}
+</div></div>
+{% endblock %}

@@ -193,6 +193,8 @@ _TILES = [
      "Grandes masses des balances Pennylane de toutes les sociétés du groupe : trésorerie, dettes fournisseurs, créances, emprunts."),
     ("interco", "Intercos groupe", "bi-arrow-left-right", "/c/{code}/interco",
      "Dettes intra-groupe à une date : matrice société × société, réciprocité, anomalies, plan de virements de régularisation."),
+    ("checkin", "Check-in voyageurs", "bi-clipboard-check", "/c/{code}/checkin",
+     "Formulaires d'arrivée (règles, identité, signature) par canal Airbnb / Booking / site : invitations, relances, réponses."),
     ("jobs", "Tâches", "bi-list-task", "/jobs",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
@@ -234,6 +236,8 @@ def suivi_board(request: Request, code: str):
 # ----------------------------- Import / cadrage -----------------------------
 def _feature_from_path(path: str):
     """Déduit la fonctionnalité gardée d'après l'URL (gating automatique par rôle)."""
+    if "/checkin" in path:
+        return "checkin"
     if "/config" in path:
         return "config"
     if "/salaires" in path:

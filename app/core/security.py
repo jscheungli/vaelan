@@ -75,7 +75,8 @@ def role_for(user: User, company: Company) -> Optional[str]:
 _CAISSE = {"suivi", "jobs", "clients", "paiements", "config"}   # modules Groupe FDF (TopOrder)
 _ODOO = {"odoo", "inqom", "jobs"}                               # modules Groupe ISFAHAAN (Odoo/Inqom × Pennylane)
 _FULL = _CAISSE                                                 # alias historique
-_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"}
+_VDS = {"checkin", "jobs"}                                     # SCI Les Sables du Lagon (villa, Lodgify)
+_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS
 
 # ---- Registre SOCIÉTÉ -> MODULES ----
 # Chaque société n'expose QUE les modules de son groupe : rien n'est partagé par défaut.
@@ -99,6 +100,8 @@ COMPANY_MODULES = {
     "GLDCASABONA":  {"inqom", "jobs"},
     "ISFAHAAN":     {"inqom", "jobs", "treso", "interco"},   # treso/interco = vues GROUPE, portées par la holding
     "GONGCHA":      {"inqom", "jobs"},
+    # SCI Les Sables du Lagon — villa en location saisonnière (formulaires d'arrivée, Lodgify)
+    "VDS":          set(_VDS),
 }
 
 
@@ -114,11 +117,11 @@ def features_for(role: Optional[str], is_superuser: bool = False) -> set:
     if role == "salaires":
         return {"salaires"}
     if role in ("gestion", "viewer"):
-        return {"clients", "paiements"}
+        return {"clients", "paiements", "checkin"}
     if role in ("comptable", "admin", "operator"):
         # le périmètre réel est ENSUITE intersecté avec les modules de la société :
         # un comptable ISFAHAAN ne voit que « odoo », un comptable FDF que la caisse.
-        return _CAISSE | _ODOO | {"treso", "interco"}
+        return _CAISSE | _ODOO | {"treso", "interco"} | _VDS
     return set()
 
 

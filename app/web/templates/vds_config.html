@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Configuration check-in · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/checkin">Check-in voyageurs</a></li>
+  <li class="breadcrumb-item active">Configuration</li>
+</ol></nav>
+<h1 class="h4">Configuration du check-in</h1>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<div class="row g-3">
+<div class="col-lg-7">
+<div class="card shadow-sm mb-3"><div class="card-body">
+<form method="post" enctype="multipart/form-data">
+  <h3 class="h6 text-uppercase text-muted">Envois</h3>
+  <div class="mb-2"><label class="form-label small mb-0">Alertes internes — destinataires (virgules)</label><input name="alert_emails" class="form-control form-control-sm" value="{{ p.alert_emails }}" placeholder="vous@…, gestionnaire@…"></div>
+  <div class="mb-2"><label class="form-label small mb-0">Adresse de réponse (Reply-To) des emails voyageurs</label><input name="reply_to" class="form-control form-control-sm" value="{{ p.reply_to }}"></div>
+  <div class="form-check small mb-3"><input class="form-check-input" type="checkbox" name="auto_invite" value="1" id="ai" {% if p.auto_invite %}checked{% endif %}><label class="form-check-label" for="ai">Invitation automatique dès qu'une réservation confirmée (Booked) arrive de Lodgify avec un email</label></div>
+  <h3 class="h6 text-uppercase text-muted">Relances</h3>
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md-3"><label class="form-label small mb-0">Délai entre relances (jours)</label><input name="reminder_days" type="number" class="form-control form-control-sm" value="{{ p.reminder_days }}"></div>
+    <div class="col-6 col-md-3"><label class="form-label small mb-0">Nb max de relances</label><input name="max_reminders" type="number" class="form-control form-control-sm" value="{{ p.max_reminders }}"></div>
+    <div class="col-6 col-md-3"><label class="form-label small mb-0">Relances avant l'arrivée (J-)</label><input name="pre_arrival_days" class="form-control form-control-sm" value="{{ p.pre_arrival_days|join(', ') }}"></div>
+    <div class="col-6 col-md-3"><label class="form-label small mb-0">Alertes internes (J-)</label><input name="alert_days" class="form-control form-control-sm" value="{{ p.alert_days|join(', ') }}"></div>
+  </div>
+  <h3 class="h6 text-uppercase text-muted">Données</h3>
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md-4"><label class="form-label small mb-0">Purge des pièces d'identité (jours après départ)</label><input name="purge_id_days" type="number" class="form-control form-control-sm" value="{{ p.purge_id_days }}"></div>
+    <div class="col-6 col-md-4"><label class="form-label small mb-0">Taille max d'un fichier (Mo)</label><input name="max_upload_mb" type="number" class="form-control form-control-sm" value="{{ p.max_upload_mb }}"></div>
+  </div>
+  <h3 class="h6 text-uppercase text-muted">État des risques (ERP)</h3>
+  <p class="small text-muted mb-1">Envoyé automatiquement la veille de l'arrivée aux formulaires complétés. Validité légale : 6 mois — à régénérer sur <a href="https://errial.georisques.gouv.fr" target="_blank">errial.georisques.gouv.fr</a>.
+    {% if erp %}Document actuel : <strong>{{ erp.name }}</strong> ({{ (erp.size/1024)|round|int }} Ko, chargé le {{ erp.created_at|dtlocal }}).{% else %}<span class="text-danger">Aucun document chargé.</span>{% endif %}</p>
+  <input type="file" name="erp" accept="application/pdf" class="form-control form-control-sm mb-3">
+  <button class="btn btn-sm btn-dark">Enregistrer</button>
+</form>
+</div></div>
+<div class="card shadow-sm mb-3"><div class="card-body">
+  <h3 class="h6 text-uppercase text-muted">Historique SurveySparrow</h3>
+  <p class="small text-muted">Importer un export « Responses - VDS Terms &amp; Conditions Check - &lt;canal&gt;.csv » : crée une réservation complétée par réponse (sans les fichiers, dont seules les URL sont conservées).</p>
+  <form method="post" action="/c/{{ company.code }}/checkin/import" enctype="multipart/form-data" class="row g-2 align-items-end">
+    <div class="col-4"><select name="channel" class="form-select form-select-sm">{% for k, c in channels.items() %}<option value="{{ k }}">{{ c.label }}</option>{% endfor %}</select></div>
+    <div class="col-5"><input type="file" name="file" accept=".csv" class="form-control form-control-sm" required></div>
+    <div class="col-3"><button class="btn btn-sm btn-outline-dark w-100">Importer</button></div>
+  </form>
+</div></div>
+</div>
+<div class="col-lg-5">
+<div class="card shadow-sm mb-3"><div class="card-body small">
+  <h3 class="h6 text-uppercase text-muted">État technique</h3>
+  <div>SMTP : {% if smtp %}<span class="text-success">configuré</span> — expéditeur {{ smtp_from }}{% else %}<span class="text-danger">non configuré</span> (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM){% endif %}</div>
+  <div>Lodgify : {% if lodgify_ok %}<span class="text-success">clé présente</span>{% else %}<span class="text-danger">clé absente</span> (LODGIFY_VDS_APIKEY){% endif %}</div>
+  <div>Racine des liens publics : <code>{{ base }}</code> (PUBLIC_BASE_URL)</div>
+  <hr>
+  <h3 class="h6 text-uppercase text-muted">Liens génériques par canal</h3>
+  <p class="text-muted">À utiliser dans les messages automatiques Lodgify / Airbnb / Booking tant que l'invitation personnelle n'est pas envoyée : le voyageur saisit son n° de réservation, puis reçoit son formulaire.</p>
+  {% for k, c in channels.items() %}<div><strong>{{ c.label }}</strong> : <code>{{ base }}/checkin/nouveau/{{ k }}</code></div>{% endfor %}
+</div></div>
+</div>
+</div>
+{% endblock %}

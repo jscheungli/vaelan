@@ -1,0 +1,562 @@
+"""VDS — logique du check-in : réservations, réponses, fichiers, PDF récapitulatif, envois."""
+import io
+import json
+import os
+import re
+import secrets
+from datetime import date, datetime, timedelta
+from typing import List, Optional, Tuple
+
+from sqlmodel import Session, select
+
+from app.core.db import engine
+from app.core import mailer
+from app.models import Setting, VdsReservation, VdsResponse, VdsFile, VdsMessage
+from . import config
+from .texts import t
+
+_TZ = timedelta(hours=4)          # heure de La Réunion
+CODE = config.COMPANY_CODE
+
+
+def now_local() -> datetime:
+    return datetime.utcnow() + _TZ
+
+
+def fmt_dt(dt: Optional[datetime], lang: str = "fr") -> str:
+    if not dt:
+        return "—"
+    d = dt + _TZ
+    return d.strftime("%d/%m/%Y %H:%M") if lang == "fr" else d.strftime("%d %b %Y %H:%M")
+
+
+def fmt_date(d, lang: str = "fr") -> str:
+    if not d:
+        return "—"
+    if isinstance(d, str):
+        try:
+            d = date.fromisoformat(d[:10])
+        except Exception:
+            return d
+    return d.strftime("%d/%m/%Y") if lang == "fr" else d.strftime("%d %b %Y")
+
+
+# ------------------------------------------------------------------ réglages
+def params() -> dict:
+    p = dict(config.DEFAULT_PARAMS)
+    with Session(engine) as s:
+        st = s.exec(select(Setting).where(Setting.company_code == CODE, Setting.key == "checkin:params")).first()
+    if st:
+        try:
+            p.update({k: v for k, v in json.loads(st.value).items() if k in p})
+        except Exception:
+            pass
+    return p
+
+
+def save_params(values: dict) -> None:
+    p = params()
+    p.update(values)
+    with Session(engine) as s:
+        st = s.exec(select(Setting).where(Setting.company_code == CODE, Setting.key == "checkin:params")).first()
+        if not st:
+            st = Setting(company_code=CODE, key="checkin:params", value="{}")
+        st.value = json.dumps(p, ensure_ascii=False)
+        st.updated_at = datetime.utcnow()
+        s.add(st)
+        s.commit()
+
+
+def base_url() -> str:
+    """Racine publique des liens (PUBLIC_BASE_URL sur Render ; sinon l'URL de prod)."""
+    return (os.getenv("PUBLIC_BASE_URL") or "https://vaelan.onrender.com").rstrip("/")
+
+
+def public_url(res: VdsReservation) -> str:
+    return f"{base_url()}/checkin/{res.token}"
+
+
+def alert_emails() -> List[str]:
+    raw = params().get("alert_emails") or ""
+    return [e.strip() for e in re.split(r"[;,\s]+", raw) if "@" in e]
+
+
+# ------------------------------------------------------------------ réservations
+def new_token() -> str:
+    return secrets.token_urlsafe(18)
+
+
+def by_token(token: str) -> Optional[VdsReservation]:
+    if not token or len(token) < 10:
+        return None
+    with Session(engine) as s:
+        return s.exec(select(VdsReservation).where(VdsReservation.token == token)).first()
+
+
+def create_reservation(channel: str, booking_ref: str = None, guest_name: str = None, guest_email: str = None,
+                       guest_phone: str = None, arrival=None, departure=None, guests: int = None,
+                       lang: str = "fr", source: str = "manual", lodgify_id: int = None, notes: str = None,
+                       raw: str = None, status: str = "pending") -> VdsReservation:
+    def _d(x):
+        if not x:
+            return None
+        return x if isinstance(x, date) else date.fromisoformat(str(x)[:10])
+    r = VdsReservation(channel=channel if channel in config.CHANNELS else "lodgify",
+                       booking_ref=(booking_ref or "").strip() or None, guest_name=(guest_name or "").strip() or None,
+                       guest_email=(guest_email or "").strip().lower() or None, guest_phone=(guest_phone or "").strip() or None,
+                       arrival=_d(arrival), departure=_d(departure), guests=guests or None,
+                       lang="en" if str(lang).lower().startswith("en") else "fr", source=source,
+                       lodgify_id=lodgify_id, notes=notes, raw=raw, token=new_token(), status=status)
+    with Session(engine) as s:
+        s.add(r)
+        s.commit()
+        s.refresh(r)
+    return r
+
+
+def update_reservation(res_id: int, **fields) -> None:
+    with Session(engine) as s:
+        r = s.get(VdsReservation, res_id)
+        if not r:
+            return
+        for k, v in fields.items():
+            setattr(r, k, v)
+        r.updated_at = datetime.utcnow()
+        s.add(r)
+        s.commit()
+
+
+def latest_response(res_id: int) -> Optional[VdsResponse]:
+    with Session(engine) as s:
+        return s.exec(select(VdsResponse).where(VdsResponse.reservation_id == res_id)
+                      .order_by(VdsResponse.id.desc())).first()
+
+
+# ------------------------------------------------------------------ fichiers
+def _shrink_image(data: bytes, max_px: int = 1800, quality: int = 82) -> Tuple[bytes, str]:
+    """Réduit une photo (EXIF respecté) en JPEG ; renvoie (bytes, content_type)."""
+    from PIL import Image, ImageOps
+    im = Image.open(io.BytesIO(data))
+    im = ImageOps.exif_transpose(im)
+    if im.mode not in ("RGB", "L"):
+        im = im.convert("RGB")
+    im.thumbnail((max_px, max_px))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=quality, optimize=True)
+    return out.getvalue(), "image/jpeg"
+
+
+def store_file(kind: str, name: str, data: bytes, content_type: str, reservation_id: int = None,
+               response_id: int = None, shrink: bool = False) -> VdsFile:
+    if shrink and (content_type or "").startswith("image/"):
+        try:
+            data, content_type = _shrink_image(data)
+            name = re.sub(r"\.[A-Za-z0-9]+$", "", name) + ".jpg"
+        except Exception:
+            pass          # format non lu par Pillow (HEIC sans plugin…) -> stocké tel quel
+    f = VdsFile(reservation_id=reservation_id, response_id=response_id, kind=kind, name=name[:120],
+                content_type=content_type or "application/octet-stream", size=len(data), data=data)
+    with Session(engine) as s:
+        s.add(f)
+        s.commit()
+        s.refresh(f)
+    return f
+
+
+def files_for(reservation_id: int, kind: str = None) -> List[VdsFile]:
+    with Session(engine) as s:
+        q = select(VdsFile).where(VdsFile.reservation_id == reservation_id)
+        if kind:
+            q = q.where(VdsFile.kind == kind)
+        return list(s.exec(q.order_by(VdsFile.id)).all())
+
+
+def reference_file(kind: str) -> Optional[VdsFile]:
+    """Document de référence (reservation_id vide) : état des risques (kind erp)."""
+    with Session(engine) as s:
+        return s.exec(select(VdsFile).where(VdsFile.reservation_id == None, VdsFile.kind == kind)  # noqa: E711
+                      .order_by(VdsFile.id.desc())).first()
+
+
+def set_reference_file(kind: str, name: str, data: bytes, content_type: str) -> VdsFile:
+    with Session(engine) as s:
+        for f in s.exec(select(VdsFile).where(VdsFile.reservation_id == None, VdsFile.kind == kind)).all():  # noqa: E711
+            s.delete(f)
+        s.commit()
+    return store_file(kind, name, data, content_type)
+
+
+# ------------------------------------------------------------------ journal des envois
+def log_message(reservation_id: Optional[int], kind: str, to: str, subject: str, body: str,
+                ok: bool, info: str, channel: str = "email") -> None:
+    with Session(engine) as s:
+        s.add(VdsMessage(reservation_id=reservation_id, kind=kind, channel=channel, to=to, subject=subject,
+                         body=(body or "")[:4000], status="sent" if ok else ("skipped" if "non configuré" in info else "error"),
+                         error=None if ok else info))
+        s.commit()
+
+
+def messages_for(reservation_id: int) -> List[VdsMessage]:
+    with Session(engine) as s:
+        return list(s.exec(select(VdsMessage).where(VdsMessage.reservation_id == reservation_id)
+                           .order_by(VdsMessage.id.desc())).all())
+
+
+def _mail_vars(res: VdsReservation) -> dict:
+    return {"name": (res.guest_name or "").split(" ")[0] or ("" if res.lang == "fr" else ""),
+            "ref": res.booking_ref or f"#{res.id}", "arrival": fmt_date(res.arrival, res.lang),
+            "departure": fmt_date(res.departure, res.lang), "url": public_url(res),
+            "checkin": config.VILLA["checkin"], "checkout": config.VILLA["checkout"]}
+
+
+def send_invitation(res: VdsReservation, reminder: bool = False) -> Tuple[bool, str]:
+    """Invitation (ou relance) par email au voyageur. Sans email : journalisé « skipped »."""
+    kind = "reminder" if reminder else "invitation"
+    v = _mail_vars(res)
+    v["name"] = v["name"] or ("" if res.lang == "en" else "")
+    subject = t(res.lang, "mail_remind_subject" if reminder else "mail_invite_subject", **v)
+    body = t(res.lang, "mail_remind_body" if reminder else "mail_invite_body", **v).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
+    if not res.guest_email:
+        log_message(res.id, kind, "", subject, body, False, "pas d'email : envoyer le lien via la messagerie de la plateforme")
+        return False, "pas d'email"
+    ok, info = mailer.send([res.guest_email], subject, body, reply_to=params().get("reply_to") or None)
+    log_message(res.id, kind, res.guest_email, subject, body, ok, info)
+    if ok:
+        now = datetime.utcnow()
+        if reminder:
+            update_reservation(res.id, status="reminded", reminded_at=now, reminder_count=(res.reminder_count or 0) + 1)
+        else:
+            update_reservation(res.id, status="sent", invited_at=now)
+    return ok, info
+
+
+def send_alert(res: Optional[VdsReservation], subject: str, body: str, kind: str = "alert") -> Tuple[bool, str]:
+    """Alerte interne (propriétaire / gestionnaire)."""
+    to = alert_emails()
+    if not to:
+        log_message(res.id if res else None, kind, "", subject, body, False, "alertes : aucun destinataire (configuration)")
+        return False, "aucun destinataire"
+    ok, info = mailer.send(to, subject, body)
+    log_message(res.id if res else None, kind, ", ".join(to), subject, body, ok, info)
+    return ok, info
+
+
+def send_erp(res: VdsReservation) -> Tuple[bool, str]:
+    erp = reference_file("erp")
+    if not erp:
+        return False, "état des risques non chargé"
+    if not res.guest_email:
+        return False, "pas d'email"
+    v = _mail_vars(res)
+    subject = t(res.lang, "mail_erp_subject", **v)
+    body = t(res.lang, "mail_erp_body", **v).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
+    ok, info = mailer.send([res.guest_email], subject, body, attachments=[(erp.name, erp.data, erp.content_type)],
+                           reply_to=params().get("reply_to") or None)
+    log_message(res.id, "erp", res.guest_email, subject, body, ok, info)
+    if ok:
+        update_reservation(res.id, erp_sent_at=datetime.utcnow())
+    return ok, info
+
+
+# ------------------------------------------------------------------ réponse au formulaire
+def _clean(s, n=300):
+    return re.sub(r"\s+", " ", str(s or "")).strip()[:n]
+
+
+def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: str,
+                  signature_png: bytes) -> Tuple[VdsResponse, VdsFile]:
+    """Enregistre une réponse complète (règles acceptées, identité, pièces, consentements, signature),
+    met la réservation en `completed`, génère le PDF récapitulatif et envoie confirmation + alerte."""
+    lang = "en" if form.get("lang") == "en" else "fr"
+    rules = {r["key"]: form.get(f"rule_{r['key']}") == "yes" for r in config.RULES}
+    confirms = {r["key"]: bool(form.get(f"confirm_{r['key']}")) for r in config.RULES if r["confirm"]}
+    marketing = form.get("marketing") if form.get("marketing") in ("email", "sms", "both", "none") else "none"
+    address = ", ".join(x for x in [_clean(form.get("street")), " ".join(x for x in [_clean(form.get("postal_code"), 12), _clean(form.get("city"), 80)] if x),
+                                    _clean(form.get("country"), 60)] if x)
+    data = {
+        "rules": rules, "confirms": confirms,
+        "full_name": _clean(form.get("full_name"), 120), "birth_date": _clean(form.get("birth_date"), 10),
+        "birth_place": _clean(form.get("birth_place"), 120), "nationality": _clean(form.get("nationality"), 60),
+        "street": _clean(form.get("street")), "postal_code": _clean(form.get("postal_code"), 12),
+        "city": _clean(form.get("city"), 80), "country": _clean(form.get("country"), 60), "address": address,
+        "email": _clean(form.get("email"), 120).lower(), "phone": _clean(form.get("phone"), 30),
+        "arrival_time": _clean(form.get("arrival_time"), 20), "occupants": _clean(form.get("occupants"), 3),
+        "occupants_list": " · ".join(x.strip() for x in str(form.get("occupants_list") or "").splitlines() if x.strip())[:1200],
+        "erp": bool(form.get("erp")), "marketing": marketing,
+        "mkt_email": _clean(form.get("mkt_email"), 120).lower() if marketing in ("email", "both") else "",
+        "mkt_phone": _clean(form.get("mkt_phone"), 30) if marketing in ("sms", "both") else "",
+        "rgpd": bool(form.get("rgpd")), "lang": lang, "channel": res.channel,
+    }
+    resp = VdsResponse(reservation_id=res.id, channel=res.channel, lang=lang, ip=ip, user_agent=(ua or "")[:300],
+                       rules_ok=all(rules.values()), refused_rules=",".join(k for k, v in rules.items() if not v) or None,
+                       full_name=data["full_name"], email=data["email"] or res.guest_email, phone=data["phone"],
+                       birth_date=data["birth_date"], birth_place=data["birth_place"], address=address,
+                       marketing=marketing, data=json.dumps(data, ensure_ascii=False), signed=bool(signature_png))
+    with Session(engine) as s:
+        s.add(resp)
+        s.commit()
+        s.refresh(resp)
+    sig = store_file("signature", "signature.png", signature_png, "image/png", res.id, resp.id)
+    for (name, blob, ctype) in uploads:
+        store_file("id_document", name, blob, ctype, res.id, resp.id, shrink=True)
+    # la réservation hérite des coordonnées saisies (utile pour les envois suivants)
+    upd = {"status": "completed", "completed_at": datetime.utcnow()}
+    if data["full_name"]:
+        upd["guest_name"] = data["full_name"]
+    if data["email"] and not res.guest_email:
+        upd["guest_email"] = data["email"]
+    if data["phone"] and not res.guest_phone:
+        upd["guest_phone"] = data["phone"]
+    if data["occupants"].isdigit():
+        upd["guests"] = int(data["occupants"])
+    update_reservation(res.id, **upd)
+    res = by_token(res.token)
+    pdf = build_recap_pdf(res, resp, sig.data)
+    recap = store_file("recap", f"Formulaire arrivee {res.booking_ref or res.id} - {resp.full_name}.pdf", pdf,
+                       "application/pdf", res.id, resp.id)
+    # confirmation au voyageur + alerte interne
+    v = _mail_vars(res)
+    v["date"] = fmt_dt(resp.submitted_at, lang)
+    to = data["email"] or res.guest_email
+    if to:
+        subject = t(lang, "mail_confirm_subject", **v)
+        body = t(lang, "mail_confirm_body", **v).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
+        ok, info = mailer.send([to], subject, body, attachments=[(recap.name, pdf, "application/pdf")],
+                               reply_to=params().get("reply_to") or None)
+        log_message(res.id, "confirmation", to, subject, body, ok, info)
+    send_alert(res, f"[VDS] Formulaire d'arrivée signé — {res.guest_name} · {config.CHANNELS[res.channel]['label']} · "
+                    f"{fmt_date(res.arrival)} → {fmt_date(res.departure)}",
+               f"Réservation {res.booking_ref or res.id} ({config.CHANNELS[res.channel]['label']})\n"
+               f"Voyageur : {resp.full_name} · {resp.email or '—'} · {resp.phone or '—'}\n"
+               f"Séjour : {fmt_date(res.arrival)} → {fmt_date(res.departure)} · {data['occupants'] or res.guests or '?'} personnes · "
+               f"arrivée prévue {data['arrival_time'] or '?'}\n"
+               f"Règles : {'toutes acceptées' if resp.rules_ok else 'REFUS : ' + resp.refused_rules}\n"
+               f"Marketing : {marketing}\n\nDétail : {base_url()}/c/VDS/checkin/{res.id}\n",
+               kind="alert")
+    return resp, recap
+
+
+def save_refusal(res: VdsReservation, refused: List[str], lang: str, ip: str) -> None:
+    keys = [k for k in refused if k in {r["key"] for r in config.RULES}]
+    resp = VdsResponse(reservation_id=res.id, channel=res.channel, lang=lang, ip=ip, rules_ok=False,
+                       refused_rules=",".join(keys) or "?", data=json.dumps({"refused": keys, "lang": lang}), signed=False)
+    with Session(engine) as s:
+        s.add(resp)
+        s.commit()
+    update_reservation(res.id, status="refused")
+    labels = "; ".join(next((r["fr"] for r in config.RULES if r["key"] == k), k)[:80] for k in keys)
+    send_alert(res, f"[VDS] ⚠️ Règles REFUSÉES — {res.guest_name or '?'} · {fmt_date(res.arrival)} — annulation demandée",
+               f"Le voyageur {res.guest_name or '?'} (réservation {res.booking_ref or res.id}, {config.CHANNELS[res.channel]['label']}, "
+               f"séjour {fmt_date(res.arrival)} → {fmt_date(res.departure)}) a répondu NON à : {labels}\n"
+               f"et a demandé l'annulation via le formulaire.\n\nDétail : {base_url()}/c/VDS/checkin/{res.id}\n", kind="refusal")
+
+
+# ------------------------------------------------------------------ PDF récapitulatif
+def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: bytes) -> bytes:
+    import fitz
+    d = json.loads(resp.data or "{}")
+    lang = resp.lang or "fr"
+    ch = config.CHANNELS.get(res.channel, {}).get("label", res.channel)
+    esc = lambda x: (str(x or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    rows = "".join(
+        f"<tr><td class='q'>{esc(r[lang] if lang in r else r['fr'])}</td>"
+        f"<td class='a'>{'OUI' if d.get('rules', {}).get(r['key']) else 'NON'}"
+        + (("<br/><span class='c'>☑ " + esc(r.get('confirm_' + lang) or r.get('confirm_fr')) + "</span>") if r["confirm"] and d.get("confirms", {}).get(r["key"]) else "")
+        + "</td></tr>" for r in config.RULES)
+    mk = dict((m[0], m[1] if lang == "fr" else m[2]) for m in config.MARKETING)
+    ident = [
+        (t(lang, "full_name"), d.get("full_name")), (t(lang, "birth_date"), fmt_date(d.get("birth_date"), lang)),
+        (t(lang, "birth_place"), d.get("birth_place")), (t(lang, "nationality"), d.get("nationality")),
+        ("Adresse" if lang == "fr" else "Address", d.get("address")), (t(lang, "email"), d.get("email") or res.guest_email),
+        ("Téléphone" if lang == "fr" else "Phone", d.get("phone")), (t(lang, "arrival_time"), d.get("arrival_time")),
+        ("Occupants", (d.get("occupants") or "") + ((" — " + d.get("occupants_list")) if d.get("occupants_list") else "")),
+    ]
+    ident_rows = "".join(f"<tr><td class='q'>{esc(k)}</td><td class='a'>{esc(v)}</td></tr>" for k, v in ident)
+    n_id = len([f for f in files_for(res.id, "id_document") if f.response_id == resp.id])
+    cons = [
+        ("État des risques (ERP)" if lang == "fr" else "Risk assessment (ERP)", "OUI" if d.get("erp") else "NON"),
+        ("Offres promotionnelles" if lang == "fr" else "Promotional offers", mk.get(d.get("marketing"), d.get("marketing"))
+         + ((" — " + d.get("mkt_email")) if d.get("mkt_email") else "") + ((" — " + d.get("mkt_phone")) if d.get("mkt_phone") else "")),
+        ("RGPD", "OUI" if d.get("rgpd") else "NON"),
+        ("Pièce d'identité jointe" if lang == "fr" else "ID document attached", f"{n_id} fichier(s)" if n_id else ("non demandée" if not config.CHANNELS[res.channel]["id_required"] else "—")),
+    ]
+    cons_rows = "".join(f"<tr><td class='q'>{esc(k)}</td><td class='a'>{esc(v)}</td></tr>" for k, v in cons)
+    when = fmt_dt(resp.submitted_at, lang)
+    title = "Formulaire d'arrivée — récapitulatif signé" if lang == "fr" else "Arrival form — signed summary"
+    html = f"""
+    <div class='hdr'><img src='logo.png' width='170'/></div>
+    <h1>{title}</h1>
+    <p class='meta'>{esc(config.VILLA['legal'])} · {esc(config.VILLA['rcs'])}<br/>
+    {'Réservation' if lang=='fr' else 'Booking'} <b>{esc(res.booking_ref or res.id)}</b> · {esc(ch)} ·
+    {'séjour du' if lang=='fr' else 'stay from'} <b>{fmt_date(res.arrival, lang)}</b> {'au' if lang=='fr' else 'to'} <b>{fmt_date(res.departure, lang)}</b></p>
+    <h2>{'Règles de la villa acceptées' if lang=='fr' else 'Accepted villa rules'}</h2>
+    <table>{rows}</table>
+    <h2>{'Locataire principal' if lang=='fr' else 'Main tenant'}</h2>
+    <table>{ident_rows}</table>
+    <h2>{'Engagements et consentements' if lang=='fr' else 'Commitments and consents'}</h2>
+    <table>{cons_rows}</table>
+    <h2>Signature</h2>
+    <p class='meta'>{'Signé le' if lang=='fr' else 'Signed on'} {when} ({'heure de La Réunion' if lang=='fr' else 'Réunion time'}) · IP {esc(resp.ip)}<br/>
+    {esc(t(lang, 'sign_legal'))}</p>
+    <div><img src='signature.png' width='220'/></div>
+    <p class='foot'>{'Document généré par' if lang=='fr' else 'Document generated by'} Vaelan — {esc(config.VILLA['name'])} · {esc(config.VILLA['rgpd_email'])}</p>
+    """
+    css = """
+    body { font-family: sans-serif; font-size: 9.5pt; color: #1d2b3a; }
+    h1 { font-size: 15pt; color: #234159; margin: 6pt 0 2pt 0; }
+    h2 { font-size: 11pt; color: #234159; margin: 12pt 0 4pt 0; border-bottom: 0.6pt solid #234159; }
+    p.meta { color: #55606b; font-size: 8.5pt; margin: 2pt 0; }
+    p.foot { color: #8a949e; font-size: 7.5pt; margin-top: 14pt; }
+    table { width: 100%; border-collapse: collapse; }
+    td { border-bottom: 0.4pt solid #d5dbe1; padding: 3pt 4pt; vertical-align: top; }
+    td.q { width: 78%; } td.a { width: 22%; font-weight: bold; color: #234159; }
+    span.c { font-weight: normal; color: #55606b; font-size: 8pt; }
+    div.hdr { text-align: center; }
+    """
+    arch = fitz.Archive()
+    logo_path = os.path.join(os.path.dirname(__file__), "..", "..", "web", "static", "vds", "logo.png")
+    try:
+        arch.add(open(logo_path, "rb").read(), "logo.png")
+    except Exception:
+        html = html.replace("<img src='logo.png' width='170'/>", "")
+    arch.add(signature_png or b"", "signature.png")
+    story = fitz.Story(html=html, user_css=css, archive=arch)
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    mediabox, where = fitz.paper_rect("a4"), fitz.Rect(40, 36, 555, 800)
+    more = True
+    while more:
+        dev = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(dev)
+        writer.end_page()
+    writer.close()
+    doc = fitz.open("pdf", buf.getvalue())
+    doc.set_metadata({"title": title, "author": config.VILLA["legal"], "creator": "Vaelan"})
+    out = doc.tobytes(garbage=3, deflate=True)
+    doc.close()
+    return out
+
+
+# ------------------------------------------------------------------ import historique SurveySparrow
+def norm_name(name) -> str:
+    import unicodedata
+    x = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode().lower()
+    return " ".join(sorted(re.findall(r"[a-z]{2,}", x)))
+
+
+def _match_lodgify_reservation(channel: str, ref: Optional[str], email: str, name: str) -> Optional[VdsReservation]:
+    """Réservation issue de Lodgify (sans réponse) correspondant à une réponse historique."""
+    with Session(engine) as s:
+        cands = s.exec(select(VdsReservation).where(VdsReservation.lodgify_id != None,  # noqa: E711
+                                                    VdsReservation.status.in_(["pending", "sent", "reminded", "completed"]))).all()
+        with_resp = {(r[0] if isinstance(r, (tuple, list)) else r) for r in s.exec(select(VdsResponse.reservation_id)).all()}
+    cands = [c for c in cands if c.id not in with_resp and c.channel == channel]
+    em, nm = (email or "").lower().strip(), norm_name(name)
+    return next((c for c in cands if ref and c.booking_ref == ref), None) or \
+        next((c for c in cands if em and (c.guest_email or "").lower() == em), None) or \
+        next((c for c in cands if nm and norm_name(c.guest_name) == nm), None)
+
+def import_surveysparrow(csv_bytes: bytes, channel: str) -> Tuple[int, int]:
+    """Importe un export CSV « Responses - VDS Terms & Conditions Check - <canal> » (historique).
+    Renvoie (créés, ignorés = déjà importés)."""
+    import csv
+    text = csv_bytes.decode("utf-8-sig", errors="replace")
+    rows = list(csv.DictReader(io.StringIO(text)))
+    created = skipped = 0
+
+    def col(row, *starts):
+        for k, v in row.items():
+            kk = (k or "").strip().lower()
+            if any(kk.startswith(s.lower()) for s in starts):
+                return (v or "").strip()
+        return ""
+
+    with Session(engine) as s:
+        existing = {(r.source, (r.notes or "")) for r in s.exec(select(VdsReservation).where(VdsReservation.source == "surveysparrow")).all()}
+    for row in rows:
+        sub = col(row, "Submitted On")
+        try:
+            when = datetime.strptime(sub, "%d %B %Y %I:%M %p") - _TZ
+        except Exception:
+            when = datetime.utcnow()
+        name = col(row, "Pourriez-vous nous indiquer votre nom")
+        key = f"surveysparrow:{channel}:{sub}:{name}"
+        if ("surveysparrow", key) in existing:
+            skipped += 1
+            continue
+        email = col(row, "Quel est votre email") or col(row, "Merci d'indiquer votre email")
+        ref = col(row, "Avant de commencer") or col(row, "booking_id_lodgify")
+        ref = re.sub(r"[^A-Za-z0-9]", "", ref).upper() or None
+        if ref and ref.isdigit() and channel == "lodgify":
+            ref = "B" + ref
+        # réservation Lodgify déjà synchronisée pour ce voyageur (même référence, email ou nom) et sans réponse ?
+        res = _match_lodgify_reservation(channel, ref, email, name)
+        if res:
+            update_reservation(res.id, status="completed", guest_name=res.guest_name or name, guest_email=res.guest_email or email,
+                               notes=((res.notes or "") + " · " + key).strip(" ·"))
+        else:
+            res = create_reservation(channel, booking_ref=ref, guest_name=name, guest_email=email, lang="fr",
+                                     source="surveysparrow", notes=key, status="completed")
+        mk_raw = col(row, "Souhaitez-vous être informé")
+        marketing = "both" if "email et" in mk_raw else ("email" if "uniquement par email" in mk_raw else ("sms" if "SMS" in mk_raw else "none"))
+        rules = {r["key"]: True for r in config.RULES}
+        rule1 = col(row, "Avez-vous bien pris connaissance des règles") or col(row, "Pourriez-vous nous confirmer avoir bien pris connaissance")
+        if rule1.lower().startswith("no"):
+            rules = {r["key"]: False for r in config.RULES}
+        bd = col(row, "Quelle est votre date de naissance")
+        try:
+            bd = datetime.strptime(bd, "%m/%d/%Y").date().isoformat()
+        except Exception:
+            pass
+        data = {"rules": rules, "full_name": name, "address": col(row, "Quelle est votre adresse"), "birth_date": bd,
+                "birth_place": col(row, "Quel est votre lieu de naissance"), "email": email, "marketing": marketing,
+                "mkt_email": col(row, "Merci d'indiquer votre email"), "mkt_phone": col(row, "Merci d'indiquer votre numéro"),
+                "erp": col(row, "Merci de confirmer que vous prendrez") == "Agree", "rgpd": col(row, "C'est la dernière") == "Agree",
+                "signature_url": col(row, "Il ne manque plus que votre signature"), "id_urls": col(row, "Pourriez-vous joindre"),
+                "lang": "fr", "channel": channel, "imported_from": "surveysparrow"}
+        resp = VdsResponse(reservation_id=res.id, channel=channel, lang="fr", submitted_at=when, rules_ok=all(rules.values()),
+                           refused_rules=None if all(rules.values()) else "all", full_name=name, email=email,
+                           birth_date=bd, birth_place=data["birth_place"], address=data["address"], marketing=marketing,
+                           data=json.dumps(data, ensure_ascii=False), signed=bool(data["signature_url"]))
+        with Session(engine) as s:
+            s.add(resp)
+            s.commit()
+        update_reservation(res.id, completed_at=when)
+        created += 1
+    return created, skipped
+
+
+# ------------------------------------------------------------------ export Excel
+def excel_export() -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Réponses"
+    heads = ["Réservation", "Canal", "Arrivée", "Départ", "Statut", "Nom", "Email", "Téléphone", "Date de naissance",
+             "Lieu de naissance", "Adresse", "Occupants", "Heure d'arrivée", "Règles OK", "Règles refusées",
+             "ERP", "Marketing", "Email newsletter", "Portable SMS", "RGPD", "Signé le", "IP", "Source"]
+    ws.append(heads)
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="234159")
+        c.alignment = Alignment(vertical="center")
+    with Session(engine) as s:
+        rs = s.exec(select(VdsReservation).order_by(VdsReservation.arrival.desc().nullslast() if hasattr(VdsReservation.arrival.desc(), "nullslast") else VdsReservation.arrival.desc())).all()
+        for r in rs:
+            resp = s.exec(select(VdsResponse).where(VdsResponse.reservation_id == r.id).order_by(VdsResponse.id.desc())).first()
+            d = json.loads(resp.data or "{}") if resp else {}
+            ws.append([r.booking_ref, config.CHANNELS.get(r.channel, {}).get("label", r.channel), r.arrival, r.departure, r.status,
+                       (resp.full_name if resp else None) or r.guest_name, (resp.email if resp else None) or r.guest_email,
+                       (resp.phone if resp else None) or r.guest_phone, resp.birth_date if resp else None,
+                       resp.birth_place if resp else None, resp.address if resp else None, d.get("occupants") or r.guests,
+                       d.get("arrival_time"), ("oui" if resp.rules_ok else "NON") if resp else "", resp.refused_rules if resp else "",
+                       "oui" if d.get("erp") else "", d.get("marketing"), d.get("mkt_email"), d.get("mkt_phone"),
+                       "oui" if d.get("rgpd") else "", (resp.submitted_at + _TZ) if resp else None, resp.ip if resp else None, r.source])
+    for col, w in zip("ABCDEFGHIJKLMNOPQRSTUVW", [14, 12, 11, 11, 11, 26, 28, 16, 12, 18, 40, 9, 10, 9, 14, 6, 10, 26, 16, 6, 16, 14, 12]):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Réservation {{ res.booking_ref or res.id }} · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/checkin">Check-in voyageurs</a></li>
+  <li class="breadcrumb-item active">{{ res.booking_ref or res.id }}</li>
+</ol></nav>
+{% if msg %}<div class="alert alert-info py-2 small">{{ msg }}</div>{% endif %}
+{% set lab = labels.get(res.status, (res.status, 'secondary')) %}
+<div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+  <h1 class="h4 mb-0">{{ res.guest_name or '—' }} <span class="badge text-bg-{{ lab[1] }}">{{ lab[0] }}</span></h1>
+  <span class="text-muted">{{ channels[res.channel].label }} · <code>{{ res.booking_ref or '—' }}</code> · {{ fmt_date(res.arrival) }} → {{ fmt_date(res.departure) }} · {{ res.guests or '?' }} pers. · {{ res.lang|upper }} · source {{ res.source }}</span>
+</div>
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm mb-3"><div class="card-body">
+      <h3 class="h6 text-uppercase text-muted">Lien du formulaire</h3>
+      <div class="input-group input-group-sm mb-2"><input class="form-control" value="{{ url }}" readonly id="lnk"><button class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('lnk').value);this.textContent='copié'">copier</button>
+        <a class="btn btn-outline-secondary" href="{{ url }}" target="_blank"><i class="bi bi-box-arrow-up-right"></i></a></div>
+      <div class="small text-muted mb-2">Email : {{ res.guest_email or '<span class="text-danger">aucun — envoyer le lien via la messagerie de la plateforme</span>'|safe }} · Tél. : {{ res.guest_phone or '—' }}</div>
+      <form method="post" action="/c/{{ company.code }}/checkin/{{ res.id }}/action" class="d-flex flex-wrap gap-1">
+        {% if res.status in ('pending','sent','reminded') %}
+          <button name="action" value="invite" class="btn btn-sm btn-dark" {% if not res.guest_email or not smtp %}disabled{% endif %}><i class="bi bi-envelope"></i> Inviter</button>
+          <button name="action" value="remind" class="btn btn-sm btn-outline-dark" {% if not res.guest_email or not smtp %}disabled{% endif %}><i class="bi bi-bell"></i> Relancer</button>
+          {% if res.status == 'pending' %}<button name="action" value="mark_sent" class="btn btn-sm btn-outline-secondary">Marquer « lien envoyé »</button>{% endif %}
+          <button name="action" value="cancel" class="btn btn-sm btn-outline-danger" onclick="return confirm('Annuler cette réservation (lien désactivé) ?')">Annuler</button>
+        {% elif res.status == 'completed' %}
+          <button name="action" value="erp" class="btn btn-sm btn-outline-dark" {% if not res.guest_email or not smtp or not erp %}disabled{% endif %}><i class="bi bi-send"></i> Envoyer l'état des risques{% if res.erp_sent_at %} (déjà envoyé {{ fmt_dt(res.erp_sent_at) }}){% endif %}</button>
+          <button name="action" value="reopen" class="btn btn-sm btn-outline-secondary" onclick="return confirm('Rouvrir le formulaire (le voyageur pourra le remplir à nouveau) ?')">Rouvrir</button>
+        {% else %}
+          <button name="action" value="reopen" class="btn btn-sm btn-outline-secondary">Rouvrir</button>
+        {% endif %}
+      </form>
+      <details class="mt-2"><summary class="small text-muted">Texte d'invitation à coller (messagerie Airbnb / Booking)</summary>
+        <textarea class="form-control form-control-sm mt-1" rows="7" readonly>{{ invite_text }}</textarea></details>
+    </div></div>
+    <div class="card shadow-sm mb-3"><div class="card-body">
+      <h3 class="h6 text-uppercase text-muted">Envois</h3>
+      {% for m in msgs %}<div class="small border-bottom py-1"><span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.kind }}</span> {{ fmt_dt(m.sent_at) }} → {{ m.to or '—' }}{% if m.error %} <span class="text-danger">{{ m.error }}</span>{% endif %}</div>
+      {% else %}<div class="small text-muted">Aucun envoi.</div>{% endfor %}
+    </div></div>
+    {% if res.notes %}<div class="card shadow-sm mb-3"><div class="card-body small"><h3 class="h6 text-uppercase text-muted">Notes Lodgify</h3>{{ res.notes }}</div></div>{% endif %}
+  </div>
+  <div class="col-lg-7">
+    {% if resp %}
+    <div class="card shadow-sm mb-3"><div class="card-body">
+      <h3 class="h6 text-uppercase text-muted">Réponse du {{ fmt_dt(resp.submitted_at) }} <span class="fw-normal">· IP {{ resp.ip or '—' }} · {{ resp.lang|upper }}</span></h3>
+      {% if not resp.rules_ok %}<div class="alert alert-danger py-2 small">Règles refusées : {{ resp.refused_rules }}</div>{% endif %}
+      <table class="table table-sm small mb-2">
+        <tr><th style="width:38%">Nom</th><td>{{ resp.full_name or '—' }}</td></tr>
+        <tr><th>Naissance</th><td>{{ fmt_date(resp.birth_date) }} · {{ resp.birth_place or '—' }}{% if data.nationality %} · {{ data.nationality }}{% endif %}</td></tr>
+        <tr><th>Adresse</th><td>{{ resp.address or '—' }}</td></tr>
+        <tr><th>Email / tél.</th><td>{{ resp.email or '—' }} · {{ resp.phone or '—' }}</td></tr>
+        <tr><th>Arrivée prévue / occupants</th><td>{{ data.arrival_time or '—' }} · {{ data.occupants or '—' }}{% if data.occupants_list %}<br><span class="text-muted">{{ data.occupants_list }}</span>{% endif %}</td></tr>
+        <tr><th>État des risques / RGPD</th><td>{{ 'oui' if data.erp else 'non' }} / {{ 'oui' if data.rgpd else 'non' }}</td></tr>
+        <tr><th>Marketing</th><td>{{ marketing.get(data.marketing, data.marketing) }}{% if data.mkt_email %} · {{ data.mkt_email }}{% endif %}{% if data.mkt_phone %} · {{ data.mkt_phone }}{% endif %}</td></tr>
+      </table>
+      <h4 class="h6">Règles</h4>
+      <ul class="small">{% for r in rules %}<li><span class="{{ 'text-success' if data.rules and data.rules.get(r.key) else 'text-danger fw-bold' }}">{{ 'OUI' if data.rules and data.rules.get(r.key) else 'NON' }}</span> — {{ r.fr[:110] }}{% if r.confirm %} <span class="text-muted">[{{ 'sanction confirmée' if data.confirms and data.confirms.get(r.key) else 'sanction non cochée' }}]</span>{% endif %}</li>{% endfor %}</ul>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        {% for f in files %}
+          {% if f.kind == 'signature' %}<div class="border rounded p-1 bg-white"><img src="/c/{{ company.code }}/checkin/file/{{ f.id }}" style="max-height:80px"></div>
+          {% elif f.kind == 'recap' %}<a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/checkin/file/{{ f.id }}"><i class="bi bi-file-earmark-pdf"></i> PDF signé</a>
+          {% elif f.kind == 'id_document' %}<a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/file/{{ f.id }}" target="_blank"><i class="bi bi-person-vcard"></i> {{ f.name }} ({{ (f.size/1024)|round|int }} Ko)</a>{% endif %}
+        {% endfor %}
+        {% if files | selectattr('kind', 'equalto', 'id_document') | list %}
+        <form method="post" action="/c/{{ company.code }}/checkin/{{ res.id }}/action"><button name="action" value="delete_ids" class="btn btn-sm btn-link text-danger" onclick="return confirm('Supprimer les pièces d\'identité ?')">supprimer les pièces</button></form>{% endif %}
+      </div>
+      {% if data.signature_url %}<div class="small text-muted mt-2">Import SurveySparrow : signature <a href="{{ data.signature_url }}" target="_blank">lien</a>{% if data.id_urls %} · pièces {{ data.id_urls }}{% endif %}</div>{% endif %}
+    </div></div>
+    {% else %}<div class="card shadow-sm"><div class="card-body text-muted small">Pas encore de réponse.</div></div>{% endif %}
+  </div>
+</div>
+{% endblock %}

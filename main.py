@@ -16,6 +16,8 @@ from app.core import packs_loader
 from app.core.jobs import mark_interrupted_on_startup
 from app.seed import seed_if_empty
 from app.web.routes import router as web_router
+from app.web.vds_routes import router as vds_router
+from app.core import scheduler
 
 
 @asynccontextmanager
@@ -24,7 +26,24 @@ async def lifespan(app: FastAPI):
     packs_loader.load()             # découvre et enregistre les packs de contrôle
     seed_if_empty()                 # admin + sociétés initiales si base vide
     mark_interrupted_on_startup()   # assainit les jobs restés « running »
+    _register_schedules()
+    scheduler.start()               # tâches quotidiennes (check-in VDS : synchro Lodgify, relances)
     yield
+
+
+def _register_schedules():
+    from app.core.jobs import start_job
+    from app.packs.vds import jobs as vds_jobs
+    from app.models import Company
+    from sqlmodel import Session, select
+    from app.core.db import engine
+
+    def _vds_daily():
+        with Session(engine) as s:
+            c = s.exec(select(Company).where(Company.code == "VDS")).first()
+        start_job("vds_daily", vds_jobs.run_daily, company_id=c.id if c else None, pack="vds",
+                  label="Passe quotidienne check-in (Lodgify, invitations, relances, alertes, ERP)")
+    scheduler.register("vds_daily", 8, _vds_daily)
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -35,6 +54,7 @@ os.makedirs(_static, exist_ok=True)
 app.mount("/static", StaticFiles(directory=_static), name="static")
 
 app.include_router(web_router)
+app.include_router(vds_router)
 
 
 @app.get("/healthz")

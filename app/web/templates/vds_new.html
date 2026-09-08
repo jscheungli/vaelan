@@ -1,0 +1,18 @@
+{% extends "vds_public_base.html" %}
+{% block content %}
+<div class="text-end lang"><a href="?lang={{ other_lang }}">{{ T.lang_switch }}</a></div>
+<div class="card mt-2"><div class="card-body p-4">
+  <h1 class="h3">{{ T.welcome_title }}</h1>
+  <p>{{ T.welcome_body|safe }}</p>
+  <form method="post" action="/checkin/nouveau/{{ channel }}">
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <input type="text" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px">
+    <div class="mb-3"><label class="form-label">{{ 'Numéro de réservation ' + ch.label if lang == 'fr' else ch.label + ' booking number' }}</label>
+      <input class="form-control" name="booking_ref" required placeholder="{{ 'ex. HMABC123 / B1234567' if lang=='fr' else 'e.g. HMABC123 / B1234567' }}"></div>
+    <div class="mb-3"><label class="form-label">{{ T.full_name }}</label><input class="form-control" name="guest_name" required></div>
+    <div class="mb-3"><label class="form-label">{{ T.email }}</label><input class="form-control" type="email" name="guest_email" required></div>
+    <div class="mb-3"><label class="form-label">{{ "Date d'arrivée" if lang=='fr' else 'Arrival date' }}</label><input class="form-control" type="date" name="arrival" min="{{ min_arrival }}" required></div>
+    <button class="btn btn-vds w-100">{{ T.start }}</button>
+  </form>
+</div></div>
+{% endblock %}

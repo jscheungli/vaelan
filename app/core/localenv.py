@@ -13,7 +13,9 @@ Structure du fichier (groupée PAR CONNECTEUR ; ajouter une société = une entr
 {
   "pennylane": { "STERNA": {"apiToken": "…", "baseUrl": "…"}, "LACORP": {…} },
   "toporder":  { "baseUrl": "…", "establishments": [{"name": "…", "apiKey": "…"}] },
-  "odoo":      { "LACORP": {"url": "…", "db": "…", "login": "…", "apiKey": "…"} }
+  "odoo":      { "LACORP": {"url": "…", "db": "…", "login": "…", "apiKey": "…"} },
+  "lodgify":   { "VDS": {"apiKey": "…"} },
+  "smtp":      { "host": "smtp.gmail.com", "port": 587, "user": "…", "password": "…", "from": "Nom <adresse>" }
 }
 
 L'ancien emplacement (~/.config/toporder-pennylane/credentials.json, clés plates
@@ -83,6 +85,14 @@ def load(path: str = None, db: bool = False) -> str:
         _set(f"INQOM_{k}_CLIENT_SECRET", c.get("clientSecret"))
         _set(f"INQOM_{k}_USER", c.get("user"))
         _set(f"INQOM_{k}_PASSWORD", c.get("password"))
+
+    for code, c in (d.get("lodgify") or {}).items():
+        k = _env_key(code)
+        _set(f"LODGIFY_{k}_APIKEY", c.get("apiKey") if isinstance(c, dict) else c)
+    sm = d.get("smtp") or {}
+    for k in ("host", "port", "user", "password", "from"):
+        if sm.get(k):
+            _set(f"SMTP_{k.upper()}", str(sm[k]))
 
     # ---- ancien format plat (rétrocompatibilité) ----
     for key, c in d.items():

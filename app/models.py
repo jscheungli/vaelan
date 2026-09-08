@@ -294,3 +294,93 @@ class TiersMatch(SQLModel, table=True):
     applied_odoo_at: Optional[datetime] = None
     last_synced: Optional[datetime] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ============================ VDS — check-in voyageurs ============================
+class VdsReservation(SQLModel, table=True):
+    """Réservation de la villa (SCI Les Sables du Lagon) suivie pour le formulaire d'arrivée.
+
+    Créée à la main, par import SurveySparrow (historique) ou par la synchro Lodgify.
+    `token` = clé du lien public /checkin/<token> (imprévisible). Statuts :
+    pending (à inviter) / sent (invitation envoyée) / reminded (relancé) / completed
+    (formulaire signé) / refused (règles refusées → annulation demandée) / cancelled.
+    """
+    __tablename__ = "vds_reservations"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(default="VDS", index=True)
+    channel: str = Field(index=True)                       # airbnb / booking / lodgify
+    booking_ref: Optional[str] = Field(default=None, index=True)   # n° de réservation (Lodgify B1234567, Airbnb HMxxxx…)
+    lodgify_id: Optional[int] = Field(default=None, index=True)
+    source: str = "manual"                                 # manual / lodgify / surveysparrow
+    guest_name: Optional[str] = None
+    guest_email: Optional[str] = None
+    guest_phone: Optional[str] = None
+    arrival: Optional[date] = Field(default=None, index=True)
+    departure: Optional[date] = None
+    guests: Optional[int] = None
+    lang: str = "fr"
+    token: str = Field(index=True, unique=True)
+    status: str = Field(default="pending", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    invited_at: Optional[datetime] = None
+    reminded_at: Optional[datetime] = None
+    reminder_count: int = 0
+    alerted_at: Optional[datetime] = None                  # dernière alerte interne « arrivée proche sans formulaire »
+    completed_at: Optional[datetime] = None
+    erp_sent_at: Optional[datetime] = None                 # état des risques envoyé (J-1)
+    notes: Optional[str] = None
+    raw: Optional[str] = None                              # JSON brut Lodgify (debug)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class VdsResponse(SQLModel, table=True):
+    """Réponse au formulaire d'arrivée (une par réservation, la dernière fait foi)."""
+    __tablename__ = "vds_responses"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    reservation_id: int = Field(foreign_key="vds_reservations.id", index=True)
+    channel: str
+    lang: str = "fr"
+    submitted_at: datetime = Field(default_factory=datetime.utcnow)
+    ip: Optional[str] = None
+    user_agent: Optional[str] = None
+    rules_ok: bool = True                                  # toutes les règles acceptées
+    refused_rules: Optional[str] = None                    # clés des règles refusées (virgules)
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    birth_date: Optional[str] = None
+    birth_place: Optional[str] = None
+    address: Optional[str] = None
+    marketing: Optional[str] = None                        # none / email / sms / both
+    data: str = "{}"                                       # toutes les réponses (JSON)
+    signed: bool = False
+
+
+class VdsFile(SQLModel, table=True):
+    """Fichier lié au check-in, stocké en base : signature, pièce d'identité (réduite),
+    récapitulatif PDF signé, état des risques (reservation_id vide = document de référence)."""
+    __tablename__ = "vds_files"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    reservation_id: Optional[int] = Field(default=None, foreign_key="vds_reservations.id", index=True)
+    response_id: Optional[int] = Field(default=None, index=True)
+    kind: str = Field(index=True)                          # signature / id_document / recap / erp
+    name: str
+    content_type: str = "application/octet-stream"
+    size: int = 0
+    data: bytes = Field(sa_column=Column(LargeBinary))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class VdsMessage(SQLModel, table=True):
+    """Journal des envois (invitations, relances, confirmations, alertes internes, ERP)."""
+    __tablename__ = "vds_messages"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    reservation_id: Optional[int] = Field(default=None, foreign_key="vds_reservations.id", index=True)
+    kind: str = Field(index=True)                          # invitation / reminder / confirmation / alert / erp / refusal
+    channel: str = "email"                                 # email / sms / whatsapp
+    to: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    status: str = "sent"                                   # sent / error / skipped
+    error: Optional[str] = None
+    sent_at: datetime = Field(default_factory=datetime.utcnow)
