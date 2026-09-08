@@ -192,13 +192,15 @@ def admin_list(request: Request, code: str, view: str = "avenir"):
     with Session(engine) as s:
         q = select(VdsReservation)
         if view == "avenir":
-            q = q.where(VdsReservation.status != "cancelled", (VdsReservation.arrival >= today - timedelta(days=1)) | (VdsReservation.arrival == None))  # noqa: E711
+            q = q.where(VdsReservation.status != "cancelled", VdsReservation.arrival >= today - timedelta(days=1))
+        elif view == "sansdate":
+            q = q.where(VdsReservation.arrival == None)  # noqa: E711 — réponses historiques non rattachées à un séjour
         elif view == "incomplets":
             q = q.where(VdsReservation.status.in_(["pending", "sent", "reminded", "refused"]), VdsReservation.arrival >= today - timedelta(days=1))
         elif view == "passes":
             q = q.where(VdsReservation.arrival < today)
         rs = list(s.exec(q).all())
-        runs = s.exec(select(Run).where(Run.company_id == company.id, Run.kind.in_(["vds_sync", "vds_reminders", "vds_daily"]))
+        runs = s.exec(select(Run).where(Run.company_id == company.id, Run.kind.in_(["vds_sync", "vds_reminders", "vds_daily", "vds_backfill"]))
                       .order_by(Run.id.desc()).limit(6)).all()
     rs.sort(key=lambda r: (r.arrival or date.max, r.id), reverse=(view == "passes"))
     with Session(engine) as s:
@@ -332,6 +334,18 @@ def admin_sync(request: Request, code: str, invite: str = Form("")):
         return redir
     run_id = start_job("vds_sync", lambda ctx: vjobs.run_lodgify_sync(ctx, invite=bool(invite)), company_id=company.id,
                        pack="vds", label="Synchro Lodgify" + (" + invitations" if invite else " (sans invitation)"), user=current_user(request))
+    if request.headers.get("HX-Request"):
+        return _watch_fragment(run_id)
+    return RedirectResponse(f"/c/{code}/checkin", status_code=303)
+
+
+@router.post("/c/{code}/checkin/backfill")
+def admin_backfill(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    run_id = start_job("vds_backfill", vjobs.run_lodgify_backfill, company_id=company.id, pack="vds",
+                       label="Rattachement des réponses historiques aux séjours Lodgify", user=current_user(request))
     if request.headers.get("HX-Request"):
         return _watch_fragment(run_id)
     return RedirectResponse(f"/c/{code}/checkin", status_code=303)

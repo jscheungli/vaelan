@@ -192,3 +192,59 @@ def run_daily(ctx) -> str:
     except Exception as e:
         ctx.log(f"Telegram : {e}")
     return " — ".join(parts)
+
+
+def run_lodgify_backfill(ctx) -> str:
+    """Rattache les réponses historiques (SurveySparrow, sans dates) aux séjours Lodgify passés ou à venir :
+    même email, sinon même nom ; le séjour retenu est celui dont l'arrivée suit la date de signature du formulaire
+    (au plus près), sinon le plus proche. Renseigne dates, canal, référence, téléphone, nombre de personnes."""
+    cl = lodgify.for_company(config.COMPANY_CODE)
+    if not cl:
+        raise RuntimeError("clé Lodgify absente")
+    raw = []
+    for k, stay in enumerate(("Historic", "Current", "Upcoming")):
+        ctx.progress(k, 3, step=f"Lodgify · {stay}…")
+        raw += cl.bookings(stay=stay, max_pages=40)
+    books, seen = [], set()
+    for b in raw:
+        n = lodgify.normalize(b)
+        if not n["lodgify_id"] or n["lodgify_id"] in seen or n["status"] != "Booked" or n["canceled"]:
+            continue
+        seen.add(n["lodgify_id"])
+        books.append(n)
+    ctx.log(f"{len(books)} séjours Lodgify confirmés lus (historique + à venir)")
+    with Session(engine) as s:
+        legacy = s.exec(select(VdsReservation).where(VdsReservation.source == "surveysparrow", VdsReservation.lodgify_id == None,  # noqa: E711
+                                                     VdsReservation.arrival == None)).all()  # noqa: E711
+        used = {r.lodgify_id for r in s.exec(select(VdsReservation).where(VdsReservation.lodgify_id != None)).all()}  # noqa: E711
+    ctx.log(f"{len(legacy)} réponses historiques sans dates")
+
+    def _arr(b):
+        return date.fromisoformat(b["arrival"]) if b.get("arrival") else None
+
+    linked = ambiguous = none = 0
+    for r in legacy:
+        em = (r.guest_email or "").lower().strip()
+        nm = _norm(r.guest_name)
+        signed = (r.completed_at or r.created_at).date()
+        cands = [b for b in books if b["lodgify_id"] not in used and (
+            (em and (b["guest_email"] or "").lower().strip() == em) or (nm and _norm(b["guest_name"]) == nm))]
+        if not cands:
+            toks = set(nm.split())
+            cands = [b for b in books if b["lodgify_id"] not in used and len(toks) >= 2 and toks <= set(_norm(b["guest_name"]).split())]
+        cands = [b for b in cands if _arr(b)]
+        if not cands:
+            none += 1
+            continue
+        after = sorted([b for b in cands if _arr(b) >= signed - timedelta(days=3)], key=_arr)
+        pick = after[0] if after else sorted(cands, key=lambda b: abs((_arr(b) - signed).days))[0]
+        if len(after) > 1 and (_arr(after[1]) - _arr(after[0])).days < 30:
+            ambiguous += 1
+        used.add(pick["lodgify_id"])
+        service.update_reservation(r.id, lodgify_id=pick["lodgify_id"], booking_ref=pick["booking_ref"] or r.booking_ref, arrival=_arr(pick),
+                                   departure=date.fromisoformat(pick["departure"]) if pick.get("departure") else None,
+                                   guests=pick["guests"] or r.guests, guest_phone=r.guest_phone or pick["guest_phone"],
+                                   guest_email=r.guest_email or pick["guest_email"], channel=pick["channel"])
+        linked += 1
+        ctx.log(f"↔ {r.guest_name} (formulaire du {signed:%d/%m/%Y}) → séjour {pick['arrival']} → {pick['departure']} · {config.CHANNELS[pick['channel']]['label']} · {pick['booking_ref']}")
+    return f"Rattachement historique : {linked} réponses datées · {none} sans séjour Lodgify correspondant · {ambiguous} rapprochements à vérifier (séjours proches)"

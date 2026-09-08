@@ -39,13 +39,17 @@
     <form hx-post="/c/{{ company.code }}/checkin/reminders" hx-target="#run-result" hx-swap="innerHTML" hx-disabled-elt="find button">
       <button class="btn btn-sm btn-outline-dark"><i class="bi bi-bell"></i> Relances / alertes maintenant</button>
     </form>
+    {% if view == 'sansdate' %}<form hx-post="/c/{{ company.code }}/checkin/backfill" hx-target="#run-result" hx-swap="innerHTML" hx-disabled-elt="find button">
+      <button class="btn btn-sm btn-outline-dark"><i class="bi bi-link-45deg"></i> Rattacher aux séjours Lodgify (historique)</button>
+    </form>{% endif %}
     <span class="small text-muted ms-auto">Passe automatique chaque matin à 8h (heure Réunion) : synchro Lodgify, invitations, relances, alertes, état des risques J-1.</span>
   </div>
   <div id="run-result"></div>
 </div></div>
 
+{% if view == 'sansdate' %}<p class="small text-muted mb-2">Réponses de l'ancien formulaire SurveySparrow dont le séjour n'a pas été retrouvé dans Lodgify : les exports ne contiennent que la date de signature, pas les dates du séjour. Le bouton ci-dessus les rapproche des séjours Lodgify par email ou par nom.</p>{% endif %}
 <ul class="nav nav-pills nav-sm mb-2 small">
-  {% for v, l in [('avenir', 'À venir'), ('incomplets', 'Incomplets'), ('passes', 'Séjours passés'), ('tous', 'Tous')] %}
+  {% for v, l in [('avenir', 'À venir'), ('incomplets', 'Incomplets'), ('passes', 'Séjours passés'), ('sansdate', 'Historique sans dates'), ('tous', 'Tous')] %}
   <li class="nav-item"><a class="nav-link py-1 {{ 'active' if view == v }}" href="?view={{ v }}">{{ l }}</a></li>{% endfor %}
   <li class="nav-item ms-auto text-muted align-self-center">{{ rs|length }} réservations · {{ counts.a_inviter }} à inviter · {{ counts.incomplets }} en attente · {{ counts.completes }} complétées{% if counts.refus %} · <span class="text-danger">{{ counts.refus }} refus</span>{% endif %}</li>
 </ul>
@@ -70,7 +74,7 @@
       {% if r.status in ('pending','sent','reminded') %}<button class="btn btn-sm btn-outline-secondary py-0" onclick="navigator.clipboard.writeText('{{ base }}/checkin/{{ r.token }}');this.textContent='copié'" title="Copier le lien du formulaire"><i class="bi bi-link-45deg"></i></button>{% endif %}
     </td>
   </tr>
-  {% else %}<tr><td colspan="10" class="text-muted">Aucune réservation dans cette vue. Synchronisez Lodgify ou créez une réservation manuelle.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="10" class="text-muted">{% if view == 'sansdate' %}Toutes les réponses historiques sont rattachées à un séjour.{% else %}Aucune réservation dans cette vue. Synchronisez Lodgify ou créez une réservation manuelle.{% endif %}</td></tr>{% endfor %}
   </tbody></table></div>
 
 <p class="small text-muted mt-3 mb-1"><i class="bi bi-info-circle"></i> État des risques (ERP) : envoyé automatiquement par la notification Lodgify, à renouveler dans Lodgify tous les 6 mois.</p>
