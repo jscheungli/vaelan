@@ -26,8 +26,7 @@
       <div class="small text-muted mb-2">Email : {{ res.guest_email or '<span class="text-danger">aucun — envoyer le lien via la messagerie de la plateforme</span>'|safe }} · Tél. : {{ res.guest_phone or '—' }}</div>
       <form method="post" action="/c/{{ company.code }}/checkin/{{ res.id }}/action" class="d-flex flex-wrap gap-1">
         {% if res.status in ('pending','sent','reminded') %}
-          <button name="action" value="invite" class="btn btn-sm btn-dark" {% if not res.guest_email or not smtp %}disabled{% endif %}><i class="bi bi-envelope"></i> Inviter</button>
-          <button name="action" value="remind" class="btn btn-sm btn-outline-dark" {% if not res.guest_email or not smtp %}disabled{% endif %}><i class="bi bi-bell"></i> Relancer</button>
+          <button name="action" value="{{ 'invite' if res.status == 'pending' else 'remind' }}" class="btn btn-sm btn-dark" {% if not res.guest_email or not smtp %}disabled{% endif %}><i class="bi bi-envelope"></i> Inviter / relancer par email</button>
           {% if res.status == 'pending' %}<button name="action" value="mark_sent" class="btn btn-sm btn-outline-secondary">Marquer « lien envoyé »</button>{% endif %}
           <button name="action" value="cancel" class="btn btn-sm btn-outline-danger" onclick="return confirm('Annuler cette réservation (lien désactivé) ?')">Annuler</button>
         {% elif res.status == 'completed' %}
@@ -39,7 +38,7 @@
     </div></div>
     {% if res.status in ('pending','sent','reminded') %}
     <div class="card shadow-sm mb-3 border-warning"><div class="card-body">
-      <h3 class="h6 text-uppercase text-muted">{{ 'Invitation' if res.status == 'pending' else 'Relance' }} manuelle (SMS, WhatsApp, messagerie de la plateforme, téléphone)</h3>
+      <h3 class="h6 text-uppercase text-muted">Inviter / relancer manuellement (SMS, WhatsApp, messagerie de la plateforme, téléphone)</h3>
       <p class="small text-muted mb-2">1. Choisissez le canal, copiez le message suggéré (modifiable). 2. Envoyez-le depuis votre téléphone ou la messagerie. 3. Collez ici ce que vous avez réellement envoyé et validez : c'est journalisé avec votre nom.</p>
       <form method="post" action="/c/{{ company.code }}/checkin/{{ res.id }}/manual" id="manualform">
         <div class="d-flex gap-2 align-items-end mb-2">
@@ -52,7 +51,7 @@
               <option value="email">Email (manuel)</option><option value="telephone">Téléphone</option>
             </select></div>
           <button type="button" class="btn btn-sm btn-outline-secondary" id="manualcopy"><i class="bi bi-clipboard"></i> Copier le texte</button>
-          <span class="small text-muted">{{ res.guest_phone or 'téléphone inconnu' }}</span>
+          <span class="small text-muted">{{ res.guest_phone or 'téléphone inconnu' }}<span id="manualhint" class="d-none"> · Airbnb refuse les liens : ce texte demande au voyageur un numéro ou un email pour recevoir le lien</span></span>
         </div>
         <textarea name="text" class="form-control form-control-sm" rows="6" id="manualtext">{{ suggested.long }}</textarea>
         <div class="d-flex justify-content-between align-items-center mt-2">
@@ -62,7 +61,8 @@
       </form>
       <script>
         (function(){ const S = {{ suggested|tojson }}; const sel = document.getElementById('manualchannel'), ta = document.getElementById('manualtext');
-          function fill(){ ta.value = (sel.value === 'sms' || sel.value === 'whatsapp') ? S.short : S.long; }
+          function fill(){ ta.value = (sel.value === 'sms' || sel.value === 'whatsapp') ? S.short : (sel.value === 'airbnb' ? S.nolink : S.long);
+            document.getElementById('manualhint').classList.toggle('d-none', sel.value !== 'airbnb'); }
           sel.addEventListener('change', fill); fill();
           document.getElementById('manualcopy').addEventListener('click', function(){ navigator.clipboard.writeText(ta.value); this.innerHTML = '<i class="bi bi-check"></i> copié'; }); })();
       </script>

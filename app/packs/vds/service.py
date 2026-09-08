@@ -220,9 +220,12 @@ def suggested_texts(res: VdsReservation) -> dict:
     """Textes prêts à copier pour une relance manuelle : SMS/WhatsApp (court) et messagerie (long)."""
     v = _mail_vars(res)
     v["name"] = v["name"] or ""
+    v["phone"] = f" ({res.guest_phone})" if res.guest_phone else ""
     reminder = res.status in ("sent", "reminded")
-    long = t(res.lang, "mail_remind_body" if reminder else "mail_invite_body", **v).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
-    return {"short": t(res.lang, "sms_invite", **v), "long": long}
+    fix = lambda x: x.replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
+    return {"long": fix(t(res.lang, "mail_remind_body" if reminder else "mail_invite_body", **v)),
+            "short": fix(t(res.lang, "sms_remind" if reminder else "sms_invite", **v)),
+            "nolink": fix(t(res.lang, "nolink_remind" if reminder else "nolink_invite", **v))}
 
 
 def messages_for(reservation_id: int) -> List[VdsMessage]:

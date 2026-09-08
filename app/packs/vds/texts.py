@@ -4,9 +4,10 @@ T = {
 "fr": {
     "title": "Formulaire d'arrivée",
     "welcome_title": "Bienvenue !",
-    "welcome_body": "Merci d'avoir choisi la <strong>La Villa des Sables du Lagon</strong> pour votre séjour. Ce formulaire a deux objectifs : "
-                    "(1) répondre à nos obligations légales de loueur et (2) nous assurer que vous êtes d'accord avec quelques règles clés de la villa, "
-                    "pour que votre séjour corresponde à vos attentes. Il vous prendra deux ou trois minutes.",
+    "welcome_body": "<p>Merci d'avoir choisi <strong>La Villa des Sables du Lagon</strong> pour votre séjour. Nous espérons que vous y passerez de merveilleux moments.</p>"
+                    "<p class='mb-1'>Ce formulaire a deux objectifs :</p><ol class='mb-2'><li>répondre à nos obligations légales de loueur ;</li>"
+                    "<li>confirmer ensemble quelques règles clés de la villa, pour que votre séjour corresponde à vos attentes.</li></ol>"
+                    "<p class='hint mb-0'>Il vous prendra deux ou trois minutes.</p>",
     "welcome_res": "Réservation {ref} · arrivée le {arrival}, départ le {departure} · {guests} personnes",
     "booking_lbl": "Réservation", "arrival_lbl": "Arrivée", "departure_lbl": "Départ", "guests_lbl": "Voyageurs",
     "start": "C'est parti !",
@@ -63,14 +64,18 @@ T = {
     "mail_confirm_body": "Bonjour {name},\n\nNous avons bien reçu votre formulaire d'arrivée signé le {date}. Vous trouverez en pièce jointe le récapitulatif de vos réponses et des règles acceptées.\n\nRappel des horaires : arrivée {checkin}, départ {checkout}.\n\nÀ très bientôt à la Villa des Sables du Lagon !",
     "mail_erp_subject": "La Villa des Sables du Lagon — état des risques (réservation {ref})",
     "mail_erp_body": "Bonjour {name},\n\nComme convenu dans votre formulaire d'arrivée, vous trouverez en pièce jointe l'état des risques et pollutions relatif à la villa (article L.125-5 du Code de l'environnement).\n\nNous vous souhaitons un excellent séjour,\nLa Villa des Sables du Lagon",
-    "sms_invite": "La Villa des Sables du Lagon : merci de compléter votre formulaire d'arrivée (2 min) avant votre séjour du {arrival} : {url}",
+    "sms_invite": "Bonjour {name}, merci d'avoir réservé La Villa des Sables du Lagon du {arrival} au {departure} !\n\nAvant votre arrivée, pourriez-vous compléter notre formulaire d'arrivée ? Il ne prend que 2 à 3 minutes : il nous permet de répondre à nos obligations de loueur et de confirmer ensemble quelques règles clés de la villa.\n\n{url}\n\nMerci d'avance et à très bientôt,\nLa Villa des Sables du Lagon",
+    "sms_remind": "Bonjour {name}, petit rappel : votre formulaire d'arrivée pour votre séjour du {arrival} au {departure} n'est pas encore complété. Il ne prend que 2 à 3 minutes :\n\n{url}\n\nMerci d'avance et à très bientôt,\nLa Villa des Sables du Lagon",
+    "nolink_invite": "Bonjour {name}, merci d'avoir réservé La Villa des Sables du Lagon du {arrival} au {departure} !\n\nAvant votre arrivée, nous vous demandons de compléter un court formulaire d'arrivée (2 à 3 minutes) : il nous permet de répondre à nos obligations de loueur et de confirmer ensemble quelques règles clés de la villa.\n\nComme les liens ne passent pas dans cette messagerie, nous vous l'envoyons par SMS ou WhatsApp au numéro de votre réservation{phone}. Si vous préférez un autre numéro ou une adresse email, indiquez-le-nous ici.\n\nMerci d'avance et à très bientôt,\nLa Villa des Sables du Lagon",
+    "nolink_remind": "Bonjour {name}, petit rappel : votre formulaire d'arrivée pour votre séjour du {arrival} au {departure} n'est pas encore complété (2 à 3 minutes).\n\nLe lien vous a été envoyé par SMS ou WhatsApp{phone} ; dites-nous si vous ne l'avez pas reçu ou si vous préférez un autre numéro ou une adresse email.\n\nMerci d'avance et à très bientôt,\nLa Villa des Sables du Lagon",
 },
 "en": {
     "title": "Arrival form",
     "welcome_title": "Welcome!",
-    "welcome_body": "Thank you for choosing <strong>La Villa des Sables du Lagon</strong> for your stay. This form has two purposes: "
-                    "(1) to meet our legal obligations as a landlord and (2) to make sure you agree with a few key rules of the villa, "
-                    "so that your stay matches your expectations. It will take two or three minutes.",
+    "welcome_body": "<p>Thank you for choosing <strong>La Villa des Sables du Lagon</strong> for your stay. We hope you will have wonderful moments here.</p>"
+                    "<p class='mb-1'>This form has two purposes:</p><ol class='mb-2'><li>to meet our legal obligations as a landlord;</li>"
+                    "<li>to confirm together a few key rules of the villa, so that your stay matches your expectations.</li></ol>"
+                    "<p class='hint mb-0'>It will take two or three minutes.</p>",
     "welcome_res": "Booking {ref} · arrival {arrival}, departure {departure} · {guests} guests",
     "booking_lbl": "Booking", "arrival_lbl": "Arrival", "departure_lbl": "Departure", "guests_lbl": "Guests",
     "start": "All right, let's get started!",
@@ -126,7 +131,10 @@ T = {
     "mail_confirm_body": "Hello {name},\n\nWe have received your arrival form signed on {date}. Please find attached the summary of your answers and of the accepted rules.\n\nReminder: check-in {checkin}, check-out {checkout}.\n\nSee you soon at La Villa des Sables du Lagon!",
     "mail_erp_subject": "La Villa des Sables du Lagon — risk assessment (booking {ref})",
     "mail_erp_body": "Hello {name},\n\nAs agreed in your arrival form, please find attached the risk assessment (état des risques et pollutions) for the villa (Article L.125-5 of the French Environmental Code).\n\nWe wish you a wonderful stay,\nLa Villa des Sables du Lagon",
-    "sms_invite": "La Villa des Sables du Lagon: please complete your arrival form (2 min) before your stay on {arrival}: {url}",
+    "sms_invite": "Hello {name}, thank you for booking La Villa des Sables du Lagon from {arrival} to {departure}!\n\nBefore your arrival, could you complete our arrival form? It only takes 2 to 3 minutes: it allows us to meet our obligations as a landlord and to confirm together a few key rules of the villa.\n\n{url}\n\nThank you and see you soon,\nLa Villa des Sables du Lagon",
+    "sms_remind": "Hello {name}, a quick reminder: your arrival form for your stay from {arrival} to {departure} has not been completed yet. It only takes 2 to 3 minutes:\n\n{url}\n\nThank you and see you soon,\nLa Villa des Sables du Lagon",
+    "nolink_invite": "Hello {name}, thank you for booking La Villa des Sables du Lagon from {arrival} to {departure}!\n\nBefore your arrival, we ask you to complete a short arrival form (2 to 3 minutes): it allows us to meet our obligations as a landlord and to confirm together a few key rules of the villa.\n\nAs links cannot be sent through this messaging, we will send it to you by SMS or WhatsApp on the phone number of your booking{phone}. If you prefer another number or an email address, just let us know here.\n\nThank you and see you soon,\nLa Villa des Sables du Lagon",
+    "nolink_remind": "Hello {name}, a quick reminder: your arrival form for your stay from {arrival} to {departure} has not been completed yet (2 to 3 minutes).\n\nThe link was sent to you by SMS or WhatsApp{phone}; let us know if you did not receive it or if you prefer another number or an email address.\n\nThank you and see you soon,\nLa Villa des Sables du Lagon",
 },
 }
 
