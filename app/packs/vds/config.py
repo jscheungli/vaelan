@@ -78,7 +78,7 @@ RULES = [
      "more_platform_fr": "La règle générale est l'interdiction : ce que nous voulons éviter avant tout, ce sont les nuisances sonores pour le voisinage. "
                          "Les événements ne sont pas autorisés pour les réservations effectuées via une plateforme ({platform}). "
                          "Ils ne peuvent être étudiés, au cas par cas et avec un forfait événement qui s'ajoute au tarif de la location, "
-                         "que pour les réservations passées directement sur notre site www.villa-des-sables-du-lagon.com.",
+                         "que pour les réservations passées directement sur notre site {site_link}.",
      "more_platform_en": "The general rule is that events are prohibited: what we want to avoid above all is noise disturbance for the neighbourhood. "
                          "Events are not allowed for bookings made through a platform ({platform}). "
                          "They can only be considered, case by case and with an event package added to the rental price, "
@@ -94,6 +94,17 @@ RULES = [
     {"key": "autres", "confirm": False,
      "fr": "Interdictions complémentaires : fumer ou vapoter à l'intérieur ; animaux sans accord écrit ; drone ; feux d'artifice et pétards ; camping (tentes, matelas d'appoint) ; objets jetés dans la piscine ou les canalisations ; consommation d'eau excessive.",
      "en": "Additional prohibitions: smoking or vaping indoors; pets without written agreement; drones; fireworks and firecrackers; camping (tents, extra mattresses); objects thrown into the pool or drains; excessive water use."},
+    {"key": "piscine", "confirm": False,
+     "fr": "Dans la piscine : douche avant la baignade, et uniquement des crèmes solaires à filtres minéraux (respectueuses de l'eau). Pas d'huile solaire, pas de spray. Un produit inadapté trouble l'eau et encrasse la filtration.",
+     "en": "In the pool: shower before swimming, and only mineral-filter (water-friendly) sunscreens. No tanning oil, no spray. An unsuitable product clouds the water and clogs the filtration.",
+     "more_q_fr": "Quelle crème solaire choisir ?",
+     "more_q_en": "Which sunscreen should I choose?",
+     "more_fr": "Regardez la liste des ingrédients : choisissez une crème à filtres minéraux, c'est-à-dire à base d'oxyde de zinc (zinc oxide) ou de dioxyde de titane (titanium dioxide), souvent signalée par les mentions « filtres minéraux », « reef safe » ou « respectueuse des océans ». "
+                "Évitez les filtres chimiques oxybenzone (benzophenone-3), octinoxate (ethylhexyl methoxycinnamate), octocrylène, homosalate et avobenzone, ainsi que les huiles et sprays, qui forment un film gras à la surface de l'eau. "
+                "Appliquez la crème 20 à 30 minutes avant la baignade, prenez une douche avant d'entrer dans la piscine, et pensez aux tee-shirts anti-UV pour les enfants : c'est la meilleure protection, sans aucun produit dans l'eau.",
+     "more_en": "Check the ingredient list: choose a mineral-filter sunscreen, i.e. based on zinc oxide or titanium dioxide, often labelled \"mineral filters\", \"reef safe\" or \"ocean friendly\". "
+                "Avoid the chemical filters oxybenzone (benzophenone-3), octinoxate (ethylhexyl methoxycinnamate), octocrylene, homosalate and avobenzone, as well as oils and sprays, which leave a greasy film on the water. "
+                "Apply sunscreen 20 to 30 minutes before swimming, shower before entering the pool, and consider UV-protective shirts for children: the best protection, with nothing in the water."},
     {"key": "caution", "confirm": False,
      "fr": "Une caution de 1 000 € (pré-autorisation bancaire ou dépôt) est demandée avant le séjour. Elle peut être retenue en tout ou partie en cas de non-respect des règles ou de dégradation.",
      "en": "A 1,000 € security deposit (bank pre-authorisation or deposit) is required before the stay. It may be withheld in full or in part in case of breach of the rules or damage."},

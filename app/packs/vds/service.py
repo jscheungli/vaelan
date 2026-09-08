@@ -201,6 +201,30 @@ def recent_messages(n: int = 20) -> List[VdsMessage]:
         return list(s.exec(select(VdsMessage).order_by(VdsMessage.id.desc()).limit(n)).all())
 
 
+def log_manual(res: VdsReservation, channel: str, text: str, by_user: str, kind: str = "reminder_manual") -> None:
+    """Relance / invitation envoyée À LA MAIN (SMS, WhatsApp, messagerie Airbnb/Booking, téléphone) :
+    journalisée avec son texte et son auteur, et la réservation avance (sent / reminded)."""
+    with Session(engine) as s:
+        s.add(VdsMessage(reservation_id=res.id, kind=kind, channel=channel, to=res.guest_phone or res.guest_email or "",
+                         subject=f"{'Invitation' if res.status == 'pending' else 'Relance'} manuelle ({channel})",
+                         body=(text or "")[:4000], status="sent", sender=by_user, by_user=by_user))
+        s.commit()
+    now = datetime.utcnow()
+    if res.status == "pending":
+        update_reservation(res.id, status="sent", invited_at=now)
+    elif res.status in ("sent", "reminded"):
+        update_reservation(res.id, status="reminded", reminded_at=now, reminder_count=(res.reminder_count or 0) + 1)
+
+
+def suggested_texts(res: VdsReservation) -> dict:
+    """Textes prêts à copier pour une relance manuelle : SMS/WhatsApp (court) et messagerie (long)."""
+    v = _mail_vars(res)
+    v["name"] = v["name"] or ""
+    reminder = res.status in ("sent", "reminded")
+    long = t(res.lang, "mail_remind_body" if reminder else "mail_invite_body", **v).replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
+    return {"short": t(res.lang, "sms_invite", **v), "long": long}
+
+
 def messages_for(reservation_id: int) -> List[VdsMessage]:
     with Session(engine) as s:
         return list(s.exec(select(VdsMessage).where(VdsMessage.reservation_id == reservation_id)
@@ -383,17 +407,32 @@ def save_refusal(res: VdsReservation, refused: List[str], lang: str, ip: str) ->
 
 
 # ------------------------------------------------------------------ PDF récapitulatif
-def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: bytes) -> bytes:
+def rule_rows(d: dict, lang: str = "fr"):
+    """Règles telles que posées au voyageur : (texte, réponse OUI/NON/—, confirmation de sanction cochée).
+    Réponses importées (ancien formulaire) : `legacy_rules` = [(texte, oui/non)] tel quel."""
+    if d.get("legacy_rules"):
+        return [(t, ("OUI" if ok else "NON"), False) for t, ok in d["legacy_rules"]]
+    rules, confirms, out = d.get("rules") or {}, d.get("confirms") or {}, []
+    for r in config.RULES:
+        if r["key"] not in rules:
+            out.append((r.get(lang) or r["fr"], "—", False))          # règle ajoutée après cette réponse
+        else:
+            out.append((r.get(lang) or r["fr"], "OUI" if rules[r["key"]] else "NON", bool(r["confirm"] and confirms.get(r["key"]))))
+    return out
+
+
+def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: Optional[bytes]) -> bytes:
+    """Attestation formelle : règles acceptées une à une, identité, consentements, signature horodatée."""
     import fitz
     d = json.loads(resp.data or "{}")
     lang = resp.lang or "fr"
     ch = config.CHANNELS.get(res.channel, {}).get("label", res.channel)
-    esc = lambda x: (str(x or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-    rows = "".join(
-        f"<tr><td class='q'>{esc(r[lang] if lang in r else r['fr'])}</td>"
-        f"<td class='a'>{'OUI' if d.get('rules', {}).get(r['key']) else 'NON'}"
-        + (("<br/><span class='c'>☑ " + esc(r.get('confirm_' + lang) or r.get('confirm_fr')) + "</span>") if r["confirm"] and d.get("confirms", {}).get(r["key"]) else "")
-        + "</td></tr>" for r in config.RULES)
+    esc = lambda x: (str(x if x not in (None, "") else "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    conf_txt = {r["key"]: (r.get("confirm_" + lang) or r.get("confirm_fr")) for r in config.RULES if r["confirm"]}
+    rows = ""
+    for (txt, ans, confirmed), r in zip(rule_rows(d, lang), (config.RULES if not d.get("legacy_rules") else [None] * 99)):
+        extra = ("<br/><span class='c'>☑ " + esc(conf_txt.get(r["key"])) + "</span>") if (r and confirmed) else ""
+        rows += f"<tr><td class='q'>{esc(txt)}</td><td class='a'>{ans}{extra}</td></tr>"
     mk = dict((m[0], m[1] if lang == "fr" else m[2]) for m in config.MARKETING)
     ident = [
         (t(lang, "full_name"), d.get("full_name")), (t(lang, "birth_date"), fmt_date(d.get("birth_date"), lang)),
@@ -413,7 +452,22 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: bytes
     ]
     cons_rows = "".join(f"<tr><td class='q'>{esc(k)}</td><td class='a'>{esc(v)}</td></tr>" for k, v in cons)
     when = fmt_dt(resp.submitted_at, lang)
-    title = "Formulaire d'arrivée — récapitulatif signé" if lang == "fr" else "Arrival form — signed summary"
+    title = ("Attestation d'acceptation des règles et conditions de location" if lang == "fr"
+             else "Certificate of acceptance of the rules and rental conditions")
+    legal = (f"Le locataire principal reconnaît avoir pris connaissance de chacune des règles ci-dessus, y avoir répondu « OUI », "
+             f"s'être engagé à les respecter et à les faire respecter par l'ensemble des occupants, et avoir signé électroniquement "
+             f"le présent document le {when} (heure de La Réunion, adresse IP {resp.ip or '—'}). {config.VILLA['legal']} se réserve le droit "
+             f"de s'en prévaloir en cas de manquement, notamment pour la retenue totale ou partielle de la caution et la fin anticipée du séjour."
+             if lang == "fr" else
+             f"The main tenant acknowledges having read each of the rules above, having answered “YES” to them, having committed to comply with "
+             f"them and to ensure all occupants do too, and having electronically signed this document on {when} (Réunion time, IP address "
+             f"{resp.ip or '—'}). {config.VILLA['legal']} reserves the right to rely on it in case of breach, in particular to withhold the "
+             f"security deposit in full or in part and to end the stay early.")
+    if d.get("imported_from") == "surveysparrow":
+        legal += (" Réponse recueillie via l'ancien formulaire en ligne (SurveySparrow) et reprise à l'identique." if lang == "fr"
+                  else " Answer collected through the previous online form (SurveySparrow) and reproduced as is.")
+    sig_html = "<div><img src='signature.png' width='220'/></div>" if signature_png else \
+        ("<p class='meta'>Signature manuscrite non disponible dans l'export repris.</p>" if lang == "fr" else "<p class='meta'>Handwritten signature not available in the imported export.</p>")
     html = f"""
     <div class='hdr'><img src='logo.png' width='170'/></div>
     <h1>{title}</h1>
@@ -426,10 +480,11 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: bytes
     <table>{ident_rows}</table>
     <h2>{'Engagements et consentements' if lang=='fr' else 'Commitments and consents'}</h2>
     <table>{cons_rows}</table>
-    <h2>Signature</h2>
+    <h2>{'Engagement et signature' if lang=='fr' else 'Commitment and signature'}</h2>
+    <p class='legal'>{esc(legal)}</p>
     <p class='meta'>{'Signé le' if lang=='fr' else 'Signed on'} {when} ({'heure de La Réunion' if lang=='fr' else 'Réunion time'}) · IP {esc(resp.ip)}<br/>
     {esc(t(lang, 'sign_legal'))}</p>
-    <div><img src='signature.png' width='220'/></div>
+    {sig_html}
     <p class='foot'>{'Document généré par' if lang=='fr' else 'Document generated by'} Vaelan — {esc(config.VILLA['name'])} · {esc(config.VILLA['rgpd_email'])}</p>
     """
     css = """
@@ -438,6 +493,7 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: bytes
     h2 { font-size: 11pt; color: #234159; margin: 12pt 0 4pt 0; border-bottom: 0.6pt solid #234159; }
     p.meta { color: #55606b; font-size: 8.5pt; margin: 2pt 0; }
     p.foot { color: #8a949e; font-size: 7.5pt; margin-top: 14pt; }
+    p.legal { font-size: 9pt; color: #1d2b3a; border: 0.6pt solid #234159; padding: 6pt 8pt; margin: 4pt 0 8pt 0; }
     table { width: 100%; border-collapse: collapse; }
     td { border-bottom: 0.4pt solid #d5dbe1; padding: 3pt 4pt; vertical-align: top; }
     td.q { width: 78%; } td.a { width: 22%; font-weight: bold; color: #234159; }
@@ -450,7 +506,8 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: bytes
         arch.add(open(logo_path, "rb").read(), "logo.png")
     except Exception:
         html = html.replace("<img src='logo.png' width='170'/>", "")
-    arch.add(signature_png or b"", "signature.png")
+    if signature_png:
+        arch.add(signature_png, "signature.png")
     story = fitz.Story(html=html, user_css=css, archive=arch)
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
@@ -474,6 +531,20 @@ def norm_name(name) -> str:
     import unicodedata
     x = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode().lower()
     return " ".join(sorted(re.findall(r"[a-z]{2,}", x)))
+
+
+def _legacy_rules(row: dict, channel: str):
+    """Questions Oui/Non de l'ancien formulaire, telles que posées, avec la réponse : [(texte, oui)]."""
+    out = []
+    for k, v in row.items():
+        kk = (k or "").strip()
+        if not kk:
+            continue
+        low = kk.lower()
+        if (low.startswith("avez-vous bien") or low.startswith("pourriez-vous nous confirmer") or low.startswith("de manière générale")) \
+                and (v or "").strip().lower() in ("yes", "no", "oui", "non"):
+            out.append((kk, (v or "").strip().lower() in ("yes", "oui")))
+    return out
 
 
 def _match_lodgify_reservation(channel: str, ref: Optional[str], email: str, name: str) -> Optional[VdsReservation]:
@@ -531,10 +602,8 @@ def import_surveysparrow(csv_bytes: bytes, channel: str) -> Tuple[int, int]:
                                      source="surveysparrow", notes=key, status="completed")
         mk_raw = col(row, "Souhaitez-vous être informé")
         marketing = "both" if "email et" in mk_raw else ("email" if "uniquement par email" in mk_raw else ("sms" if "SMS" in mk_raw else "none"))
-        rules = {r["key"]: True for r in config.RULES}
-        rule1 = col(row, "Avez-vous bien pris connaissance des règles") or col(row, "Pourriez-vous nous confirmer avoir bien pris connaissance")
-        if rule1.lower().startswith("no"):
-            rules = {r["key"]: False for r in config.RULES}
+        legacy = _legacy_rules(row, channel)
+        rules = {r["key"]: all(ok for _, ok in legacy) for r in config.RULES}      # synthèse (compat.)
         bd = col(row, "Quelle est votre date de naissance")
         try:
             bd = datetime.strptime(bd, "%m/%d/%Y").date().isoformat()
@@ -545,7 +614,7 @@ def import_surveysparrow(csv_bytes: bytes, channel: str) -> Tuple[int, int]:
                 "mkt_email": col(row, "Merci d'indiquer votre email"), "mkt_phone": col(row, "Merci d'indiquer votre numéro"),
                 "erp": col(row, "Merci de confirmer que vous prendrez") == "Agree", "rgpd": col(row, "C'est la dernière") == "Agree",
                 "signature_url": col(row, "Il ne manque plus que votre signature"), "id_urls": col(row, "Pourriez-vous joindre"),
-                "lang": "fr", "channel": channel, "imported_from": "surveysparrow"}
+                "legacy_rules": legacy, "lang": "fr", "channel": channel, "imported_from": "surveysparrow"}
         resp = VdsResponse(reservation_id=res.id, channel=channel, lang="fr", submitted_at=when, rules_ok=all(rules.values()),
                            refused_rules=None if all(rules.values()) else "all", full_name=name, email=email,
                            birth_date=bd, birth_place=data["birth_place"], address=data["address"], marketing=marketing,

@@ -10,7 +10,7 @@
 <h1 class="h4">Envoi #{{ m.id }} — {{ m.kind }} <span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.status }}</span></h1>
 <table class="table table-sm small" style="max-width:900px;">
   <tr><th style="width:160px">Date</th><td>{{ fmt_dt(m.sent_at) }} (heure de La Réunion)</td></tr>
-  <tr><th>De</th><td>{{ m.sender or '— (non journalisé)' }}</td></tr>
+  <tr><th>De</th><td>{{ m.sender or '— (non journalisé)' }}{% if m.by_user %} — envoyé à la main par <strong>{{ m.by_user }}</strong> ({{ m.channel }}){% endif %}</td></tr>
   <tr><th>À</th><td>{{ m.to or '—' }}</td></tr>
   <tr><th>Sujet</th><td>{{ m.subject or '—' }}</td></tr>
   {% if m.error %}<tr><th>Erreur / motif</th><td class="text-danger">{{ m.error }}</td></tr>{% endif %}
@@ -19,6 +19,6 @@
 <div class="row g-3">
   <div class="col-lg-5"><h3 class="h6 text-uppercase text-muted">Texte envoyé</h3><pre class="border rounded bg-white p-3 small" style="white-space:pre-wrap;">{{ m.body }}</pre></div>
   <div class="col-lg-7"><h3 class="h6 text-uppercase text-muted">Aperçu HTML (tel que reçu)</h3>
-    {% if html %}<iframe srcdoc="{{ html|e }}" style="width:100%;height:640px;border:1px solid #dee2e6;border-radius:6px;background:#f4f6f8;"></iframe>{% else %}<span class="text-muted small">—</span>{% endif %}</div>
+    {% if html and m.channel == 'email' %}<iframe srcdoc="{{ html|e }}" style="width:100%;height:640px;border:1px solid #dee2e6;border-radius:6px;background:#f4f6f8;"></iframe>{% else %}<span class="text-muted small">—</span>{% endif %}</div>
 </div>
 {% endblock %}

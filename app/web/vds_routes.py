@@ -55,11 +55,14 @@ def _more_texts(channel: str, lang: str) -> dict:
         q = r.get(f"more_q_{lang}") or r.get("more_q_fr")
         if not q:
             continue
+        import html as _h
+        site = vcfg.VILLA["site"]
+        link = f'<a href="{site}" target="_blank" rel="noopener">{_h.escape(site.replace("https://", ""))}</a>'
         if platform and r.get(f"more_platform_{lang}"):
-            txt = r[f"more_platform_{lang}"].format(platform=vcfg.CHANNELS[channel]["label"])
+            txt = _h.escape(r[f"more_platform_{lang}"]).replace("{platform}", _h.escape(vcfg.CHANNELS[channel]["label"])).replace("{site_link}", link)
         else:
-            txt = r.get(f"more_{lang}") or r.get("more_fr")
-        out[r["key"]] = {"q": q, "txt": txt}
+            txt = _h.escape(r.get(f"more_{lang}") or r.get("more_fr")).replace("{site_link}", link)
+        out[r["key"]] = {"q": q, "txt": txt}      # txt = HTML sûr (échappé + lien site)
     return out
 
 
@@ -376,6 +379,39 @@ def admin_message(request: Request, code: str, mid: int):
                                       _ctx(request, company=company, m=m, res=res, html=html, fmt_dt=service.fmt_dt))
 
 
+@router.get("/c/{code}/checkin/{rid}/attestation.pdf")
+def admin_attestation(request: Request, code: str, rid: int):
+    """Attestation signée (PDF) générée à la demande depuis la dernière réponse — y compris pour les réponses importées."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        res = s.get(VdsReservation, rid)
+    resp = service.latest_response(rid) if res else None
+    if not res or not resp:
+        return RedirectResponse(f"/c/{code}/checkin/{rid}?msg=Pas de réponse : attestation impossible.", status_code=303)
+    sig = next((f for f in service.files_for(rid, "signature") if f.response_id == resp.id), None)
+    pdf = service.build_recap_pdf(res, resp, sig.data if sig else None)
+    name = f"Attestation {res.booking_ref or res.id} - {resp.full_name or res.guest_name or ''}.pdf".replace('"', "")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{name}"'})
+
+
+@router.post("/c/{code}/checkin/{rid}/manual")
+def admin_manual(request: Request, code: str, rid: int, channel: str = Form("sms"), text: str = Form("")):
+    """Journalise une relance / invitation envoyée à la main (SMS, WhatsApp, messagerie…) avec son texte et son auteur."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        res = s.get(VdsReservation, rid)
+    if not res or not text.strip():
+        return RedirectResponse(f"/c/{code}/checkin/{rid}?msg=Texte vide : rien d'enregistré.", status_code=303)
+    u = current_user(request)
+    who = (u.name or u.email) if u else "?"
+    service.log_manual(res, channel if channel in ("sms", "whatsapp", "airbnb", "booking", "abritel", "email", "telephone") else "autre", text.strip(), who)
+    return RedirectResponse(f"/c/{code}/checkin/{rid}?msg=Relance {channel} enregistrée (par {who}).", status_code=303)
+
+
 @router.get("/c/{code}/checkin/{rid}", response_class=HTMLResponse)
 def admin_detail(request: Request, code: str, rid: int, msg: str = ""):
     company, redir = _guard(request, code)
@@ -396,7 +432,8 @@ def admin_detail(request: Request, code: str, rid: int, msg: str = ""):
                                       _ctx(request, company=company, res=res, resp=resp, data=data, files=files, msgs=msgs,
                                            labels=STATUS_LABEL, channels=vcfg.CHANNELS, rules=vcfg.RULES, marketing=dict((m[0], m[1]) for m in vcfg.MARKETING),
                                            url=service.public_url(res), invite_text=invite_text, msg=msg, smtp=mailer.configured(),
-                                           fmt_dt=service.fmt_dt, fmt_date=service.fmt_date))
+                                           fmt_dt=service.fmt_dt, fmt_date=service.fmt_date, suggested=service.suggested_texts(res),
+                                           rule_rows=service.rule_rows(data, "fr") if resp else []))
 
 
 @router.post("/c/{code}/checkin/{rid}/action")

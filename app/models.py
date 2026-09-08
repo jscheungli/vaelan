@@ -380,6 +380,7 @@ class VdsMessage(SQLModel, table=True):
     channel: str = "email"                                 # email / sms / whatsapp
     to: Optional[str] = None
     sender: Optional[str] = None                           # expéditeur tel qu'envoyé (« Société via Vaelan <…> »)
+    by_user: Optional[str] = None                          # utilisateur Vaelan à l'origine d'un envoi manuel (SMS, WhatsApp, messagerie)
     subject: Optional[str] = None
     body: Optional[str] = None
     status: str = "sent"                                   # sent / error / skipped

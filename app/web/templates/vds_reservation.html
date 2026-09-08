@@ -7,10 +7,15 @@
   <li class="breadcrumb-item active">{{ res.booking_ref or res.id }}</li>
 </ol></nav>
 {% if msg %}<div class="alert alert-info py-2 small">{{ msg }}</div>{% endif %}
+{% from "_vds_macros.html" import channel_logo %}
 {% set lab = labels.get(res.status, (res.status, 'secondary')) %}
-<div class="d-flex align-items-center flex-wrap gap-2 mb-3">
-  <h1 class="h4 mb-0">{{ res.guest_name or '—' }} <span class="badge text-bg-{{ lab[1] }}">{{ lab[0] }}</span></h1>
-  <span class="text-muted">{{ channels[res.channel].label }} · <code>{{ res.booking_ref or '—' }}</code> · {{ fmt_date(res.arrival) }} → {{ fmt_date(res.departure) }} · {{ res.guests or '?' }} pers. · {{ res.lang|upper }} · source {{ res.source }}</span>
+<div class="d-flex align-items-center flex-wrap gap-3 mb-3">
+  <div class="border rounded-3 px-3 py-2 bg-white d-flex align-items-center gap-2" style="font-size:1.05rem">{{ channel_logo(res.channel, 34, True) }}</div>
+  <div>
+    <h1 class="h4 mb-0">{{ res.guest_name or '—' }} <span class="badge text-bg-{{ lab[1] }}">{{ lab[0] }}</span></h1>
+    <span class="text-muted small"><code>{{ res.booking_ref or '—' }}</code> · {{ fmt_date(res.arrival) }} → {{ fmt_date(res.departure) }} · {{ res.guests or '?' }} pers. · {{ res.lang|upper }} · source {{ res.source }}</span>
+  </div>
+  {% if resp %}<a class="btn btn-dark ms-auto" href="/c/{{ company.code }}/checkin/{{ res.id }}/attestation.pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Attestation signée (PDF)</a>{% endif %}
 </div>
 <div class="row g-3">
   <div class="col-lg-5">
@@ -31,12 +36,41 @@
           <button name="action" value="reopen" class="btn btn-sm btn-outline-secondary">Rouvrir</button>
         {% endif %}
       </form>
-      <details class="mt-2"><summary class="small text-muted">Texte d'invitation à coller (messagerie Airbnb / Booking)</summary>
-        <textarea class="form-control form-control-sm mt-1" rows="7" readonly>{{ invite_text }}</textarea></details>
     </div></div>
+    {% if res.status in ('pending','sent','reminded') %}
+    <div class="card shadow-sm mb-3 border-warning"><div class="card-body">
+      <h3 class="h6 text-uppercase text-muted">{{ 'Invitation' if res.status == 'pending' else 'Relance' }} manuelle (SMS, WhatsApp, messagerie de la plateforme, téléphone)</h3>
+      <p class="small text-muted mb-2">1. Choisissez le canal, copiez le message suggéré (modifiable). 2. Envoyez-le depuis votre téléphone ou la messagerie. 3. Collez ici ce que vous avez réellement envoyé et validez : c'est journalisé avec votre nom.</p>
+      <form method="post" action="/c/{{ company.code }}/checkin/{{ res.id }}/manual" id="manualform">
+        <div class="d-flex gap-2 align-items-end mb-2">
+          <div><label class="form-label small mb-0">Canal</label>
+            <select name="channel" class="form-select form-select-sm" id="manualchannel">
+              <option value="sms">SMS</option><option value="whatsapp">WhatsApp</option>
+              <option value="airbnb" {% if res.channel == 'airbnb' %}selected{% endif %}>Messagerie Airbnb</option>
+              <option value="booking" {% if res.channel == 'booking' %}selected{% endif %}>Messagerie Booking</option>
+              <option value="abritel" {% if res.channel == 'abritel' %}selected{% endif %}>Messagerie Abritel</option>
+              <option value="email">Email (manuel)</option><option value="telephone">Téléphone</option>
+            </select></div>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="manualcopy"><i class="bi bi-clipboard"></i> Copier le texte</button>
+          <span class="small text-muted">{{ res.guest_phone or 'téléphone inconnu' }}</span>
+        </div>
+        <textarea name="text" class="form-control form-control-sm" rows="6" id="manualtext">{{ suggested.long }}</textarea>
+        <div class="d-flex justify-content-between align-items-center mt-2">
+          <span class="small text-muted">Connecté : {{ user.name }}</span>
+          <button class="btn btn-sm btn-warning"><i class="bi bi-check2-square"></i> J'ai envoyé ce message — enregistrer</button>
+        </div>
+      </form>
+      <script>
+        (function(){ const S = {{ suggested|tojson }}; const sel = document.getElementById('manualchannel'), ta = document.getElementById('manualtext');
+          function fill(){ ta.value = (sel.value === 'sms' || sel.value === 'whatsapp') ? S.short : S.long; }
+          sel.addEventListener('change', fill); fill();
+          document.getElementById('manualcopy').addEventListener('click', function(){ navigator.clipboard.writeText(ta.value); this.innerHTML = '<i class="bi bi-check"></i> copié'; }); })();
+      </script>
+    </div></div>
+    {% endif %}
     <div class="card shadow-sm mb-3"><div class="card-body">
       <h3 class="h6 text-uppercase text-muted">Envois</h3>
-      {% for m in msgs %}<div class="small border-bottom py-1"><a href="/c/{{ company.code }}/checkin/message/{{ m.id }}" class="text-decoration-none"><span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.kind }}</span> {{ fmt_dt(m.sent_at) }} → {{ m.to or '—' }} <i class="bi bi-eye small text-muted"></i></a>{% if m.error %} <span class="text-danger">{{ m.error }}</span>{% endif %}</div>
+      {% for m in msgs %}<div class="small border-bottom py-1"><a href="/c/{{ company.code }}/checkin/message/{{ m.id }}" class="text-decoration-none"><span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.kind }}{% if m.channel != 'email' %} · {{ m.channel }}{% endif %}</span> {{ fmt_dt(m.sent_at) }} → {{ m.to or '—' }}{% if m.by_user %} <span class="text-muted">par {{ m.by_user }}</span>{% endif %} <i class="bi bi-eye small text-muted"></i></a>{% if m.error %} <span class="text-danger">{{ m.error }}</span>{% endif %}</div>
       {% else %}<div class="small text-muted">Aucun envoi.</div>{% endfor %}
     </div></div>
     {% if res.notes %}<div class="card shadow-sm mb-3"><div class="card-body small"><h3 class="h6 text-uppercase text-muted">Notes Lodgify</h3>{{ res.notes }}</div></div>{% endif %}
@@ -56,7 +90,8 @@
         <tr><th>Marketing</th><td>{{ marketing.get(data.marketing, data.marketing) }}{% if data.mkt_email %} · {{ data.mkt_email }}{% endif %}{% if data.mkt_phone %} · {{ data.mkt_phone }}{% endif %}</td></tr>
       </table>
       <h4 class="h6">Règles</h4>
-      <ul class="small">{% for r in rules %}<li><span class="{{ 'text-success' if data.rules and data.rules.get(r.key) else 'text-danger fw-bold' }}">{{ 'OUI' if data.rules and data.rules.get(r.key) else 'NON' }}</span> — {{ r.fr[:110] }}{% if r.confirm %} <span class="text-muted">[{{ 'sanction confirmée' if data.confirms and data.confirms.get(r.key) else 'sanction non cochée' }}]</span>{% endif %}</li>{% endfor %}</ul>
+      {% if data.legacy_rules %}<div class="small text-muted mb-1">Questions de l'ancien formulaire, telles que posées :</div>{% endif %}
+      <ul class="small">{% for txt, ans, confirmed in rule_rows %}<li><span class="{{ 'text-success' if ans == 'OUI' else ('text-muted' if ans == '—' else 'text-danger fw-bold') }}">{{ ans }}</span> — {{ txt[:120] }}{% if confirmed %} <span class="text-muted">[sanction confirmée]</span>{% endif %}</li>{% endfor %}</ul>
       <div class="d-flex flex-wrap gap-2 align-items-center">
         {% for f in files %}
           {% if f.kind == 'signature' %}<div class="border rounded p-1 bg-white"><img src="/c/{{ company.code }}/checkin/file/{{ f.id }}" style="max-height:80px"></div>

@@ -53,7 +53,7 @@
     {% endif %}
     <div class="hint text-danger d-none mt-2 no-hint">{{ T.rule_no_hint }}</div>
     {% if more.get(r.key) %}
-    <details class="more mt-2"><summary><i class="bi bi-question-circle"></i> {{ more[r.key].q }}</summary><div class="hint mt-1">{{ more[r.key].txt }}</div></details>
+    <details class="more mt-2"><summary><i class="bi bi-question-circle"></i> {{ more[r.key].q }}</summary><div class="hint mt-1">{{ more[r.key].txt|safe }}</div></details>
     {% endif %}
   </div>
   {% endfor %}
