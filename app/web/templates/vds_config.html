@@ -59,6 +59,29 @@
 </div>
 <div class="col-lg-5">
 <div class="card shadow-sm mb-3"><div class="card-body small">
+  <h3 class="h6 text-uppercase text-muted"><i class="bi bi-telegram"></i> Telegram — équipe</h3>
+  {% if not tg.configured %}
+    <div class="text-danger mb-2">Bot non configuré : variable <code>TELEGRAM_BOT_TOKEN</code> (token donné par @BotFather).</div>
+  {% else %}
+    <div>Bot : {% if tg.me and tg.me.username %}<span class="text-success">@{{ tg.me.username }}</span>{% else %}<span class="text-danger">{{ tg.me.error if tg.me else '?' }}</span>{% endif %}
+      · assistant IA : {% if tg.assistant %}<span class="text-success">actif</span>{% else %}<span class="text-muted">inactif (ANTHROPIC_API_KEY)</span>{% endif %}</div>
+    <div>Webhook : {% if tg.webhook and tg.webhook.url == tg.expected_url %}<span class="text-success">enregistré</span>{% if tg.webhook.last_error_message %} <span class="text-danger">· dernière erreur : {{ tg.webhook.last_error_message }}</span>{% endif %}
+      {% else %}<span class="text-warning">à enregistrer</span>{% endif %}
+      <form method="post" action="/c/{{ company.code }}/checkin/telegram" class="d-inline"><input type="hidden" name="action" value="webhook"><button class="btn btn-sm btn-outline-dark py-0 ms-1">Enregistrer le webhook</button></form></div>
+    <div class="mt-2 fw-semibold">Groupes / chats connus</div>
+    {% for cid, c in tg.chats.items() %}
+      <div class="d-flex align-items-center gap-2 border-bottom py-1">
+        <span>{{ '👥' if c.type in ('group', 'supergroup') else '👤' }} {{ c.title }} <span class="text-muted">({{ c.type }})</span></span>
+        <form method="post" action="/c/{{ company.code }}/checkin/telegram" class="ms-auto d-inline"><input type="hidden" name="chat_id" value="{{ cid }}">
+          <button name="action" value="toggle" class="btn btn-sm py-0 {{ 'btn-success' if c.notify else 'btn-outline-secondary' }}">{{ 'notifications ON' if c.notify else 'notifications OFF' }}</button>
+          <button name="action" value="forget" class="btn btn-sm btn-link py-0 text-danger" onclick="return confirm('Oublier ce chat ?')">oublier</button></form>
+      </div>
+    {% else %}<div class="text-muted">Aucun encore : ajoutez le bot à votre groupe (ou écrivez-lui en privé) et envoyez <code>/start</code>.</div>{% endfor %}
+    <form method="post" action="/c/{{ company.code }}/checkin/telegram" class="mt-2"><input type="hidden" name="action" value="test"><button class="btn btn-sm btn-outline-dark py-0"><i class="bi bi-send"></i> Envoyer le point du jour aux groupes abonnés</button></form>
+    <div class="text-muted mt-2">Chaque matin (8h) : point du jour (arrivées, départs, formulaires manquants). En direct : formulaire signé, règles refusées, nouvelle réservation à inviter. Commandes : /point /arrivees /departs /formulaires /resa. Questions libres : mentionnez le bot.</div>
+  {% endif %}
+</div></div>
+<div class="card shadow-sm mb-3"><div class="card-body small">
   <h3 class="h6 text-uppercase text-muted">État technique</h3>
   <div>SMTP : {% if smtp %}<span class="text-success">configuré</span> — expéditeur {{ smtp_from }}{% else %}<span class="text-danger">non configuré</span> (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM){% endif %}
     {% if smtp %}<form method="post" action="/c/{{ company.code }}/checkin/config/test-mail" class="d-inline ms-2"><button class="btn btn-sm btn-outline-dark py-0"><i class="bi bi-send"></i> Envoyer un email de test</button></form>{% endif %}</div>

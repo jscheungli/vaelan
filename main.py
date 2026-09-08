@@ -17,6 +17,7 @@ from app.core.jobs import mark_interrupted_on_startup
 from app.seed import seed_if_empty
 from app.web.routes import router as web_router
 from app.web.vds_routes import router as vds_router
+from app.web.telegram_routes import router as telegram_router
 from app.core import scheduler
 
 
@@ -61,6 +62,7 @@ app.mount("/static", StaticFiles(directory=_static), name="static")
 
 app.include_router(web_router)
 app.include_router(vds_router)
+app.include_router(telegram_router)
 
 
 @app.get("/healthz")

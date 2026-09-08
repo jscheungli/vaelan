@@ -14,3 +14,4 @@ pymupdf>=1.24
 ijson>=3.2
 openpyxl>=3.1
 Pillow>=10
+anthropic>=0.75

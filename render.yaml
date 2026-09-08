@@ -54,7 +54,11 @@ services:
         sync: false
       - key: SMTP_FROM               # « Villa des Sables du Lagon <adresse@…> »
         sync: false
-      - key: PUBLIC_BASE_URL         # racine des liens publics (défaut https://vaelan.onrender.com)
+      - key: PUBLIC_BASE_URL         # racine des liens publics (défaut https://vaelan.com)
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN      # bot Telegram (@BotFather) — briefs d'équipe, notifications, assistant
+        sync: false
+      - key: ANTHROPIC_API_KEY       # assistant IA (Claude) dans les groupes Telegram
         sync: false
 
 databases:

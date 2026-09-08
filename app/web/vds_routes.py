@@ -241,10 +241,20 @@ def admin_config(request: Request, code: str, msg: str = ""):
     company, redir = _guard(request, code)
     if redir:
         return redir
+    from app.core.connectors import telegram as tg
+    from app.core import assistant
+    from app.packs.vds import telegram as vtg
+    tg_info = {"configured": tg.configured(), "me": None, "webhook": None, "chats": vtg.chats(), "assistant": assistant.configured(),
+               "expected_url": f"{service.base_url()}/telegram/webhook/{tg.webhook_secret()}" if tg.configured() else ""}
+    if tg.configured():
+        ok, me = tg.get_me()
+        tg_info["me"] = me if ok else {"error": me}
+        ok, wh = tg.get_webhook_info()
+        tg_info["webhook"] = wh if ok else {"error": wh}
     return templates.TemplateResponse(request, "vds_config.html",
                                       _ctx(request, company=company, p=service.params(), msgs=service.recent_messages(20),
                                            smtp=mailer.configured(), smtp_from=mailer.sender(), lodgify_ok=bool(lodgify.for_company(CODE)),
-                                           msg=msg, base=service.base_url(), channels=vcfg.CHANNELS))
+                                           msg=msg, base=service.base_url(), channels=vcfg.CHANNELS, tg=tg_info))
 
 
 @router.post("/c/{code}/checkin/config")

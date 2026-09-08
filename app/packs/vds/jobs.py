@@ -184,4 +184,11 @@ def run_daily(ctx) -> str:
         ctx.log(f"synchro Lodgify en échec : {e}")
         parts.append(f"Lodgify : échec ({str(e)[:80]})")
     parts.append(run_reminders(ctx))
+    try:
+        from . import telegram as vtg
+        n = vtg.notify(vtg.brief())
+        ctx.log(f"Telegram : point du jour envoyé à {n} chat(s)")
+        parts.append(f"Telegram : {n} chat(s)")
+    except Exception as e:
+        ctx.log(f"Telegram : {e}")
     return " — ".join(parts)

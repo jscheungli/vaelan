@@ -89,6 +89,10 @@ def load(path: str = None, db: bool = False) -> str:
     for code, c in (d.get("lodgify") or {}).items():
         k = _env_key(code)
         _set(f"LODGIFY_{k}_APIKEY", c.get("apiKey") if isinstance(c, dict) else c)
+    tg = d.get("telegram") or {}
+    _set("TELEGRAM_BOT_TOKEN", tg.get("botToken") or tg.get("token"))
+    an = d.get("anthropic") or {}
+    _set("ANTHROPIC_API_KEY", an.get("apiKey") if isinstance(an, dict) else an)
     sm = d.get("smtp") or {}
     for k in ("host", "port", "user", "password", "from"):
         if sm.get(k):
