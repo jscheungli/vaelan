@@ -40,6 +40,7 @@ _COLUMN_ADDS = [
     "ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS pennylane_external_ref VARCHAR",
     # certains IDs clients Pennylane dépassent l'INTEGER 32 bits -> BIGINT
     "ALTER TABLE client_accounts ALTER COLUMN pennylane_customer_id TYPE BIGINT",
+    "ALTER TABLE vds_messages ADD COLUMN IF NOT EXISTS sender VARCHAR",
 ]
 
 

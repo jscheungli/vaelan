@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Envoi #{{ m.id }} · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/checkin">Check-in voyageurs</a></li>
+  {% if res %}<li class="breadcrumb-item"><a href="/c/{{ company.code }}/checkin/{{ res.id }}">{{ res.booking_ref or res.id }}</a></li>{% endif %}
+  <li class="breadcrumb-item active">Envoi #{{ m.id }}</li>
+</ol></nav>
+<h1 class="h4">Envoi #{{ m.id }} — {{ m.kind }} <span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.status }}</span></h1>
+<table class="table table-sm small" style="max-width:900px;">
+  <tr><th style="width:160px">Date</th><td>{{ fmt_dt(m.sent_at) }} (heure de La Réunion)</td></tr>
+  <tr><th>De</th><td>{{ m.sender or '— (non journalisé)' }}</td></tr>
+  <tr><th>À</th><td>{{ m.to or '—' }}</td></tr>
+  <tr><th>Sujet</th><td>{{ m.subject or '—' }}</td></tr>
+  {% if m.error %}<tr><th>Erreur / motif</th><td class="text-danger">{{ m.error }}</td></tr>{% endif %}
+  {% if res %}<tr><th>Réservation</th><td><a href="/c/{{ company.code }}/checkin/{{ res.id }}">{{ res.booking_ref or res.id }} · {{ res.guest_name }}</a></td></tr>{% endif %}
+</table>
+<div class="row g-3">
+  <div class="col-lg-5"><h3 class="h6 text-uppercase text-muted">Texte envoyé</h3><pre class="border rounded bg-white p-3 small" style="white-space:pre-wrap;">{{ m.body }}</pre></div>
+  <div class="col-lg-7"><h3 class="h6 text-uppercase text-muted">Aperçu HTML (tel que reçu)</h3>
+    {% if html %}<iframe srcdoc="{{ html|e }}" style="width:100%;height:640px;border:1px solid #dee2e6;border-radius:6px;background:#f4f6f8;"></iframe>{% else %}<span class="text-muted small">—</span>{% endif %}</div>
+</div>
+{% endblock %}

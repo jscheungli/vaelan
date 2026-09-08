@@ -39,14 +39,13 @@
     <div class="col-6 col-md-4"><label class="form-label small mb-0">Purge des pièces d'identité (jours après départ)</label><input name="purge_id_days" type="number" class="form-control form-control-sm" value="{{ p.purge_id_days }}"></div>
     <div class="col-6 col-md-4"><label class="form-label small mb-0">Taille max d'un fichier (Mo)</label><input name="max_upload_mb" type="number" class="form-control form-control-sm" value="{{ p.max_upload_mb }}"></div>
   </div>
-  <h3 class="h6 text-uppercase text-muted">État des risques (ERP)</h3>
-  <p class="small text-muted mb-1">Envoyé automatiquement la veille de l'arrivée aux formulaires complétés. Validité légale : 6 mois — à régénérer sur <a href="https://errial.georisques.gouv.fr" target="_blank">errial.georisques.gouv.fr</a>.
-    {% if erp %}Document actuel : <strong>{{ erp.name }}</strong> ({{ (erp.size/1024)|round|int }} Ko, chargé le {{ erp.created_at|dtlocal }}).{% else %}<span class="text-danger">Aucun document chargé.</span>{% endif %}</p>
-  <input type="file" name="erp" accept="application/pdf" class="form-control form-control-sm mb-3">
+  <p class="small text-muted mb-3"><i class="bi bi-info-circle"></i> État des risques (ERP) : envoyé automatiquement au voyageur par la notification Lodgify, pas par Vaelan. Penser à le renouveler dans Lodgify (validité 6 mois, errial.georisques.gouv.fr).</p>
   <button class="btn btn-sm btn-dark">Enregistrer</button>
 </form>
 </div></div>
 <div class="card shadow-sm mb-3"><div class="card-body">
+  <h3 class="h6 text-uppercase text-muted">Derniers envois</h3>
+  <div class="small mb-3">{% for m in msgs %}<div class="border-bottom py-1"><a href="/c/{{ company.code }}/checkin/message/{{ m.id }}"><span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.kind }}</span> {{ m.sent_at|dtlocal }} → {{ m.to or '—' }}</a>{% if m.error %} <span class="text-danger">{{ m.error[:80] }}</span>{% endif %}</div>{% else %}<span class="text-muted">Aucun envoi.</span>{% endfor %}</div>
   <h3 class="h6 text-uppercase text-muted">Historique SurveySparrow</h3>
   <p class="small text-muted">Importer un export « Responses - VDS Terms &amp; Conditions Check - &lt;canal&gt;.csv » : crée une réservation complétée par réponse (sans les fichiers, dont seules les URL sont conservées).</p>
   <form method="post" action="/c/{{ company.code }}/checkin/import" enctype="multipart/form-data" class="row g-2 align-items-end">

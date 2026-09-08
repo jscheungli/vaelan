@@ -379,6 +379,7 @@ class VdsMessage(SQLModel, table=True):
     kind: str = Field(index=True)                          # invitation / reminder / confirmation / alert / erp / refusal
     channel: str = "email"                                 # email / sms / whatsapp
     to: Optional[str] = None
+    sender: Optional[str] = None                           # expéditeur tel qu'envoyé (« Société via Vaelan <…> »)
     subject: Optional[str] = None
     body: Optional[str] = None
     status: str = "sent"                                   # sent / error / skipped

@@ -72,6 +72,7 @@
   {% else %}<tr><td colspan="10" class="text-muted">Aucune réservation dans cette vue. Synchronisez Lodgify ou créez une réservation manuelle.</td></tr>{% endfor %}
   </tbody></table></div>
 
+<p class="small text-muted mt-3 mb-1"><i class="bi bi-info-circle"></i> État des risques (ERP) : envoyé automatiquement par la notification Lodgify, à renouveler dans Lodgify tous les 6 mois.</p>
 {% if runs %}<h3 class="h6 text-uppercase text-muted mt-3">Dernières tâches</h3>
 <ul class="small mb-0">{% for r in runs %}<li>#{{ r.id }} · {{ r.started_at|dtlocal }} · {{ r.label }} — <span class="{{ 'text-success' if r.status=='ok' else 'text-danger' }}">{{ r.summary or r.status }}</span></li>{% endfor %}</ul>{% endif %}
 {% endblock %}

@@ -212,8 +212,6 @@ def admin_list(request: Request, code: str, view: str = "avenir"):
         warns.append("Aucun destinataire d'alertes internes : renseignez-le dans la configuration.")
     if not lodgify.for_company(CODE):
         warns.append("Clé Lodgify absente (LODGIFY_VDS_APIKEY) : la synchro automatique des réservations est inactive.")
-    if not service.reference_file("erp"):
-        warns.append("État des risques (ERP) non chargé : l'envoi automatique J-1 est inactif (document à charger dans la configuration, validité 6 mois).")
     return templates.TemplateResponse(request, "vds_checkin.html",
                                       _ctx(request, company=company, rs=rs, view=view, counts=counts, runs=runs, warns=warns,
                                            labels=STATUS_LABEL, channels=vcfg.CHANNELS, today=today, base=service.base_url(),
@@ -241,7 +239,7 @@ def admin_config(request: Request, code: str, msg: str = ""):
     if redir:
         return redir
     return templates.TemplateResponse(request, "vds_config.html",
-                                      _ctx(request, company=company, p=service.params(), erp=service.reference_file("erp"),
+                                      _ctx(request, company=company, p=service.params(), msgs=service.recent_messages(20),
                                            smtp=mailer.configured(), smtp_from=mailer.sender(), lodgify_ok=bool(lodgify.for_company(CODE)),
                                            msg=msg, base=service.base_url(), channels=vcfg.CHANNELS))
 
@@ -280,12 +278,6 @@ async def admin_config_save(request: Request, code: str):
                 n += 1
             s.commit()
         msg += f" Sortie du mode bêta : {n} réservation(s) remise(s) « à inviter »."
-    erp = form.get("erp")
-    if erp is not None and getattr(erp, "filename", ""):
-        blob = await erp.read()
-        if blob:
-            service.set_reference_file("erp", erp.filename, blob, erp.content_type or "application/pdf")
-            msg += " État des risques chargé."
     return RedirectResponse(f"/c/{code}/checkin/config?msg={msg}", status_code=303)
 
 
@@ -300,11 +292,12 @@ def admin_test_mail(request: Request, code: str):
     to = [to] if isinstance(to, str) else to
     if not to:
         return RedirectResponse(f"/c/{code}/checkin/config?msg=Aucune adresse de test ni d'alerte renseignée.", status_code=303)
-    ok, info = mailer.send_branded(to, "Email de test — formulaire d'arrivée Villa des Sables du Lagon",
-                                   f"Bonjour,\n\nCeci est un email de test envoyé par Vaelan le {service.now_local():%d/%m/%Y à %H:%M} (heure de La Réunion).\n\n"
-                                   f"Expéditeur : {mailer.branded_from(service.brand())}\nRéponse vers : {p.get('reply_to') or '— (non renseigné)'}\n\n"
-                                   f"Si vous le recevez, la configuration SMTP est opérationnelle.", service.brand(), lang="fr")
-    service.log_message(None, "test", ", ".join(to), "[Vaelan] Email de test", "", ok, info)
+    subject = "Email de test — formulaire d'arrivée Villa des Sables du Lagon"
+    body = (f"Bonjour,\n\nCeci est un email de test envoyé par Vaelan le {service.now_local():%d/%m/%Y à %H:%M} (heure de La Réunion).\n\n"
+            f"Expéditeur : {mailer.branded_from(service.brand())}\nRéponse vers : {p.get('reply_to') or '— (non renseigné)'}\n\n"
+            f"Si vous le recevez, la configuration SMTP est opérationnelle.")
+    ok, info = mailer.send_branded(to, subject, body, service.brand(), lang="fr")
+    service.log_message(None, "test", ", ".join(to), subject, body, ok, info, sender=mailer.branded_from(service.brand()))
     return RedirectResponse(f"/c/{code}/checkin/config?msg={'✅ Email de test envoyé à ' + ', '.join(to) if ok else '❌ Échec : ' + info}", status_code=303)
 
 
@@ -365,6 +358,24 @@ def admin_file(request: Request, code: str, fid: int):
     return Response(content=f.data, media_type=f.content_type, headers={"Content-Disposition": f'{disp}; filename="{f.name}"'})
 
 
+@router.get("/c/{code}/checkin/message/{mid}", response_class=HTMLResponse)
+def admin_message(request: Request, code: str, mid: int):
+    """Détail d'un envoi : destinataires, expéditeur, sujet, corps texte et aperçu HTML tel qu'envoyé."""
+    from app.models import VdsMessage
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        m = s.get(VdsMessage, mid)
+        res = s.get(VdsReservation, m.reservation_id) if (m and m.reservation_id) else None
+    if not m:
+        return RedirectResponse(f"/c/{code}/checkin", status_code=303)
+    lang = (res.lang if res and res.lang in ("fr", "en") else "fr")
+    html = mailer.branded_html(m.body or "", service.brand(), lang) if m.body else ""
+    return templates.TemplateResponse(request, "vds_message_view.html",
+                                      _ctx(request, company=company, m=m, res=res, html=html, fmt_dt=service.fmt_dt))
+
+
 @router.get("/c/{code}/checkin/{rid}", response_class=HTMLResponse)
 def admin_detail(request: Request, code: str, rid: int, msg: str = ""):
     company, redir = _guard(request, code)
@@ -385,7 +396,7 @@ def admin_detail(request: Request, code: str, rid: int, msg: str = ""):
                                       _ctx(request, company=company, res=res, resp=resp, data=data, files=files, msgs=msgs,
                                            labels=STATUS_LABEL, channels=vcfg.CHANNELS, rules=vcfg.RULES, marketing=dict((m[0], m[1]) for m in vcfg.MARKETING),
                                            url=service.public_url(res), invite_text=invite_text, msg=msg, smtp=mailer.configured(),
-                                           fmt_dt=service.fmt_dt, fmt_date=service.fmt_date, erp=bool(service.reference_file("erp"))))
+                                           fmt_dt=service.fmt_dt, fmt_date=service.fmt_date))
 
 
 @router.post("/c/{code}/checkin/{rid}/action")
@@ -404,9 +415,6 @@ def admin_action(request: Request, code: str, rid: int, action: str = Form(...))
     elif action == "remind":
         ok, info = service.send_invitation(res, reminder=True)
         msg = f"Relance : {info}"
-    elif action == "erp":
-        ok, info = service.send_erp(res)
-        msg = f"État des risques : {info}"
     elif action == "cancel":
         service.update_reservation(rid, status="cancelled")
         msg = "Réservation annulée (lien désactivé)."

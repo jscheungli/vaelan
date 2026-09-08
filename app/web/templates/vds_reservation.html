@@ -26,7 +26,6 @@
           {% if res.status == 'pending' %}<button name="action" value="mark_sent" class="btn btn-sm btn-outline-secondary">Marquer « lien envoyé »</button>{% endif %}
           <button name="action" value="cancel" class="btn btn-sm btn-outline-danger" onclick="return confirm('Annuler cette réservation (lien désactivé) ?')">Annuler</button>
         {% elif res.status == 'completed' %}
-          <button name="action" value="erp" class="btn btn-sm btn-outline-dark" {% if not res.guest_email or not smtp or not erp %}disabled{% endif %}><i class="bi bi-send"></i> Envoyer l'état des risques{% if res.erp_sent_at %} (déjà envoyé {{ fmt_dt(res.erp_sent_at) }}){% endif %}</button>
           <button name="action" value="reopen" class="btn btn-sm btn-outline-secondary" onclick="return confirm('Rouvrir le formulaire (le voyageur pourra le remplir à nouveau) ?')">Rouvrir</button>
         {% else %}
           <button name="action" value="reopen" class="btn btn-sm btn-outline-secondary">Rouvrir</button>
@@ -37,7 +36,7 @@
     </div></div>
     <div class="card shadow-sm mb-3"><div class="card-body">
       <h3 class="h6 text-uppercase text-muted">Envois</h3>
-      {% for m in msgs %}<div class="small border-bottom py-1"><span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.kind }}</span> {{ fmt_dt(m.sent_at) }} → {{ m.to or '—' }}{% if m.error %} <span class="text-danger">{{ m.error }}</span>{% endif %}</div>
+      {% for m in msgs %}<div class="small border-bottom py-1"><a href="/c/{{ company.code }}/checkin/message/{{ m.id }}" class="text-decoration-none"><span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.kind }}</span> {{ fmt_dt(m.sent_at) }} → {{ m.to or '—' }} <i class="bi bi-eye small text-muted"></i></a>{% if m.error %} <span class="text-danger">{{ m.error }}</span>{% endif %}</div>
       {% else %}<div class="small text-muted">Aucun envoi.</div>{% endfor %}
     </div></div>
     {% if res.notes %}<div class="card shadow-sm mb-3"><div class="card-body small"><h3 class="h6 text-uppercase text-muted">Notes Lodgify</h3>{{ res.notes }}</div></div>{% endif %}

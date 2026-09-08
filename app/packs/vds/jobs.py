@@ -113,17 +113,14 @@ def run_reminders(ctx) -> str:
     with Session(engine) as s:
         rs = list(s.exec(select(VdsReservation).where(VdsReservation.status.in_(["pending", "sent", "reminded", "completed"]))).all())
     ctx.log(f"{len(rs)} réservations actives · {today:%d/%m/%Y}")
+    ctx.log("Rappel : l'état des risques (ERP) est envoyé par la notification automatique Lodgify (validité 6 mois, à renouveler dans Lodgify).")
     for k, r in enumerate(rs):
         ctx.progress(k, len(rs), step=f"{r.booking_ref or r.id}…")
         if not r.arrival or r.arrival < today - timedelta(days=1):
             continue
         days_left = (r.arrival - today).days
         if r.status == "completed":
-            if days_left == 1 and not r.erp_sent_at and r.guest_email:
-                ok, info = service.send_erp(r)
-                ctx.log(f"ERP J-1 {r.booking_ref} → {r.guest_email} : {info}")
-                erp += 1 if ok else 0
-            continue
+            continue          # (état des risques : envoyé par la notification automatique Lodgify, pas ici)
         # --- formulaire incomplet ---
         if r.status == "pending":
             if r.guest_email and p.get("auto_invite"):
@@ -164,7 +161,7 @@ def run_reminders(ctx) -> str:
     if purged:
         ctx.log(f"purge : {purged} pièce(s) d'identité supprimée(s) (départ avant {limit:%d/%m/%Y})")
     return (f"Relances : {invited} invitation(s) · {reminded} relance(s) · {alerted} alerte(s) interne(s) · "
-            f"{erp} ERP envoyé(s) · {purged} pièce(s) purgée(s)")
+            f"{purged} pièce(s) purgée(s)")
 
 
 def run_daily(ctx) -> str:

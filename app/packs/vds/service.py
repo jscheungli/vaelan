@@ -188,12 +188,17 @@ def set_reference_file(kind: str, name: str, data: bytes, content_type: str) -> 
 
 # ------------------------------------------------------------------ journal des envois
 def log_message(reservation_id: Optional[int], kind: str, to: str, subject: str, body: str,
-                ok: bool, info: str, channel: str = "email") -> None:
+                ok: bool, info: str, channel: str = "email", sender: str = None) -> None:
     with Session(engine) as s:
-        s.add(VdsMessage(reservation_id=reservation_id, kind=kind, channel=channel, to=to, subject=subject,
+        s.add(VdsMessage(reservation_id=reservation_id, kind=kind, channel=channel, to=to, subject=subject, sender=sender,
                          body=(body or "")[:4000], status="sent" if ok else ("skipped" if "non configuré" in info else "error"),
                          error=None if ok else info))
         s.commit()
+
+
+def recent_messages(n: int = 20) -> List[VdsMessage]:
+    with Session(engine) as s:
+        return list(s.exec(select(VdsMessage).order_by(VdsMessage.id.desc()).limit(n)).all())
 
 
 def messages_for(reservation_id: int) -> List[VdsMessage]:
@@ -233,8 +238,9 @@ def guest_send(res: VdsReservation, kind: str, to: str, subject: str, body: str,
         subject = f"[BÊTA → {to}] {subject}"
         body = f"*** MODE BÊTA — ce message était destiné à {to} ; il vous est redirigé pour validation. ***\n\n" + body
         to = test
-    ok, info = mailer.send_branded([to], subject, body, brand(), lang=res.lang or "fr", attachments=attachments)
-    log_message(res.id, kind, f"{to} (bêta · réel : {real_to})" if test else to, subject, body, ok, info)
+    b = brand()
+    ok, info = mailer.send_branded([to], subject, body, b, lang=res.lang or "fr", attachments=attachments)
+    log_message(res.id, kind, f"{to} (bêta · réel : {real_to})" if test else to, subject, body, ok, info, sender=mailer.branded_from(b))
     return ok, info
 
 
@@ -264,8 +270,9 @@ def send_alert(res: Optional[VdsReservation], subject: str, body: str, kind: str
     if not to:
         log_message(res.id if res else None, kind, "", subject, body, False, "alertes : aucun destinataire (configuration)")
         return False, "aucun destinataire"
-    ok, info = mailer.send_branded(to, subject, body, brand(), lang="fr")
-    log_message(res.id if res else None, kind, ", ".join(to), subject, body, ok, info)
+    b = brand()
+    ok, info = mailer.send_branded(to, subject, body, b, lang="fr")
+    log_message(res.id if res else None, kind, ", ".join(to), subject, body, ok, info, sender=mailer.branded_from(b))
     return ok, info
 
 

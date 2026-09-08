@@ -1,14 +1,18 @@
 {% extends "vds_public_base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center lang gap-2">
-  <span class="text-muted d-flex align-items-center gap-2">
-    {% include "_vds_channel_logo.html" %}
-    <span>{{ t('welcome_res', ref=res.booking_ref or res.id, arrival=fmt_date(res.arrival, lang), departure=fmt_date(res.departure, lang), guests=res.guests or '—') }}</span>
-  </span>
-  <span class="flags text-nowrap">
-    <a href="?lang=fr" class="{{ 'on' if lang == 'fr' }}" title="Français" aria-label="Français"><svg viewBox="0 0 3 2" width="28" height="19"><rect width="1" height="2" x="0" fill="#0055A4"/><rect width="1" height="2" x="1" fill="#fff"/><rect width="1" height="2" x="2" fill="#EF4135"/></svg></a>
-    <a href="?lang=en" class="{{ 'on' if lang == 'en' }}" title="English" aria-label="English"><svg viewBox="0 0 60 30" width="28" height="19"><clipPath id="uk"><path d="M0 0v30h60V0z"/></clipPath><path d="M0 0v30h60V0z" fill="#012169"/><path d="M0 0l60 30m0-30L0 30" stroke="#fff" stroke-width="6"/><path d="M0 0l60 30m0-30L0 30" clip-path="url(#uk)" stroke="#C8102E" stroke-width="4"/><path d="M30 0v30M0 15h60" stroke="#fff" stroke-width="10"/><path d="M30 0v30M0 15h60" stroke="#C8102E" stroke-width="6"/></svg></a>
-  </span>
+<div class="resbar">
+  <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">{% include "_vds_channel_logo.html" %}<span class="ref">{{ T.booking_lbl }} <strong>{{ res.booking_ref or res.id }}</strong></span></div>
+    <span class="flags text-nowrap">
+      <a href="?lang=fr" class="{{ 'on' if lang == 'fr' }}" title="Français" aria-label="Français"><svg viewBox="0 0 3 2" width="28" height="19"><rect width="1" height="2" x="0" fill="#0055A4"/><rect width="1" height="2" x="1" fill="#fff"/><rect width="1" height="2" x="2" fill="#EF4135"/></svg></a>
+      <a href="?lang=en" class="{{ 'on' if lang == 'en' }}" title="English" aria-label="English"><svg viewBox="0 0 60 30" width="28" height="19"><clipPath id="uk"><path d="M0 0v30h60V0z"/></clipPath><path d="M0 0v30h60V0z" fill="#012169"/><path d="M0 0l60 30m0-30L0 30" stroke="#fff" stroke-width="6"/><path d="M0 0l60 30m0-30L0 30" clip-path="url(#uk)" stroke="#C8102E" stroke-width="4"/><path d="M30 0v30M0 15h60" stroke="#fff" stroke-width="10"/><path d="M30 0v30M0 15h60" stroke="#C8102E" stroke-width="6"/></svg></a>
+    </span>
+  </div>
+  <div class="resgrid">
+    <div><span>{{ T.arrival_lbl }}</span><strong>{{ fmt_date(res.arrival, lang) }}</strong></div>
+    <div><span>{{ T.departure_lbl }}</span><strong>{{ fmt_date(res.departure, lang) }}</strong></div>
+    <div><span>{{ T.guests_lbl }}</span><strong>{{ res.guests or '—' }}</strong></div>
+  </div>
 </div>
 {% if request.query_params.get('err') %}
 <div class="alert alert-danger mt-2 small">{% if request.query_params.get('err') == 'sign' %}{{ T.sign_missing }}{% elif request.query_params.get('err') == 'id' %}{{ T.id_intro }}{% else %}{{ T.required }}{% endif %}</div>
