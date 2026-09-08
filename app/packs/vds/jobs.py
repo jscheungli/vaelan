@@ -147,8 +147,10 @@ def run_reminders(ctx) -> str:
                 ok, info = service.send_invitation(r, reminder=True)
                 ctx.log(f"relance {r.booking_ref} ({'J-' + str(days_left) if pre else 'n°' + str((r.reminder_count or 0) + 1)}) → {r.guest_email} : {info}")
                 reminded += 1 if ok else 0
-        # alerte interne : arrivée proche sans formulaire
-        if days_left in set(p.get("alert_days") or []) and (not r.alerted_at or (now - r.alerted_at).days >= 1):
+        # alerte interne : arrivée proche sans formulaire (J-7 et J-2 par défaut ; rattrapage si un jour a été manqué)
+        alert_days = set(p.get("alert_days") or [])
+        due_alert = days_left in alert_days or (alert_days and days_left <= max(alert_days) and not r.alerted_at)
+        if due_alert and (not r.alerted_at or (now - r.alerted_at).days >= 1):
             ok, info = service.send_alert(
                 r, f"[VDS] Arrivée dans {days_left} j SANS formulaire — {r.guest_name or '?'} · {config.CHANNELS[r.channel]['label']}",
                 f"La réservation {r.booking_ref or r.id} ({config.CHANNELS[r.channel]['label']}) arrive le {service.fmt_date(r.arrival)} "
