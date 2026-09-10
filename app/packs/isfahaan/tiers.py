@@ -550,6 +550,49 @@ def _plan_text(plan_pl, plan_od):
     return " ; ".join(parts)
 
 
+# ------------------------------------------------------------------ lignes sûres
+def applicable(r) -> bool:
+    """Seules les lignes SÛRES sont écrites : identifiants d'un tiers rapproché sans ambiguïté
+    (ok / sans identifiant commun / canonique d'un doublon Pennylane) et créations AUTO.
+    Jamais : SIREN à valider ou à rechercher, doublons Odoo (fiche survivante inconnue), conflits."""
+    if not r.odoo_id or r.mode in ("A_VALIDER", "SAISIE") or r.siren_source == "annuaire":
+        return False
+    if r.status in ("conflit_identifiant", "doublon_odoo", "sans_siren", "orphelin_pennylane"):
+        return False
+    if r.status == "absent_pennylane":
+        return r.mode == "AUTO"
+    return r.status in ("ok", "sans_identifiant_commun", "doublon_pennylane")
+
+
+def _short_pl(plan) -> str:
+    """Résumé lisible du plan Pennylane : « réf. ODOO_7412 · SIREN 123456789 · TVA FR12… · +email »."""
+    if not plan:
+        return "—"
+    if "create" in plan:
+        c = plan["create"]
+        return f"CRÉER le tiers « {c.get('name', '')} » (SIREN {c.get('reg_no') or '?'})"
+    parts = []
+    if plan.get("reference"):
+        parts.append(f"réf. {plan['reference']}")
+    if plan.get("reg_no"):
+        parts.append(f"SIREN {plan['reg_no']}")
+    if plan.get("vat_number"):
+        parts.append(f"TVA {plan['vat_number']}")
+    if plan.get("emails"):
+        parts.append("emails : " + ", ".join(plan["emails"]))
+    for k, v in plan.items():
+        if k not in ("reference", "reg_no", "vat_number", "emails", "create"):
+            parts.append(f"{k} = {v}")
+    return " · ".join(parts) or "—"
+
+
+def _short_od(plan) -> str:
+    if not plan:
+        return "—"
+    lbl = {"vat": "TVA", "company_registry": "registre (SIRET/SIREN)", "email": "email", "ref": "réf. compte"}
+    return " · ".join(f"{lbl.get(k, k)} {v}" for k, v in plan.items()) or "—"
+
+
 # ------------------------------------------------------------------ Excel
 def _excel(rows, company, kind, stamp):
     from openpyxl import Workbook
@@ -569,9 +612,9 @@ def _excel(rows, company, kind, stamp):
     ws["A1"] = f"CADRAGE {KINDS[kind]['label'].upper()} ODOO ↔ PENNYLANE — {company.name}"; ws["A1"].font = Font(bold=True, size=14)
     ws["A2"] = f"généré le {stamp.strftime('%d/%m/%Y %H:%M')} (Réunion) · lecture seule · règle du connecteur Pennylane : rapprochement dès qu'UN identifiant est commun (email, compte tiers, SIREN/SIRET/TVA)"
     ws["A2"].font = Font(color="777777")
-    ws["A4"] = ("MODE D'EMPLOI : colonne MODE = qui fait quoi. Les lignes AUTO sont écrites par Vaelan (Pennylane : reg_no, TVA, "
-                "emails, référence ODOO_<id> ; Odoo : TVA, registre, email, réf.) sur ordre. Les lignes À VALIDER attendent ton OUI "
-                "sur le SIREN proposé. MANUEL = fusion de fiches (impossible par API). Jamais d'IBAN.")
+    ws["A4"] = ("MODE D'EMPLOI : onglet 1 = les écritures sûres que Vaelan appliquera (colonne Valider pré-remplie OUI, passer à NON "
+                "pour exclure une ligne) ; onglet 2 = ce qui est bloqué et par qui ; onglet 3 = fusions à faire dans l'interface Pennylane ; "
+                "onglet 4 = tiers Pennylane sans fiche Odoo. Les onglets « Détail » reprennent toutes les colonnes. Jamais d'IBAN.")
     ws["A4"].font = Font(bold=True, color="8A6D00")
     r = 6
     mc = defaultdict(int); sc = defaultdict(int)
@@ -615,9 +658,64 @@ def _excel(rows, company, kind, stamp):
         w.freeze_panes = "E2"
         w.auto_filter.ref = f"A1:{get_column_letter(len(HEAD))}{len(data) + 1}"
 
+    # ---- feuilles COMPACTES (à parcourir / valider) ----
+    wrap = Alignment(vertical="top", wrap_text=True)
+    yellow = PatternFill("solid", fgColor="FFF3BF")
+
+    def compact(name, head, widths, data, color=None, valid_col=None):
+        w = wb.create_sheet(name)
+        for i, (h, wd) in enumerate(zip(head, widths), 1):
+            c = w.cell(row=1, column=i, value=h); c.font = white; c.fill = hdr; c.alignment = wrap
+            w.column_dimensions[get_column_letter(i)].width = wd
+        w.row_dimensions[1].height = 30
+        for j, vals in enumerate(data, 2):
+            for i, v in enumerate(vals, 1):
+                c = w.cell(row=j, column=i, value=v); c.border = thin; c.alignment = wrap
+                if valid_col and i == valid_col:
+                    c.fill = yellow; c.font = bold
+            if color:
+                w.cell(row=j, column=1).fill = PatternFill("solid", fgColor=color(data[j - 2]))
+        w.freeze_panes = "C2"
+        if data:
+            w.auto_filter.ref = f"A1:{get_column_letter(len(head))}{len(data) + 1}"
+        return w
+
+    safe = sorted([x for x in rows if applicable(x)], key=lambda x: (-x.odoo_inv_2026, x.odoo_name or ""))
+    compact("1 · À valider (écritures sûres)",
+            ["ID Odoo", "Client (fiche Odoo)", "SIREN retenu", "Tiers Pennylane (nom · compte)", "Vaelan écrit dans PENNYLANE",
+             "À écrire dans ODOO", "Fact. 2026", "Valider (OUI/NON)", "Commentaire"],
+            [8, 34, 12, 34, 44, 40, 8, 12, 30],
+            [[x.odoo_id, x.odoo_name, x.siren, (f"{x.pl_name} · {x.pl_account}" if x.pl_name else "(à créer)"),
+              _short_pl(json.loads(x.plan_pl or "{}")), _short_od(json.loads(x.plan_odoo or "{}")), x.odoo_inv_2026, "OUI", ""] for x in safe],
+            valid_col=8)
+
+    QUI = {"doublon_odoo": ("Multi-établissements : fiche société parent + magasins en adresses de livraison", "Hassan (Odoo)"),
+           "conflit_identifiant": ("Identifiant partagé (email de groupe) : SIREN à trancher / emails distincts", "Yahya + Hassan"),
+           "sans_siren": ("SIREN à rechercher / saisir", "Yahya"), "absent_pennylane": ("Création à confirmer", "JS")}
+    blocked = sorted([x for x in rows if x.odoo_id and not applicable(x)], key=lambda x: (x.status, -x.odoo_inv_2026))
+    compact("2 · Bloqué (à traiter à part)",
+            ["Situation", "ID Odoo", "Client (fiche Odoo)", "SIREN retenu", "Tiers Pennylane", "Fact. 2026", "Pourquoi / quoi faire", "Qui", "Commentaire"],
+            [22, 8, 34, 12, 30, 8, 60, 16, 26],
+            [[LBL.get(x.status, x.status), x.odoo_id, x.odoo_name, x.siren, x.pl_name or "—", x.odoo_inv_2026,
+              (x.action_user or QUI.get(x.status, ("", ""))[0]), QUI.get(x.status, ("", "à définir"))[1] if x.mode != "SAISIE" else "Yahya", ""] for x in blocked],
+            color=lambda v: {"Doublon Odoo": "F8D2D5", "Conflit d'identifiant": "FCE8CC"}.get(v[0], "FFF3BF"))
+
+    dups = [x for x in rows if x.status == "doublon_pennylane"]
+    compact("3 · Doublons Pennylane (fusion)",
+            ["ID Odoo", "Client (fiche Odoo)", "Tiers Pennylane CONSERVÉ (nom · compte)", "Tiers Pennylane à fusionner dedans", "Fait (OUI/NON)"],
+            [8, 34, 40, 70, 12],
+            [[x.odoo_id, x.odoo_name, f"{x.pl_name} · {x.pl_account}", x.pl_dups or "", ""] for x in dups], valid_col=5)
+
+    orph = sorted([x for x in rows if not x.odoo_id], key=lambda x: -x.pl_lines_2026)
+    compact("4 · Orphelins Pennylane",
+            ["Tiers Pennylane", "Compte", "Écritures", "Écr. 2026", "Solde", "Constat", "Décision"],
+            [40, 12, 9, 9, 12, 50, 26],
+            [[x.pl_name, x.pl_account, x.pl_lines, x.pl_lines_2026, x.pl_solde, x.annuaire or x.action_user or "", ""] for x in orph])
+
+    # ---- feuilles DÉTAILLÉES (toutes les colonnes, pour référence) ----
     order = {"MANUEL": 0, "A_VALIDER": 1, "SAISIE": 2, "AUTO": 3, "RIEN": 4}
-    sheet("Correspondance", sorted([x for x in rows if x.odoo_id], key=lambda x: (order.get(x.mode, 9), -x.odoo_inv_2026)))
-    sheet("Orphelins Pennylane", sorted([x for x in rows if not x.odoo_id], key=lambda x: -x.pl_lines_2026))
+    sheet("Détail complet", sorted([x for x in rows if x.odoo_id], key=lambda x: (order.get(x.mode, 9), -x.odoo_inv_2026)))
+    sheet("Détail orphelins", sorted([x for x in rows if not x.odoo_id], key=lambda x: -x.pl_lines_2026))
     buf = io.BytesIO(); wb.save(buf)
     return buf.getvalue()
 
@@ -635,17 +733,7 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane"):
     audit = [["cible", "id", "nom", "champs", "resultat"]]
     done = errs = skipped = 0
 
-    def _applicable(r):
-        """Seules les lignes SÛRES sont écrites : identifiants d'un tiers rapproché sans ambiguïté
-        (ok / sans identifiant commun / canonique d'un doublon Pennylane) et créations AUTO.
-        Jamais : SIREN à valider ou à rechercher, doublons Odoo (fiche survivante inconnue), conflits."""
-        if not r.odoo_id or r.mode in ("A_VALIDER", "SAISIE") or r.siren_source == "annuaire":
-            return False
-        if r.status in ("conflit_identifiant", "doublon_odoo", "sans_siren", "orphelin_pennylane"):
-            return False
-        if r.status == "absent_pennylane":
-            return r.mode == "AUTO"
-        return r.status in ("ok", "sans_identifiant_commun", "doublon_pennylane")
+    _applicable = applicable
 
     for i, r in enumerate(rows):
         if not _applicable(r):
