@@ -926,12 +926,21 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
         rows = s.exec(select(TiersMatch).where(TiersMatch.company_id == company.id, TiersMatch.kind == kind)).all()
     oc = odoo.for_company(company_code)
     pl = pennylane.for_company(company_code)
-    audit = [["cible", "id_odoo", "nom", "siren", "siren_valide_par", "base_appariement", "tiers_pennylane", "compte", "champs_ecrits", "valeurs_avant", "resultat"]]
+    audit = [["cible", "id_odoo", "nom", "siren", "siren_valide_par", "base_appariement", "ecriture_validee_par", "tiers_pennylane", "compte", "champs_ecrits", "valeurs_avant", "resultat"]]
     done = errs = skipped = 0
 
     _applicable = applicable
 
-    excluded = set(int(x) for x in (exclude_ids or []))
+    # validations d'écriture du client (fichier retourné) : OUI par fiche + mises de côté (Setting)
+    def _setting_json(key, default):
+        with Session(engine) as s:
+            st = s.exec(select(Setting).where(Setting.company_code == company_code, Setting.key == key)).first()
+        try:
+            return json.loads(st.value) if st else default
+        except Exception:
+            return default
+    apply_ok = {int(k): v for k, v in _setting_json(f"tiers:{kind}:apply_ok", {}).items()}
+    excluded = set(int(x) for x in (exclude_ids if exclude_ids is not None else _setting_json(f"tiers:{kind}:apply_exclude", [])))
     lines_report = []
 
     def _before(r):
@@ -945,8 +954,8 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
             continue
         if r.odoo_id in excluded:
             skipped += 1
-            audit.append([target, r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, r.pl_name, r.pl_account,
-                          "", "", "EXCLU par l'utilisateur (NON dans le fichier de validation)"])
+            audit.append([target, r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, "mise de côté", r.pl_name, r.pl_account,
+                          "", "", "EXCLU par l'utilisateur (mis de côté dans le fichier de validation)"])
             continue
         plan = json.loads((r.plan_pl if target == "pennylane" else r.plan_odoo) or "{}")
         if not plan:
@@ -963,17 +972,17 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
                     body = {k: v for k, v in plan.items() if k != "billing_iban"}
                     code, resp = pl.send_json("PUT", K["pl_put"].format(id=r.pl_id), body)
                 ok = 200 <= code < 300
-                audit.append(["pennylane", r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates,
+                audit.append(["pennylane", r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, apply_ok.get(r.odoo_id, "—"),
                               r.pl_name or "(création)", r.pl_account or "", json.dumps(body, ensure_ascii=False),
                               json.dumps(before, ensure_ascii=False), "ok" if ok else f"HTTP {code} {str(resp)[:120]}"])
             else:
                 body = {k: v for k, v in plan.items() if k in ("vat", "company_registry", "email", "ref")}
                 oc.execute("res.partner", "write", [[r.odoo_id], body])
                 ok = True
-                audit.append(["odoo", r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, r.pl_name or "", r.pl_account or "",
+                audit.append(["odoo", r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, apply_ok.get(r.odoo_id, "—"), r.pl_name or "", r.pl_account or "",
                               json.dumps(body, ensure_ascii=False), json.dumps(before, ensure_ascii=False), "ok"])
             avant = ", ".join(f"{k}={v or 'vide'}" for k, v in before.items()) or "—"
-            lines_report.append(f"{'✔' if ok else '✘'} #{r.odoo_id} {r.odoo_name} — SIREN {r.siren or '—'} ({r.siren_src_detail})\n"
+            lines_report.append(f"{'✔' if ok else '✘'} #{r.odoo_id} {r.odoo_name} — SIREN {r.siren or '—'} ({r.siren_src_detail}) — écriture validée : {apply_ok.get(r.odoo_id, '—')}\n"
                                 f"    tiers Pennylane : {r.pl_name or '(création)'} {r.pl_account or ''} — {r.candidates}\n"
                                 f"    écrit : {_short_pl(plan) if target == 'pennylane' else _short_od(plan)}\n"
                                 f"    avant : {avant}")
@@ -990,7 +999,7 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
                 errs += 1
         except Exception as e:
             errs += 1
-            audit.append([target, r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, r.pl_name or "", r.pl_account or "",
+            audit.append([target, r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, apply_ok.get(r.odoo_id, "—"), r.pl_name or "", r.pl_account or "",
                           json.dumps(plan, ensure_ascii=False), json.dumps(before, ensure_ascii=False), str(e)[:150]])
             lines_report.append(f"✘ #{r.odoo_id} {r.odoo_name} — ERREUR : {str(e)[:150]}")
         time.sleep(0.2)
@@ -1007,6 +1016,7 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
          "BASE : cadrage Vaelan (lecture Odoo + Pennylane), SIREN validés par le client (fichiers Yahya du 03/09/2026 et du 05/09/2026,",
          "retourné le 10/09/2026), règle du connecteur Pennylane (rapprochement dès qu'un identifiant est commun : email, compte tiers,",
          "SIREN/SIRET/TVA). Seules les lignes SÛRES sont écrites : tiers rapproché sans ambiguïté, SIREN validé ou saisi, jamais d'IBAN.", "",
+         f"VALIDATION : {len(apply_ok)} fiche(s) validée(s) OUI par le client dans le fichier retourné · {len(excluded)} mise(s) de côté", "",
          f"RÉSULTAT : {done} écriture(s) · {errs} erreur(s) · {skipped} exclue(s) par l'utilisateur", "",
          "== DÉTAIL DES ÉCRITURES (une par fiche : base, ce qui a été écrit, valeurs avant) =="] + lines_report + ["", "== CE QUI RESTE À FAIRE (non écrit, et pourquoi) =="]
     LBL = {"doublon_odoo": "Doublon Odoo — fiche société parent + magasins en adresses de livraison (Hassan)",
