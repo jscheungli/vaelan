@@ -952,6 +952,8 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
     for i, r in enumerate(rows):
         if not _applicable(r):
             continue
+        if apply_ok and r.odoo_id not in apply_ok and r.odoo_id not in excluded:
+            continue                     # non validée dans le fichier retourné : pas d'écriture
         if r.odoo_id in excluded:
             skipped += 1
             audit.append([target, r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, "mise de côté", r.pl_name, r.pl_account,
@@ -1003,6 +1005,57 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
                           json.dumps(plan, ensure_ascii=False), json.dumps(before, ensure_ascii=False), str(e)[:150]])
             lines_report.append(f"✘ #{r.odoo_id} {r.odoo_name} — ERREUR : {str(e)[:150]}")
         time.sleep(0.2)
+
+    # ---- corrections tranchées par le client (Setting tiers:<kind>:corrections) : dénomination légale + SIREN,
+    # fusion de fiches Odoo (assistant de fusion natif) — même audit, mêmes valeurs « avant » ----
+    for corr in _setting_json(f"tiers:{kind}:corrections", []):
+        oid = int(corr.get("odoo_id") or 0)
+        r = next((x for x in rows if x.odoo_id == oid), None)
+        why = corr.get("why", "")
+        try:
+            if corr.get("merge_into"):
+                if target != "odoo":
+                    continue
+                dst = int(corr["merge_into"])
+                wiz = oc.execute("base.partner.merge.automatic.wizard", "create",
+                                 [{"partner_ids": [(6, 0, [oid, dst])], "dst_partner_id": dst}])
+                oc.execute("base.partner.merge.automatic.wizard", "action_merge", [[wiz]])
+                audit.append(["odoo", oid, (r.odoo_name if r else ""), "", why, "", "JS 10/09/2026 (correction)", "", "",
+                              f"FUSION #{oid} → #{dst}", "", "ok"])
+                lines_report.append(f"✔ #{oid} fusionnée dans #{dst} (Odoo) — {why}")
+                done += 1
+                continue
+            siren, name = corr.get("siren"), corr.get("name")
+            tva = _tva(siren) if siren else None
+            if target == "pennylane":
+                if not r or not r.pl_id:
+                    continue
+                body = {"name": name, "reg_no": siren, "vat_number": tva, "reference": f"ODOO_{oid}"}
+                before = {"name": r.pl_name, "reg_no": r.pl_reg_no, "vat_number": r.pl_vat, "reference": r.pl_reference}
+                code, resp = pl.send_json("PUT", K["pl_put"].format(id=r.pl_id), body)
+                ok = 200 <= code < 300
+                res = "ok" if ok else f"HTTP {code} {str(resp)[:120]}"
+            else:
+                body = {"name": name, "vat": tva}
+                if oc.has_field("res.partner", "company_registry"):
+                    body["company_registry"] = siren
+                before = {"name": r.odoo_name if r else "", "vat": r.odoo_vat if r else "", "company_registry": r.odoo_registry if r else ""}
+                oc.execute("res.partner", "write", [[oid], body])
+                ok, res = True, "ok"
+            audit.append([target, oid, (r.odoo_name if r else ""), siren, why, (r.candidates if r else ""),
+                          "JS 10/09/2026 (correction tranchée par les dates / annuaire)", (r.pl_name if r else ""), (r.pl_account if r else ""),
+                          json.dumps(body, ensure_ascii=False), json.dumps(before, ensure_ascii=False), res])
+            lines_report.append(f"{'✔' if ok else '✘'} #{oid} {(r.odoo_name if r else '')} — CORRECTION : {name} · SIREN {siren} — {why}\n"
+                                f"    avant : {json.dumps(before, ensure_ascii=False)}")
+            done += 1 if ok else 0
+            errs += 0 if ok else 1
+        except Exception as e:
+            errs += 1
+            audit.append([target, oid, (r.odoo_name if r else ""), corr.get("siren", ""), why, "", "correction", "", "",
+                          json.dumps(corr, ensure_ascii=False), "", str(e)[:150]])
+            lines_report.append(f"✘ #{oid} correction en erreur : {str(e)[:150]}")
+        time.sleep(0.2)
+
     buf = io.StringIO(); csv.writer(buf, delimiter=";").writerows(audit)
     stamp = datetime.utcnow() + _TZ
     ctx.add_artifact("csv", f"{stamp.strftime('%Y%m%d %H%M')} audit_tiers_{target}_{company_code} T{ctx.run_id}.csv",
