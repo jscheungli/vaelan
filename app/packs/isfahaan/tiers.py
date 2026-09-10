@@ -163,7 +163,8 @@ def _pull_odoo(oc, K, oinv=None):
     """Fiches Odoo de tête du périmètre : rang > 0 (facturées dans Odoo), OU compte de tiers en référence
     (fiches reprises d'Inqom, ex. ref 41100025 — customer_rank reste 0 tant qu'aucune facture Odoo n'est postée),
     OU factures de ce type. Les fiches d'un AUTRE rôle seulement (ex. fournisseur pur, ref 401…) sont exclues."""
-    fields = ["name", "vat", "ref", "email", "phone", "is_company", "customer_rank", "supplier_rank", "active"]
+    fields = ["name", "vat", "ref", "email", "phone", "is_company", "customer_rank", "supplier_rank", "active",
+              "street", "street2", "zip", "city", "country_id"]
     if oc.has_field("res.partner", "company_registry"):
         fields.append("company_registry")
     if oc.has_field("res.partner", "siret"):
@@ -543,11 +544,19 @@ def run_tiers_sync(ctx, company_code, kind="client"):
                 plan_pl["vat_number"] = tva
             if p["_em"] - canon["_em"]:
                 plan_pl["emails"] = sorted(canon["_em"] | p["_em"])
-            if str(canon.get("reference") or "") != f"ODOO_{p['id']}":
+            # référence ODOO_<id> sur le canonique — SAUF si un doublon Pennylane (créé par le connecteur) la porte
+            # déjà : deux tiers avec la même référence embrouilleraient le connecteur ; elle sera posée après la fusion
+            dup_has_ref = any(str(t.get("reference") or "") == f"ODOO_{p['id']}" for t in dups)
+            if str(canon.get("reference") or "") != f"ODOO_{p['id']}" and not dup_has_ref:
                 plan_pl["reference"] = f"ODOO_{p['id']}"
         elif siren:
             plan_pl["create"] = {"name": p.get("name"), "reg_no": siren, "vat_number": tva,
                                  "emails": sorted(p["_em"])}
+            # Pennylane exige une adresse de facturation à la création (HTTP 400 « billing_address » sinon)
+            if p.get("street") and p.get("city"):
+                plan_pl["create"]["billing_address"] = {
+                    "address": " ".join(x for x in [p.get("street"), p.get("street2") or ""] if x).strip(),
+                    "postal_code": str(p.get("zip") or ""), "city": p.get("city"), "country_alpha2": "FR"}
         if tva and re.sub(r"\s", "", str(p.get("vat") or "")).upper() != tva:
             plan_od["vat"] = tva
         if "company_registry" in p and not re.sub(r"\D", "", str(p.get("company_registry") or "")) and (siret or siren):
