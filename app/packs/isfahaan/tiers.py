@@ -327,7 +327,7 @@ def _explain_orphan(t, allp, K):
 
 
 def _validated_sources(company_code, kind):
-    """Provenance des SIREN validés (Setting tiers:<kind>:siren_validated_src = JSON {odoo_id: « Yahya · fichier … »})."""
+    """Provenance des SIREN validés (Setting tiers:<kind>:siren_validated_src = JSON {odoo_id: « le département Achat · fichier … »})."""
     with Session(engine) as s:
         st = s.exec(select(Setting).where(Setting.company_code == company_code,
                                           Setting.key == f"tiers:{kind}:siren_validated_src")).first()
@@ -531,8 +531,8 @@ def run_tiers_sync(ctx, company_code, kind="client"):
             others = near_names(p, set())
             base = "aucun tiers Pennylane" + ((" · les plus proches par le nom : " + " ; ".join(others)) if others else "")
         src_detail = {"validé": val_src.get(p["id"], "validé par le client (fichier non tracé)"),
-                      "odoo": "SIREN saisi dans la fiche Odoo (non validé par Yahya)",
-                      "pennylane": "SIREN porté par le tiers Pennylane rapproché (non validé par Yahya)",
+                      "odoo": "SIREN saisi dans la fiche Odoo (non validé par le département Achat)",
+                      "pennylane": "SIREN porté par le tiers Pennylane rapproché (non validé par le département Achat)",
                       "annuaire": "proposition annuaire (à valider)"}.get(src, "aucun SIREN")
 
         plan_pl, plan_od = {}, {}
@@ -885,15 +885,15 @@ def _excel(rows, company, kind, stamp):
             valid_col=10, color=lambda v: "FFF3BF" if (v[5] or "").startswith("nom seul") or "non validé" in (v[3] or "") else "FFFFFF")
 
     QUI = {"doublon_odoo": ("Multi-établissements : fiche société parent + magasins en adresses de livraison", "Hassan (Odoo)"),
-           "conflit_identifiant": ("Identifiant partagé (email de groupe) : SIREN à trancher / emails distincts", "Yahya + Hassan"),
-           "sans_siren": ("SIREN à rechercher / saisir", "Yahya"), "absent_pennylane": ("Création à confirmer", "JS")}
+           "conflit_identifiant": ("Identifiant partagé (email de groupe) : SIREN à trancher / emails distincts", "le département Achat + Hassan"),
+           "sans_siren": ("SIREN à rechercher / saisir", "le département Achat"), "absent_pennylane": ("Création à confirmer", "JS")}
     blocked = sorted([x for x in rows if x.odoo_id and not applicable(x)], key=lambda x: (x.status, -x.odoo_inv_2026))
     compact("2 · Bloqué (à traiter à part)",
             ["Situation", "ID Odoo", "Client (fiche Odoo)", "SIREN retenu", "Tiers Pennylane", "Fact. 2026", "Pourquoi / quoi faire", "Qui", "Commentaire"],
             [22, 8, 34, 12, 30, 8, 60, 16, 26],
             [[SIT(x), x.odoo_id, x.odoo_name, x.siren, x.pl_name or "—", x.odoo_inv_2026,
               (x.action_user or QUI.get(x.status, ("", ""))[0]) + ((" — " + x.candidates) if x.mode == "A_VALIDER" and x.candidates else ""),
-              ("Yahya / JS" if x.mode == "A_VALIDER" else (QUI.get(x.status, ("", "à définir"))[1] if x.mode != "SAISIE" else "Yahya")), ""] for x in blocked],
+              ("le département Achat / JS" if x.mode == "A_VALIDER" else (QUI.get(x.status, ("", "à définir"))[1] if x.mode != "SAISIE" else "le département Achat")), ""] for x in blocked],
             color=lambda v: {"Doublon Odoo": "F8D2D5", "Conflit d'identifiant": "FCE8CC", "SIREN divergent (même tiers)": "FCE8CC"}.get(v[0], "FFF3BF"))
 
     dups = [x for x in rows if x.status == "doublon_pennylane"]
@@ -1066,15 +1066,15 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclud
         rem[r.status].append(r)
     R = [f"RAPPORT D'APPLICATION — {K['label'].upper()} ODOO ↔ PENNYLANE — cible {target.upper()} — {company.name}",
          f"Exécuté le {stamp.strftime('%d/%m/%Y %H:%M')} (heure de La Réunion) par Vaelan · tâche #{ctx.run_id}", "",
-         "BASE : cadrage Vaelan (lecture Odoo + Pennylane), SIREN validés par le client (fichiers Yahya du 03/09/2026 et du 05/09/2026,",
+         "BASE : cadrage Vaelan (lecture Odoo + Pennylane), SIREN validés par le client (fichiers du département Achat du 03/09/2026 et du 05/09/2026,",
          "retourné le 10/09/2026), règle du connecteur Pennylane (rapprochement dès qu'un identifiant est commun : email, compte tiers,",
          "SIREN/SIRET/TVA). Seules les lignes SÛRES sont écrites : tiers rapproché sans ambiguïté, SIREN validé ou saisi, jamais d'IBAN.", "",
          f"VALIDATION : {len(apply_ok)} fiche(s) validée(s) OUI par le client dans le fichier retourné · {len(excluded)} mise(s) de côté", "",
          f"RÉSULTAT : {done} écriture(s) · {errs} erreur(s) · {skipped} exclue(s) par l'utilisateur", "",
          "== DÉTAIL DES ÉCRITURES (une par fiche : base, ce qui a été écrit, valeurs avant) =="] + lines_report + ["", "== CE QUI RESTE À FAIRE (non écrit, et pourquoi) =="]
     LBL = {"doublon_odoo": "Doublon Odoo — fiche société parent + magasins en adresses de livraison (Hassan)",
-           "conflit_identifiant": "Conflit d'identifiant (email de groupe partagé) — SIREN à trancher / emails distincts (Yahya + Hassan)",
-           "doublon_pennylane": "Doublon Pennylane — fusion dans l'interface Pennylane", "sans_siren": "SIREN à rechercher (Yahya)",
+           "conflit_identifiant": "Conflit d'identifiant (email de groupe partagé) — SIREN à trancher / emails distincts (le département Achat + Hassan)",
+           "doublon_pennylane": "Doublon Pennylane — fusion dans l'interface Pennylane", "sans_siren": "SIREN à rechercher (le département Achat)",
            "absent_pennylane": "Absent de Pennylane — création à confirmer", "ok": "Rapproché mais SIREN à saisir (mode SAISIE)",
            "sans_identifiant_commun": "Sans identifiant commun — SIREN à saisir (mode SAISIE)"}
     for st, lst in rem.items():
