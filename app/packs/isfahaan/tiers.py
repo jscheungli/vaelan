@@ -57,8 +57,20 @@ def _clean(s):
     return "".join(c for c in s if not unicodedata.combining(c)).upper()
 
 
+_ABBR = {"ST": "SAINT", "STE": "SAINTE", "SNT": "SAINT", "BD": "BOULEVARD", "AV": "AVENUE", "CC": "CENTRE COMMERCIAL"}
+_STOP = {"DE", "DU", "DES", "LA", "LE", "LES", "ET", "EN", "AU", "AUX", "THE", "AND"}
+
+
 def _toks(s):
-    return {t for t in re.split(r"[^A-Z0-9]+", _clean(s)) if t and t not in _LEGAL and len(t) > 1}
+    """Mots significatifs d'un nom : accents et casse neutralisés, mentions entre parenthèses ignorées
+    (ex. « (HYPER CK) », « (SARL BPM) »), abréviations dépliées (ST → SAINT), formes juridiques et mots vides retirés."""
+    txt = re.sub(r"\([^)]*\)", " ", _clean(s))
+    out = set()
+    for t in re.split(r"[^A-Z0-9]+", txt):
+        if not t or t in _LEGAL or t in _STOP or len(t) < 2:
+            continue
+        out.update(_ABBR.get(t, t).split())
+    return out
 
 
 def _ids(*vals):
@@ -147,13 +159,33 @@ def _annuaire(name, cache):
 
 
 # ------------------------------------------------------------------ lectures
-def _pull_odoo(oc, K):
-    fields = ["name", "vat", "ref", "email", "phone", "is_company", K["rank"], "active"]
+def _pull_odoo(oc, K, oinv=None):
+    """Fiches Odoo de tête du périmètre : rang > 0 (facturées dans Odoo), OU compte de tiers en référence
+    (fiches reprises d'Inqom, ex. ref 41100025 — customer_rank reste 0 tant qu'aucune facture Odoo n'est postée),
+    OU factures de ce type. Les fiches d'un AUTRE rôle seulement (ex. fournisseur pur, ref 401…) sont exclues."""
+    fields = ["name", "vat", "ref", "email", "phone", "is_company", "customer_rank", "supplier_rank", "active"]
     if oc.has_field("res.partner", "company_registry"):
         fields.append("company_registry")
     if oc.has_field("res.partner", "siret"):
         fields.append("siret")
-    return oc.search_read("res.partner", [("parent_id", "=", False), (K["rank"], ">", 0)], fields)
+    other_acc = "401" if K["acc"] == "411" else "411"
+    out = []
+    for p in oc.search_read("res.partner", [("parent_id", "=", False)], fields):
+        ref = str(p.get("ref") or "").strip()
+        has_inv = bool(oinv and oinv.get(p["id"]))
+        if (p.get(K["rank"]) or 0) > 0 or has_inv:
+            out.append(p)
+        elif ref and not ref.startswith(other_acc):
+            out.append(p)                       # compte de tiers hérité (411…, ou libellé sans préfixe ex. ISFAHAA)
+    return out
+
+
+def _same_account(ref, account):
+    """ref Odoo « 41100025 » ou « ISFAHAA » ↔ compte Pennylane « 41100025 » / « 411ISFAHAA »."""
+    ref, account = str(ref or "").strip().upper(), str(account or "").strip().upper()
+    if not ref or not account:
+        return False
+    return ref == account or account == "411" + ref or account == "401" + ref or (len(ref) >= 5 and account.endswith(ref))
 
 
 def _odoo_activity(oc, K):
@@ -200,6 +232,47 @@ def _pl_accounts(pl):
     return acc
 
 
+_INV_RE = re.compile(r"\b(F[AV]|AV|RF)/\d{2}/\d{4,6}\b")     # numéros de pièces Odoo (FA/26/01699, AV/26/00012…)
+
+
+def _odoo_invoices(oc, K):
+    """Factures Odoo postées par partenaire commercial : numéros {pid: {« FA/26/01699 »}} et (date, montant TTC) {pid: [(date, montant)]}."""
+    names, amts = defaultdict(set), defaultdict(list)
+    try:
+        for m in oc.search_read("account.move", [("move_type", "in", K["moves"]), ("state", "=", "posted")],
+                                ["name", "commercial_partner_id", "invoice_date", "amount_total"]):
+            pid = (m.get("commercial_partner_id") or [None])[0]
+            if not pid:
+                continue
+            if m.get("name"):
+                names[pid].add(m["name"])
+            if m.get("invoice_date") and m.get("amount_total"):
+                amts[pid].append((str(m["invoice_date"]), round(float(m["amount_total"]), 2)))
+    except Exception:
+        pass
+    return names, amts
+
+
+def _amount_matches(odoo_amts, pl_amts, days=7):
+    """Factures Odoo (date, TTC) retrouvées dans les lignes Pennylane (date ±days, même montant au centime)."""
+    if not odoo_amts or not pl_amts:
+        return 0
+    from datetime import date as _d
+    by_amt = defaultdict(list)
+    for d, a in pl_amts:
+        by_amt[a].append(d)
+    n = 0
+    for d, a in odoo_amts:
+        for d2 in by_amt.get(a, []):
+            try:
+                if abs((_d.fromisoformat(d[:10]) - _d.fromisoformat(d2[:10])).days) <= days:
+                    n += 1
+                    break
+            except Exception:
+                pass
+    return n
+
+
 def _pl_activity(pl, tiers, acc, ctx, base_step):
     act = {}
     for i, t in enumerate(tiers):
@@ -210,14 +283,58 @@ def _pl_activity(pl, tiers, acc, ctx, base_step):
         except Exception:
             lines = []
         dates = sorted(l.get("date") for l in lines if l.get("date"))
+        labels = " ".join(str(l.get("label") or "") for l in lines)
         act[t["id"]] = {"account": a.get("number"), "n": len(lines),
                         "n26": sum(1 for x in dates if x >= "2026-01-01"),
                         "last": dates[-1] if dates else None,
-                        "solde": round(sum(float(l.get("debit") or 0) - float(l.get("credit") or 0) for l in lines), 2)}
+                        "solde": round(sum(float(l.get("debit") or 0) - float(l.get("credit") or 0) for l in lines), 2),
+                        "inv": {m.group(0) for m in _INV_RE.finditer(labels)},
+                        "amts": [(l.get("date"), round(float(l.get("debit") or 0), 2)) for l in lines if float(l.get("debit") or 0) > 0],
+                        "rfa": bool(re.search(r"\bRFA\b|REMISE|RISTOURNE", labels, re.I)),
+                        "sample": [str(l.get("label") or "")[:60] for l in sorted(lines, key=lambda x: x.get("date") or "")[-3:]]}
         if (i + 1) % 20 == 0:
             ctx.progress(base_step, None, step=f"activité Pennylane {i + 1}/{len(tiers)}…")
         time.sleep(0.05)
     return act
+
+
+def _explain_orphan(t, allp, K):
+    """Pourquoi ce tiers Pennylane n'a pas de fiche Odoo du bon type : fiche Odoo d'un AUTRE rang (ex. fournisseur),
+    lignes de remises fournisseur (RFA) sur un compte client, ou vraiment inconnu d'Odoo."""
+    tk, ids = t["_tk"], t["_ids"]
+    hits = [q for q in allp if (ids and (q["_ids"] & ids)) or (tk and q["_tk"] and (q["_tk"] == tk or _jac(tk, q["_tk"]) >= 0.67))]
+    parts = []
+    for q in hits[:3]:
+        role = []
+        if (q.get("customer_rank") or 0) > 0:
+            role.append("client")
+        if (q.get("supplier_rank") or 0) > 0:
+            role.append("fournisseur")
+        state = []
+        if not q.get("active", True):
+            state.append("ARCHIVÉE")
+        if q.get("parent_id"):
+            state.append(f"contact rattaché à #{q['parent_id'][0]} « {q['parent_id'][1]} » ({q.get('type')})")
+        parts.append(f"fiche Odoo #{q['id']} « {q['name']} » = {' + '.join(role) or 'sans rôle'}"
+                     + (f" (compte {q.get('ref')})" if q.get("ref") else "") + (" · " + ", ".join(state) if state else "")
+                     + (" → hors périmètre " + K["label"] + " : pas d'activité de ce type dans Odoo" if not ((q.get(K["rank"]) or 0) > 0) else
+                        (" → exclue du cadrage car " + ", ".join(state) if state else " → aurait dû être rapprochée : à vérifier")))
+    if t["_a"].get("rfa"):
+        parts.append("lignes de remises / RFA fournisseur portées sur ce compte (ex. " + " ; ".join(t["_a"].get("sample", [])[:2]) + ")")
+    if not parts:
+        parts.append("aucune fiche Odoo de ce nom ni de cet identifiant (historique repris du FEC ?) · dernières lignes : " + " ; ".join(t["_a"].get("sample", [])[:2]))
+    return " · ".join(parts)
+
+
+def _validated_sources(company_code, kind):
+    """Provenance des SIREN validés (Setting tiers:<kind>:siren_validated_src = JSON {odoo_id: « Yahya · fichier … »})."""
+    with Session(engine) as s:
+        st = s.exec(select(Setting).where(Setting.company_code == company_code,
+                                          Setting.key == f"tiers:{kind}:siren_validated_src")).first()
+    try:
+        return {int(k): str(v) for k, v in json.loads(st.value).items()} if st else {}
+    except Exception:
+        return {}
 
 
 def _validated_sirens(company_code, kind):
@@ -242,8 +359,15 @@ def run_tiers_sync(ctx, company_code, kind="client"):
         raise RuntimeError("clés Odoo et Pennylane requises")
 
     ctx.progress(0, 6, step="lecture Odoo…")
-    partners = _pull_odoo(oc, K)
+    oinv, oamt = _odoo_invoices(oc, K)
+    partners = _pull_odoo(oc, K, oinv)
     oact = _odoo_activity(oc, K)
+    try:
+        allp = oc.execute("res.partner", "search_read", [[["active", "in", [True, False]]]],
+                          {"fields": ["name", "customer_rank", "supplier_rank", "ref", "vat", "company_registry", "active", "parent_id", "type"],
+                           "context": {"active_test": False}})
+    except Exception:
+        allp = []
     ctx.log(f"Odoo : {len(partners)} fiche(s) {K['label']} de tête")
     ctx.progress(1, 6, step="lecture Pennylane…")
     tiers = _pull_pl(pl, K)
@@ -252,6 +376,7 @@ def run_tiers_sync(ctx, company_code, kind="client"):
     ctx.progress(2, 6, step="activité des comptes Pennylane…")
     pact = _pl_activity(pl, tiers, acc, ctx, 2)
     validated = _validated_sirens(company_code, kind)
+    val_src = _validated_sources(company_code, kind)
 
     for t in tiers:
         t["_ids"] = _ids(t.get("reg_no"), t.get("vat_number"))
@@ -265,6 +390,11 @@ def run_tiers_sync(ctx, company_code, kind="client"):
         p["_tk"] = _toks(p.get("name"))
         p["_ref"] = str(p.get("ref") or "").strip()
         p["_a"] = oact.get(p["id"], {})
+        p["_inv"] = oinv.get(p["id"], set())
+        p["_amts"] = oamt.get(p["id"], [])
+    for q in allp:
+        q["_ids"] = _ids(q.get("company_registry"), q.get("vat"))
+        q["_tk"] = _toks(q.get("name"))
 
     ctx.progress(3, 6, step="matching + simulation du connecteur…")
     cache = {}
@@ -287,10 +417,19 @@ def run_tiers_sync(ctx, company_code, kind="client"):
                 via.add("email")
             if p["_ids"] & t["_ids"]:
                 via.add("fiscal")
-            if p["_ref"] and p["_ref"] == (t["_a"]["account"] or ""):
+            if _same_account(p["_ref"], t["_a"]["account"]):
                 via.add("compte")
             if t["_odoo"] == p["id"]:
                 via.add("ref_ODOO")
+            common_inv = p["_inv"] & t["_a"].get("inv", set())
+            if common_inv:
+                via.add(f"facture×{len(common_inv)}")
+            else:
+                # montant + date : indice FAIBLE (mêmes produits, mêmes prix d'une station à l'autre) → au moins 3 factures
+                # de plus de 50 € retrouvées au centime à ±7 jours, et jamais suffisant pour contredire un SIREN
+                nm = _amount_matches([(d, a) for d, a in p["_amts"] if a >= 50 and a % 100], t["_a"].get("amts", []))
+                if nm >= 3:
+                    via.add(f"montant+date×{nm}")
             if via:
                 out[t["id"]] = (t, via)
                 continue
@@ -299,18 +438,37 @@ def run_tiers_sync(ctx, company_code, kind="client"):
                 out[t["id"]] = (t, set())
         return out
 
-    def _drop_contradictions(cands, siren):
-        """un candidat qui porte un AUTRE SIREN n'est pas un doublon : c'est une autre société."""
+    def _drop_contradictions(cands, siren, p):
+        """un candidat qui porte un AUTRE SIREN n'est pas un doublon : c'est une autre société — SAUF si le nom est
+        identique ou si des factures Odoo sont dans son compte : c'est alors bien le même tiers, avec un SIREN à trancher."""
         if not siren:
-            return cands, []
-        kept, dropped = {}, []
+            return cands, [], []
+        kept, dropped, divergent = {}, [], []
         for tid, (t, via) in cands.items():
             s = _siren_of(t["_ids"])
             if s and s != siren:
-                dropped.append((t, via))
+                strong = (t["_tk"] and t["_tk"] == p["_tk"]) or any(v.startswith("facture") for v in via)
+                if strong:
+                    kept[tid] = (t, via)
+                    divergent.append((t, s))
+                else:
+                    dropped.append((t, via))
             else:
                 kept[tid] = (t, via)
-        return kept, dropped
+        return kept, dropped, divergent
+
+    def near_names(p, exclude_ids, n=3):
+        """Tiers Pennylane les plus proches par le nom (hors candidats retenus), même sous le seuil : prouve
+        qu'il n'existe pas d'autre correspondance plausible."""
+        sc = []
+        for t in tiers:
+            if t["id"] in exclude_ids or _collective(t) or not t["_tk"]:
+                continue
+            j = _jac(p["_tk"], t["_tk"])
+            if j > 0:
+                sc.append((j, t))
+        sc.sort(key=lambda x: -x[0])
+        return [f"{t['name']} ({t['_a']['account'] or '?'}) {j:.0%}" for j, t in sc[:n]]
 
     prelim = []
     for p in partners:
@@ -342,7 +500,7 @@ def run_tiers_sync(ctx, company_code, kind="client"):
         siret = _siret_of(p["_ids"])
         tva = _tva(siren)
         a = p["_a"]
-        cands, dropped = _drop_contradictions(cands, siren)
+        cands, dropped, divergent = _drop_contradictions(cands, siren, p)
         contra = [t for t, via in dropped if via]          # même email/compte mais AUTRE SIREN : à signaler
         # canonique = celui qui porte l'historique (écritures 2026, puis total, puis ref connecteur)
         ordered = sorted(cands.values(), key=lambda tv: (tv[0]["_a"]["n26"], tv[0]["_a"]["n"],
@@ -353,6 +511,29 @@ def run_tiers_sync(ctx, company_code, kind="client"):
             used.add(t["id"])
         # conflit d'identité : rapproché par identifiant fiscal mais noms sans aucun mot commun
         conflict = bool(canon) and "fiscal" in via and p["_tk"] and canon["_tk"] and not (p["_tk"] & canon["_tk"])
+        # ---- traçabilité ----
+        if canon:
+            if via:
+                base = "identifiant(s) commun(s) : " + ", ".join(sorted(via))
+                ci = sorted(p["_inv"] & canon["_a"].get("inv", set()))
+                if ci:
+                    base += f" (factures Odoo retrouvées dans le compte Pennylane, ex. {', '.join(ci[:3])})"
+            else:
+                base = f"nom seul : similarité {_jac(p['_tk'], canon['_tk']):.0%}" + (" (mots identiques)" if p["_tk"] == canon["_tk"] else "")
+            others = near_names(p, {t["id"] for t, _ in ordered})
+            base += (" · autres tiers PL proches : " + " ; ".join(others)) if others else " · aucun autre tiers PL proche"
+            dv = next((sv for t, sv in divergent if t["id"] == canon["id"]), None)
+            if dv:
+                base += f" · ⚠ SIREN DIVERGENT : Odoo/validé {siren} vs Pennylane {dv}"
+            if contra:
+                base += " · ⚠ email/compte aussi partagé avec « " + contra[0].get("name") + "  » (autre SIREN) : le connecteur pourrait confondre → emails distincts à prévoir dans Odoo"
+        else:
+            others = near_names(p, set())
+            base = "aucun tiers Pennylane" + ((" · les plus proches par le nom : " + " ; ".join(others)) if others else "")
+        src_detail = {"validé": val_src.get(p["id"], "validé par le client (fichier non tracé)"),
+                      "odoo": "SIREN saisi dans la fiche Odoo (non validé par Yahya)",
+                      "pennylane": "SIREN porté par le tiers Pennylane rapproché (non validé par Yahya)",
+                      "annuaire": "proposition annuaire (à valider)"}.get(src, "aucun SIREN")
 
         plan_pl, plan_od = {}, {}
         if canon:
@@ -376,8 +557,14 @@ def run_tiers_sync(ctx, company_code, kind="client"):
         if canon and not p["_ref"] and canon["_a"]["account"]:
             plan_od["ref"] = canon["_a"]["account"]
 
+        siren_div = next((sv for t, sv in divergent if canon and t["id"] == canon["id"]), None)
         # statut / mode / actions
-        if siren and len(siren_owner[siren]) > 1:
+        if siren_div:
+            status, mode = "ok", "A_VALIDER"
+            note = f"même tiers (nom/factures) mais SIREN divergent : Odoo/validé {siren} vs Pennylane {siren_div}"
+            act_u = f"TRANCHER le SIREN : {siren} (Odoo, {src_detail}) ou {siren_div} (Pennylane) ? — je n'écris rien tant que ce n'est pas tranché"
+            act_ia = "Après réponse : aligne le SIREN/TVA des deux côtés + référence ODOO"
+        elif siren and len(siren_owner[siren]) > 1:
             others = ", ".join(x.get("name") for x in siren_owner[siren] if x["id"] != p["id"])
             status, mode = "doublon_odoo", "MANUEL"
             note = (f"même SIREN {siren} que : {others} — Pennylane (et la facture électronique) identifient le tiers "
@@ -404,6 +591,11 @@ def run_tiers_sync(ctx, company_code, kind="client"):
                 note = f"aucun identifiant commun ; tiers Pennylane PROCHE : « {near.get('name')} » (compte {near['_a']['account']}, {near['_a']['n']} écr.)"
                 act_u = f"TRANCHER : « {near.get('name')} » est-il ce client ? OUI = je l'équipe (SIREN {siren or '?'}) ; NON = je crée un tiers"
                 act_ia = "Après réponse : équipe le tiers existant OU crée le tiers Pennylane"
+            elif not p["_inv"] and not (p.get(K["rank"]) or 0):
+                status, mode = "absent_pennylane", "RIEN"
+                note = "fiche Odoo sans facture ni tiers Pennylane : rien à créer tant qu'elle n'est pas facturée"
+                act_u = "Rien"
+                act_ia = "Rien (le connecteur créera le tiers à la première facture ; re-contrôle ensuite)"
             elif siren and src in ("odoo", "validé", "pennylane"):
                 status, mode = "absent_pennylane", "AUTO"
                 note = "aucun tiers Pennylane ne partage un identifiant ni un nom proche"
@@ -478,7 +670,7 @@ def run_tiers_sync(ctx, company_code, kind="client"):
             pl_dups=" | ".join(f"#{t['id']} {t.get('name')} · cpte {t['_a']['account']} · {t['_a']['n']} écr."
                                for t in dups) or None,
             match_via=", ".join(sorted(via)) or None, status=status, mode=mode,
-            action_user=act_u, action_ia=act_ia,
+            action_user=act_u, action_ia=act_ia, siren_src_detail=src_detail, candidates=base,
             plan_pl=json.dumps(plan_pl, ensure_ascii=False) if plan_pl else None,
             plan_odoo=json.dumps(plan_od, ensure_ascii=False) if plan_od else None,
             last_synced=now))
@@ -503,7 +695,7 @@ def run_tiers_sync(ctx, company_code, kind="client"):
             pl_reg_no=t.get("reg_no") or None, pl_vat=t.get("vat_number") or None,
             pl_emails=", ".join(sorted(t["_em"])) or None, pl_reference=t.get("reference") or None,
             pl_lines=t["_a"]["n"], pl_lines_2026=t["_a"]["n26"], pl_solde=t["_a"]["solde"],
-            siren=_siren_of(t["_ids"]), status="orphelin_pennylane", mode="MANUEL",
+            siren=_siren_of(t["_ids"]), status="orphelin_pennylane", mode="MANUEL", candidates=_explain_orphan(t, allp, K),
             action_user=act_u, action_ia="Rien — je re-contrôle après", last_synced=now,
             annuaire=note))
 
@@ -604,6 +796,9 @@ def _excel(rows, company, kind, stamp):
     LBL = {"ok": "OK", "sans_identifiant_commun": "Sans identifiant commun", "doublon_pennylane": "Doublon Pennylane",
            "doublon_odoo": "Doublon Odoo", "conflit_identifiant": "Conflit d'identifiant",
            "absent_pennylane": "Absent de Pennylane", "sans_siren": "Sans SIREN", "orphelin_pennylane": "Orphelin Pennylane"}
+    SIT = lambda x: ("SIREN divergent (même tiers)" if (x.mode == "A_VALIDER" and "DIVERGENT" in (x.candidates or "")) else
+                     ("SIREN à valider (annuaire)" if x.mode == "A_VALIDER" and x.siren_source == "annuaire" else
+                      ("Tiers proche à confirmer" if x.mode == "A_VALIDER" else LBL.get(x.status, x.status))))
     white = Font(bold=True, color="FFFFFF"); hdr = PatternFill("solid", fgColor="1F2430")
     thin = Border(bottom=Side(style="thin", color="DDDDDD")); bold = Font(bold=True)
     wb = Workbook(); ws = wb.active; ws.title = "Synthèse"
@@ -682,12 +877,12 @@ def _excel(rows, company, kind, stamp):
 
     safe = sorted([x for x in rows if applicable(x)], key=lambda x: (-x.odoo_inv_2026, x.odoo_name or ""))
     compact("1 · À valider (écritures sûres)",
-            ["ID Odoo", "Client (fiche Odoo)", "SIREN retenu", "Tiers Pennylane (nom · compte)", "Vaelan écrit dans PENNYLANE",
-             "À écrire dans ODOO", "Fact. 2026", "Valider (OUI/NON)", "Commentaire"],
-            [8, 34, 12, 34, 44, 40, 8, 12, 30],
-            [[x.odoo_id, x.odoo_name, x.siren, (f"{x.pl_name} · {x.pl_account}" if x.pl_name else "(à créer)"),
-              _short_pl(json.loads(x.plan_pl or "{}")), _short_od(json.loads(x.plan_odoo or "{}")), x.odoo_inv_2026, "OUI", ""] for x in safe],
-            valid_col=8)
+            ["ID Odoo", "Client (fiche Odoo)", "SIREN retenu", "SIREN validé par", "Tiers Pennylane (nom · compte)",
+             "Base de l'appariement (et autres candidats)", "Vaelan écrit dans PENNYLANE", "À écrire dans ODOO", "Fact. 2026", "Valider (OUI/NON)", "Commentaire"],
+            [8, 32, 12, 30, 32, 52, 42, 38, 8, 12, 28],
+            [[x.odoo_id, x.odoo_name, x.siren, x.siren_src_detail, (f"{x.pl_name} · {x.pl_account}" if x.pl_name else "(à créer)"),
+              x.candidates, _short_pl(json.loads(x.plan_pl or "{}")), _short_od(json.loads(x.plan_odoo or "{}")), x.odoo_inv_2026, "OUI", ""] for x in safe],
+            valid_col=10, color=lambda v: "FFF3BF" if (v[5] or "").startswith("nom seul") or "non validé" in (v[3] or "") else "FFFFFF")
 
     QUI = {"doublon_odoo": ("Multi-établissements : fiche société parent + magasins en adresses de livraison", "Hassan (Odoo)"),
            "conflit_identifiant": ("Identifiant partagé (email de groupe) : SIREN à trancher / emails distincts", "Yahya + Hassan"),
@@ -696,9 +891,10 @@ def _excel(rows, company, kind, stamp):
     compact("2 · Bloqué (à traiter à part)",
             ["Situation", "ID Odoo", "Client (fiche Odoo)", "SIREN retenu", "Tiers Pennylane", "Fact. 2026", "Pourquoi / quoi faire", "Qui", "Commentaire"],
             [22, 8, 34, 12, 30, 8, 60, 16, 26],
-            [[LBL.get(x.status, x.status), x.odoo_id, x.odoo_name, x.siren, x.pl_name or "—", x.odoo_inv_2026,
-              (x.action_user or QUI.get(x.status, ("", ""))[0]), QUI.get(x.status, ("", "à définir"))[1] if x.mode != "SAISIE" else "Yahya", ""] for x in blocked],
-            color=lambda v: {"Doublon Odoo": "F8D2D5", "Conflit d'identifiant": "FCE8CC"}.get(v[0], "FFF3BF"))
+            [[SIT(x), x.odoo_id, x.odoo_name, x.siren, x.pl_name or "—", x.odoo_inv_2026,
+              (x.action_user or QUI.get(x.status, ("", ""))[0]) + ((" — " + x.candidates) if x.mode == "A_VALIDER" and x.candidates else ""),
+              ("Yahya / JS" if x.mode == "A_VALIDER" else (QUI.get(x.status, ("", "à définir"))[1] if x.mode != "SAISIE" else "Yahya")), ""] for x in blocked],
+            color=lambda v: {"Doublon Odoo": "F8D2D5", "Conflit d'identifiant": "FCE8CC", "SIREN divergent (même tiers)": "FCE8CC"}.get(v[0], "FFF3BF"))
 
     dups = [x for x in rows if x.status == "doublon_pennylane"]
     compact("3 · Doublons Pennylane (fusion)",
@@ -708,9 +904,9 @@ def _excel(rows, company, kind, stamp):
 
     orph = sorted([x for x in rows if not x.odoo_id], key=lambda x: -x.pl_lines_2026)
     compact("4 · Orphelins Pennylane",
-            ["Tiers Pennylane", "Compte", "Écritures", "Écr. 2026", "Solde", "Constat", "Décision"],
-            [40, 12, 9, 9, 12, 50, 26],
-            [[x.pl_name, x.pl_account, x.pl_lines, x.pl_lines_2026, x.pl_solde, x.annuaire or x.action_user or "", ""] for x in orph])
+            ["Tiers Pennylane", "Compte", "Écritures", "Écr. 2026", "Solde", "Explication (fiche Odoo d'un autre rôle, RFA, inconnu)", "Décision"],
+            [40, 12, 9, 9, 12, 70, 26],
+            [[x.pl_name, x.pl_account, x.pl_lines, x.pl_lines_2026, x.pl_solde, x.candidates or x.annuaire or x.action_user or "", ""] for x in orph])
 
     # ---- feuilles DÉTAILLÉES (toutes les colonnes, pour référence) ----
     order = {"MANUEL": 0, "A_VALIDER": 1, "SAISIE": 2, "AUTO": 3, "RIEN": 4}
@@ -721,7 +917,7 @@ def _excel(rows, company, kind, stamp):
 
 
 # ------------------------------------------------------------------ application (écriture)
-def run_tiers_apply(ctx, company_code, kind="client", target="pennylane"):
+def run_tiers_apply(ctx, company_code, kind="client", target="pennylane", exclude_ids=None):
     """Applique le plan des lignes AUTO (et MANUEL/A_VALIDER pour la partie identifiants déjà sûre :
     source SIREN = odoo / pennylane / validé). Jamais billing_iban. Audit CSV."""
     K = KINDS[kind]
@@ -730,18 +926,33 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane"):
         rows = s.exec(select(TiersMatch).where(TiersMatch.company_id == company.id, TiersMatch.kind == kind)).all()
     oc = odoo.for_company(company_code)
     pl = pennylane.for_company(company_code)
-    audit = [["cible", "id", "nom", "champs", "resultat"]]
+    audit = [["cible", "id_odoo", "nom", "siren", "siren_valide_par", "base_appariement", "tiers_pennylane", "compte", "champs_ecrits", "valeurs_avant", "resultat"]]
     done = errs = skipped = 0
 
     _applicable = applicable
 
+    excluded = set(int(x) for x in (exclude_ids or []))
+    lines_report = []
+
+    def _before(r):
+        """valeurs AVANT écriture (état relevé au dernier cadrage) — pour le rapport archivable."""
+        if target == "pennylane":
+            return {"reference": r.pl_reference, "reg_no": r.pl_reg_no, "vat_number": r.pl_vat, "emails": r.pl_emails}
+        return {"vat": r.odoo_vat, "company_registry": r.odoo_registry, "email": r.odoo_email, "ref": r.odoo_ref}
+
     for i, r in enumerate(rows):
         if not _applicable(r):
+            continue
+        if r.odoo_id in excluded:
+            skipped += 1
+            audit.append([target, r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, r.pl_name, r.pl_account,
+                          "", "", "EXCLU par l'utilisateur (NON dans le fichier de validation)"])
             continue
         plan = json.loads((r.plan_pl if target == "pennylane" else r.plan_odoo) or "{}")
         if not plan:
             continue
         ctx.progress(i, len(rows), step=f"{target} {r.odoo_name}…")
+        before = {k: v for k, v in _before(r).items() if k in plan or "create" in plan}
         try:
             if target == "pennylane":
                 if "create" in plan:
@@ -752,13 +963,20 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane"):
                     body = {k: v for k, v in plan.items() if k != "billing_iban"}
                     code, resp = pl.send_json("PUT", K["pl_put"].format(id=r.pl_id), body)
                 ok = 200 <= code < 300
-                audit.append(["pennylane", r.pl_id or "création", r.pl_name or r.odoo_name, json.dumps(body, ensure_ascii=False),
-                              "ok" if ok else f"HTTP {code} {str(resp)[:120]}"])
+                audit.append(["pennylane", r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates,
+                              r.pl_name or "(création)", r.pl_account or "", json.dumps(body, ensure_ascii=False),
+                              json.dumps(before, ensure_ascii=False), "ok" if ok else f"HTTP {code} {str(resp)[:120]}"])
             else:
                 body = {k: v for k, v in plan.items() if k in ("vat", "company_registry", "email", "ref")}
                 oc.execute("res.partner", "write", [[r.odoo_id], body])
                 ok = True
-                audit.append(["odoo", r.odoo_id, r.odoo_name, json.dumps(body, ensure_ascii=False), "ok"])
+                audit.append(["odoo", r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, r.pl_name or "", r.pl_account or "",
+                              json.dumps(body, ensure_ascii=False), json.dumps(before, ensure_ascii=False), "ok"])
+            avant = ", ".join(f"{k}={v or 'vide'}" for k, v in before.items()) or "—"
+            lines_report.append(f"{'✔' if ok else '✘'} #{r.odoo_id} {r.odoo_name} — SIREN {r.siren or '—'} ({r.siren_src_detail})\n"
+                                f"    tiers Pennylane : {r.pl_name or '(création)'} {r.pl_account or ''} — {r.candidates}\n"
+                                f"    écrit : {_short_pl(plan) if target == 'pennylane' else _short_od(plan)}\n"
+                                f"    avant : {avant}")
             if ok:
                 done += 1
                 with Session(engine) as s:
@@ -772,12 +990,32 @@ def run_tiers_apply(ctx, company_code, kind="client", target="pennylane"):
                 errs += 1
         except Exception as e:
             errs += 1
-            audit.append([target, r.pl_id if target == "pennylane" else r.odoo_id, r.odoo_name, json.dumps(plan, ensure_ascii=False), str(e)[:150]])
+            audit.append([target, r.odoo_id, r.odoo_name, r.siren, r.siren_src_detail, r.candidates, r.pl_name or "", r.pl_account or "",
+                          json.dumps(plan, ensure_ascii=False), json.dumps(before, ensure_ascii=False), str(e)[:150]])
+            lines_report.append(f"✘ #{r.odoo_id} {r.odoo_name} — ERREUR : {str(e)[:150]}")
         time.sleep(0.2)
     buf = io.StringIO(); csv.writer(buf, delimiter=";").writerows(audit)
     stamp = datetime.utcnow() + _TZ
     ctx.add_artifact("csv", f"{stamp.strftime('%Y%m%d %H%M')} audit_tiers_{target}_{company_code} T{ctx.run_id}.csv",
                      buf.getvalue().encode("utf-8-sig"), "text/csv")
-    ctx.set_report(f"APPLICATION {target.upper()} — {K['label']} — {company.name} — {stamp.strftime('%d/%m/%Y %H:%M')}\n"
-                   f"  écrit : {done} · erreurs : {errs}\n  audit CSV joint (une ligne par écriture).")
+    remaining = [r for r in rows if r.odoo_id and not _applicable(r)]
+    rem = defaultdict(list)
+    for r in remaining:
+        rem[r.status].append(r)
+    R = [f"RAPPORT D'APPLICATION — {K['label'].upper()} ODOO ↔ PENNYLANE — cible {target.upper()} — {company.name}",
+         f"Exécuté le {stamp.strftime('%d/%m/%Y %H:%M')} (heure de La Réunion) par Vaelan · tâche #{ctx.run_id}", "",
+         "BASE : cadrage Vaelan (lecture Odoo + Pennylane), SIREN validés par le client (fichiers Yahya du 03/09/2026 et du 05/09/2026,",
+         "retourné le 10/09/2026), règle du connecteur Pennylane (rapprochement dès qu'un identifiant est commun : email, compte tiers,",
+         "SIREN/SIRET/TVA). Seules les lignes SÛRES sont écrites : tiers rapproché sans ambiguïté, SIREN validé ou saisi, jamais d'IBAN.", "",
+         f"RÉSULTAT : {done} écriture(s) · {errs} erreur(s) · {skipped} exclue(s) par l'utilisateur", "",
+         "== DÉTAIL DES ÉCRITURES (une par fiche : base, ce qui a été écrit, valeurs avant) =="] + lines_report + ["", "== CE QUI RESTE À FAIRE (non écrit, et pourquoi) =="]
+    LBL = {"doublon_odoo": "Doublon Odoo — fiche société parent + magasins en adresses de livraison (Hassan)",
+           "conflit_identifiant": "Conflit d'identifiant (email de groupe partagé) — SIREN à trancher / emails distincts (Yahya + Hassan)",
+           "doublon_pennylane": "Doublon Pennylane — fusion dans l'interface Pennylane", "sans_siren": "SIREN à rechercher (Yahya)",
+           "absent_pennylane": "Absent de Pennylane — création à confirmer", "ok": "Rapproché mais SIREN à saisir (mode SAISIE)",
+           "sans_identifiant_commun": "Sans identifiant commun — SIREN à saisir (mode SAISIE)"}
+    for st, lst in rem.items():
+        R.append(f"  {LBL.get(st, st)} : {len(lst)}")
+        R += [f"    #{r.odoo_id} {r.odoo_name} — {r.action_user or ''}" for r in sorted(lst, key=lambda x: -x.odoo_inv_2026)]
+    ctx.set_report("\n".join(R))
     return f"{'✅' if not errs else '⚠️'} Tiers {K['label']} → {target} : {done} écrit(s), {errs} erreur(s)"

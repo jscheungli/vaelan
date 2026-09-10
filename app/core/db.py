@@ -42,6 +42,8 @@ _COLUMN_ADDS = [
     "ALTER TABLE client_accounts ALTER COLUMN pennylane_customer_id TYPE BIGINT",
     "ALTER TABLE vds_messages ADD COLUMN IF NOT EXISTS sender VARCHAR",
     "ALTER TABLE vds_messages ADD COLUMN IF NOT EXISTS by_user VARCHAR",
+    "ALTER TABLE tiers_matches ADD COLUMN IF NOT EXISTS siren_src_detail VARCHAR",
+    "ALTER TABLE tiers_matches ADD COLUMN IF NOT EXISTS candidates VARCHAR",
 ]
 
 
