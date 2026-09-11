@@ -575,8 +575,22 @@ def run_tiers_sync(ctx, company_code, kind="client"):
             plan_od["ref"] = canon["_a"]["account"]
 
         siren_div = next((sv for t, sv in divergent if canon and t["id"] == canon["id"]), None)
+        odoo_sirens = sorted({i[6:] for i in p["_ids"] if i.startswith("SIREN:")})
         # statut / mode / actions
-        if siren_div:
+        if len(odoo_sirens) > 1:
+            status, mode = "ok", "A_VALIDER"
+            note = f"fiche Odoo incohérente : TVA et registre désignent deux SIREN différents ({' / '.join(odoo_sirens)})"
+            act_u = f"CORRIGER la fiche Odoo : un seul SIREN ({' ou '.join(odoo_sirens)}) — je n'écris rien tant que ce n'est pas tranché"
+            act_ia = "Après réponse : aligne TVA + registre dans Odoo, puis le tiers Pennylane"
+            plan_pl, plan_od = {}, {}
+        elif src == "validé" and odoo_sirens and siren not in odoo_sirens:
+            status, mode = "ok", "A_VALIDER"
+            note = f"SIREN du fichier de validation {siren} ≠ SIREN présent dans la fiche Odoo {odoo_sirens[0]}"
+            act_u = (f"TRANCHER le SIREN : {siren} (fichier de validation Achat · {src_detail}) ou {odoo_sirens[0]} (fiche Odoo) ? "
+                     "— je n'écris rien tant que ce n'est pas tranché")
+            act_ia = "Après réponse : aligne le SIREN/TVA des deux côtés + référence ODOO"
+            plan_pl, plan_od = {}, {}
+        elif siren_div:
             status, mode = "ok", "A_VALIDER"
             note = f"même tiers (nom/factures) mais SIREN divergent : {_siren_origin(src, p, siren)} {siren} vs tiers Pennylane {siren_div}"
             act_u = f"TRANCHER le SIREN : {siren} ({_siren_origin(src, p, siren)} · {src_detail}) ou {siren_div} (tiers Pennylane) ? — je n'écris rien tant que ce n'est pas tranché"
