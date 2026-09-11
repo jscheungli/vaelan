@@ -102,6 +102,14 @@ def _siret_of(ids):
     return next(iter(s)) if len(s) == 1 else None
 
 
+def _siren_origin(src, p, siren):
+    """Libellé exact de l'origine du SIREN retenu, vérifié contre la fiche Odoo."""
+    in_odoo = bool(siren) and _siren_of(p["_ids"]) == siren
+    if src == "validé":
+        return "fichier de validation Achat" + (" + fiche Odoo" if in_odoo else ", absent de la fiche Odoo")
+    return {"odoo": "fiche Odoo", "pennylane": "tiers Pennylane", "annuaire": "proposition annuaire"}.get(src, "origine inconnue")
+
+
 def _tva(siren):
     """N° de TVA intracommunautaire FR calculé (clé = (12 + 3 × (SIREN mod 97)) mod 97)."""
     if not siren or not re.fullmatch(r"\d{9}", siren):
@@ -525,7 +533,7 @@ def run_tiers_sync(ctx, company_code, kind="client"):
             base += (" · autres tiers PL proches : " + " ; ".join(others)) if others else " · aucun autre tiers PL proche"
             dv = next((sv for t, sv in divergent if t["id"] == canon["id"]), None)
             if dv:
-                base += f" · ⚠ SIREN DIVERGENT : Odoo/validé {siren} vs Pennylane {dv}"
+                base += f" · ⚠ SIREN DIVERGENT : {_siren_origin(src, p, siren)} {siren} vs tiers Pennylane {dv}"
             if contra:
                 base += " · ⚠ email/compte aussi partagé avec « " + contra[0].get("name") + "  » (autre SIREN) : le connecteur pourrait confondre → emails distincts à prévoir dans Odoo"
         else:
@@ -570,8 +578,8 @@ def run_tiers_sync(ctx, company_code, kind="client"):
         # statut / mode / actions
         if siren_div:
             status, mode = "ok", "A_VALIDER"
-            note = f"même tiers (nom/factures) mais SIREN divergent : Odoo/validé {siren} vs Pennylane {siren_div}"
-            act_u = f"TRANCHER le SIREN : {siren} (Odoo, {src_detail}) ou {siren_div} (Pennylane) ? — je n'écris rien tant que ce n'est pas tranché"
+            note = f"même tiers (nom/factures) mais SIREN divergent : {_siren_origin(src, p, siren)} {siren} vs tiers Pennylane {siren_div}"
+            act_u = f"TRANCHER le SIREN : {siren} ({_siren_origin(src, p, siren)} · {src_detail}) ou {siren_div} (tiers Pennylane) ? — je n'écris rien tant que ce n'est pas tranché"
             act_ia = "Après réponse : aligne le SIREN/TVA des deux côtés + référence ODOO"
         elif siren and len(siren_owner[siren]) > 1:
             others = ", ".join(x.get("name") for x in siren_owner[siren] if x["id"] != p["id"])
