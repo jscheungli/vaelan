@@ -91,10 +91,11 @@ VAELAN_URL = "https://vaelan.com"
 
 
 def branded_from(brand: dict) -> str:
-    """« La Villa des Sables du Lagon via Vaelan <villa-des-sables-du-lagon@vaelan.com> »."""
+    """Expéditeur au nom de la société. Depuis un domaine Vaelan : « <Société> via Vaelan <…@vaelan.com> » ;
+    depuis le domaine propre de la société (vérifié chez Postmark) : « <Société> <contact@societe.com> »."""
     name, addr = parseaddr(brand.get("address") or sender())
     label = brand.get("name") or name or "Vaelan"
-    if "vaelan" not in label.lower():
+    if addr.lower().endswith("@vaelan.com") and "vaelan" not in label.lower():
         label = f"{label} via Vaelan"
     return formataddr((label, addr))
 

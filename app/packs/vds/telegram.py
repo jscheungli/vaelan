@@ -196,7 +196,7 @@ def handle_update(update: dict, bot_username: str = "") -> Optional[str]:
             out = []
             for r in rs[:3]:
                 out.append(_line(r) + f"\n   réf {tg.esc(r.booking_ref or r.id)} · tél {tg.esc(r.guest_phone or '—')} · email {tg.esc(r.guest_email or '—')}"
-                           f"\n   fiche : {service.base_url()}/c/VDS/checkin/{r.id}")
+                           f"\n   fiche : {service.admin_url()}/c/VDS/checkin/{r.id}")
             return "\n".join(out)
         return "Commande inconnue. " + tg.esc(HELP)
     if is_private or mention or reply_to_bot:

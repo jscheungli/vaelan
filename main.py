@@ -7,6 +7,7 @@ le socle fournit auth, DB, connecteurs, dashboard et journal des runs.
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 import os
 
@@ -55,6 +56,36 @@ def _register_schedules():
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, max_age=60 * 60 * 12)
+
+
+class PublicHostMiddleware:
+    """Sous-domaine voyageurs (checkin.villa-des-sables-du-lagon.com, hébergé ici) :
+    /<token> -> /checkin/<token>, /nouveau/<canal> -> /checkin/nouveau/<canal>, / -> site de la villa ;
+    tout le reste (back-office, login) est renvoyé vers vaelan.com. Les autres hôtes ne sont pas touchés."""
+    PASS = ("/checkin/", "/static/", "/healthz")
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            from app.packs.vds import config as vcfg, service as vservice
+            host = dict(scope.get("headers") or {}).get(b"host", b"").decode().split(":")[0].lower()
+            if host == vcfg.PUBLIC_HOST:
+                path = scope["path"]
+                if path == "/":
+                    return await RedirectResponse(vcfg.VILLA["site"], status_code=302)(scope, receive, send)
+                if not path.startswith(self.PASS):
+                    seg = path.strip("/").split("/")
+                    if len(seg) == 1 or (len(seg) == 2 and seg[0] == "nouveau"):
+                        scope["path"] = "/checkin" + path
+                        scope["raw_path"] = scope["path"].encode()
+                    else:
+                        return await RedirectResponse(vservice.admin_url() + path, status_code=302)(scope, receive, send)
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(PublicHostMiddleware)
 
 _static = os.path.join(os.path.dirname(__file__), "app", "web", "static")
 os.makedirs(_static, exist_ok=True)

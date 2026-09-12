@@ -38,7 +38,7 @@ def telegram_config(request: Request, code: str, action: str = Form(...), chat_i
         return redir
     msg = ""
     if action == "webhook":
-        ok, info = tg.set_webhook(f"{vservice.base_url()}/telegram/webhook/{tg.webhook_secret()}")
+        ok, info = tg.set_webhook(f"{vservice.admin_url()}/telegram/webhook/{tg.webhook_secret()}")
         msg = "Webhook Telegram enregistré." if ok else f"Webhook : {info}"
     elif action == "toggle" and chat_id:
         d = vtg.chats()

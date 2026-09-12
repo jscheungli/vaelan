@@ -13,7 +13,7 @@ services:
     domains:
       - vaelan.com
       - www.vaelan.com
-      - scilessablesdulagon.vaelan.com   # formulaire d'arrivée VDS
+      - checkin.villa-des-sables-du-lagon.com   # formulaire d'arrivée VDS (CNAME Namecheap -> vaelan.onrender.com)
     envVars:
       - key: PYTHON_VERSION       # figer une version stable (éviter le 3.14 bleeding-edge)
         value: "3.12.8"

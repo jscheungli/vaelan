@@ -136,9 +136,11 @@ DEFAULT_PARAMS = {
     # nouvelle réservation à inviter À LA MAIN (Airbnb / Booking / Abritel, ou site direct sans email / sans invitation auto)
     "new_booking_emails": "contact@villa-des-sables-du-lagon.com",
     "reply_to": "",            # adresse de réponse des emails voyageurs
-    "from_email": "",          # adresse d'envoi (vide = FROM_ADDRESS) ; le nom affiché est toujours « Villa … via Vaelan »
+    "from_email": "",          # adresse d'envoi (vide = FROM_ADDRESS, domaine de la villa vérifié chez Postmark)
     "max_upload_mb": 12,
-    "base_url": "",            # racine des liens publics (vide = PUBLIC_BASE_URL ou https://vaelan.com) ; cible : https://scilessablesdulagon.vaelan.com
+    "base_url": "",            # racine des liens publics (vide = https://vaelan.com) ; cible : https://checkin.villa-des-sables-du-lagon.com
 }
-FROM_ADDRESS = "villa-des-sables-du-lagon@vaelan.com"   # sur le domaine d'envoi vérifié chez Postmark
-PUBLIC_HOST = "scilessablesdulagon.vaelan.com"   # sous-domaine cible du formulaire (à déclarer dans Render → Custom Domains)
+FROM_ADDRESS = "contact@villa-des-sables-du-lagon.com"   # boîte de la villa (Google Workspace) ; domaine vérifié chez Postmark (DKIM + Return-Path)
+# Sous-domaine du formulaire, hébergé par Vaelan : DNS Namecheap CNAME checkin -> vaelan.onrender.com + Render Custom Domain.
+# Sur cet hôte, /<token> et /nouveau/<canal> sont acceptés en raccourci (voir main.py) ; le back-office reste sur vaelan.com.
+PUBLIC_HOST = "checkin.villa-des-sables-du-lagon.com"

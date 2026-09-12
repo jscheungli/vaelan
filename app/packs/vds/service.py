@@ -2,6 +2,7 @@
 import io
 import json
 import os
+from urllib.parse import urlparse
 import re
 import secrets
 from datetime import date, datetime, timedelta
@@ -67,13 +68,27 @@ def save_params(values: dict) -> None:
         s.commit()
 
 
+def admin_url() -> str:
+    """Racine du back-office et des webhooks : toujours Vaelan."""
+    return (os.getenv("PUBLIC_BASE_URL") or "https://vaelan.com").rstrip("/")
+
+
 def base_url() -> str:
-    """Racine publique des liens : réglage `base_url` (config), sinon PUBLIC_BASE_URL, sinon vaelan.com."""
-    return (params().get("base_url") or os.getenv("PUBLIC_BASE_URL") or "https://vaelan.com").rstrip("/")
+    """Racine des liens VOYAGEURS : réglage `base_url` (config, ex. https://checkin.villa-des-sables-du-lagon.com), sinon Vaelan."""
+    return (params().get("base_url") or admin_url()).rstrip("/")
+
+
+def dedicated_host() -> bool:
+    """Vrai quand les liens voyageurs sont servis sur le sous-domaine de la villa (raccourcis /<token>)."""
+    return (urlparse(base_url()).hostname or "").lower() == config.PUBLIC_HOST
 
 
 def public_url(res: VdsReservation) -> str:
-    return f"{base_url()}/checkin/{res.token}"
+    return f"{base_url()}/{res.token}" if dedicated_host() else f"{base_url()}/checkin/{res.token}"
+
+
+def generic_url(channel: str) -> str:
+    return f"{base_url()}/nouveau/{channel}" if dedicated_host() else f"{base_url()}/checkin/nouveau/{channel}"
 
 
 def alert_emails() -> List[str]:
@@ -258,7 +273,7 @@ def brand() -> dict:
     """Identité d'envoi du module : la villa en expéditeur (« … via Vaelan »), réponses vers sa boîte."""
     p = params()
     return {"name": config.VILLA["name"], "address": p.get("from_email") or config.FROM_ADDRESS,
-            "reply_to": p.get("reply_to") or None, "logo": f"{base_url()}/static/vds/logo.png",
+            "reply_to": p.get("reply_to") or None, "logo": f"{admin_url()}/static/vds/logo.png",
             "site": config.VILLA["site"], "color": config.VILLA["color"]}
 
 
@@ -329,12 +344,12 @@ def send_new_booking_alert(res: VdsReservation, reason: str) -> Tuple[bool, str]
             f"Canal : {label}\nVoyageur : {res.guest_name or '?'}\nSéjour : {fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} personnes\n"
             f"Référence : {res.booking_ref or res.id}\nTéléphone : {res.guest_phone or '— inconnu'}\nEmail : {res.guest_email or '— inconnu'}\n\n"
             f"Merci de lui demander de remplir le formulaire d'arrivée via la messagerie {label if res.channel != 'lodgify' else ''}, "
-            f"par SMS ou WhatsApp, puis d'enregistrer l'envoi sur la fiche : {base_url()}/c/VDS/checkin/{res.id}\n\n"
+            f"par SMS ou WhatsApp, puis d'enregistrer l'envoi sur la fiche : {admin_url()}/c/VDS/checkin/{res.id}\n\n"
             f"Lien du formulaire : {public_url(res)}\n\nMessage suggéré ({'sans lien, Airbnb refuse les liens' if res.channel == 'airbnb' else 'SMS / WhatsApp'}) :\n"
             f"----------------------------------------\n{txt}\n----------------------------------------\n")
     _tg_notify(f"🆕 <b>Nouvelle réservation {_tg_esc(label)}</b> à inviter à la main — {_tg_esc(res.guest_name or '?')} · "
                f"{fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} pers. · tél {_tg_esc(res.guest_phone or '—')}\n"
-               f"Fiche (message prêt à copier) : {base_url()}/c/VDS/checkin/{res.id}")
+               f"Fiche (message prêt à copier) : {admin_url()}/c/VDS/checkin/{res.id}")
     test = beta_redirect()
     real = ", ".join(to)
     if test:
@@ -432,7 +447,7 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
     _tg_notify(f"✅ <b>Formulaire signé</b> — {_tg_esc(resp.full_name or res.guest_name)} · {_tg_esc(config.CHANNELS[res.channel]['label'])} · "
                f"{fmt_date(res.arrival)} → {fmt_date(res.departure)} · {data['occupants'] or res.guests or '?'} pers."
                + (f" · arrivée prévue {_tg_esc(data['arrival_time'])}" if data.get("arrival_time") else "")
-               + f"\nFiche : {base_url()}/c/VDS/checkin/{res.id}")
+               + f"\nFiche : {admin_url()}/c/VDS/checkin/{res.id}")
     send_alert(res, f"[VDS] Formulaire d'arrivée signé — {res.guest_name} · {config.CHANNELS[res.channel]['label']} · "
                     f"{fmt_date(res.arrival)} → {fmt_date(res.departure)}",
                f"Réservation {res.booking_ref or res.id} ({config.CHANNELS[res.channel]['label']})\n"
@@ -440,7 +455,7 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
                f"Séjour : {fmt_date(res.arrival)} → {fmt_date(res.departure)} · {data['occupants'] or res.guests or '?'} personnes · "
                f"arrivée prévue {data['arrival_time'] or '?'}\n"
                f"Règles : {'toutes acceptées' if resp.rules_ok else 'REFUS : ' + resp.refused_rules}\n"
-               f"Marketing : {marketing}\n\nDétail : {base_url()}/c/VDS/checkin/{res.id}\n",
+               f"Marketing : {marketing}\n\nDétail : {admin_url()}/c/VDS/checkin/{res.id}\n",
                kind="alert")
     return resp, recap
 
@@ -455,11 +470,11 @@ def save_refusal(res: VdsReservation, refused: List[str], lang: str, ip: str) ->
     update_reservation(res.id, status="refused")
     labels = "; ".join(next((r["fr"] for r in config.RULES if r["key"] == k), k)[:80] for k in keys)
     _tg_notify(f"⛔ <b>Règles refusées</b> — {_tg_esc(res.guest_name or '?')} · {fmt_date(res.arrival)} → {fmt_date(res.departure)} · annulation demandée.\n"
-               f"Refus : {_tg_esc(labels)}\nFiche : {base_url()}/c/VDS/checkin/{res.id}")
+               f"Refus : {_tg_esc(labels)}\nFiche : {admin_url()}/c/VDS/checkin/{res.id}")
     send_alert(res, f"[VDS] ⚠️ Règles REFUSÉES — {res.guest_name or '?'} · {fmt_date(res.arrival)} — annulation demandée",
                f"Le voyageur {res.guest_name or '?'} (réservation {res.booking_ref or res.id}, {config.CHANNELS[res.channel]['label']}, "
                f"séjour {fmt_date(res.arrival)} → {fmt_date(res.departure)}) a répondu NON à : {labels}\n"
-               f"et a demandé l'annulation via le formulaire.\n\nDétail : {base_url()}/c/VDS/checkin/{res.id}\n", kind="refusal")
+               f"et a demandé l'annulation via le formulaire.\n\nDétail : {admin_url()}/c/VDS/checkin/{res.id}\n", kind="refusal")
 
 
 # ------------------------------------------------------------------ PDF récapitulatif
