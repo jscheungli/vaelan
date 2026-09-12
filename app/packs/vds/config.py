@@ -14,6 +14,7 @@ VILLA = {
     "rcs": "RCS Saint-Denis de La Réunion 821 948 163",
     "address": "6 ruelle Mazeau, 97400 Saint-Denis, La Réunion",
     "rgpd_email": "rgpd@villa-des-sables-du-lagon.com",
+    "contact_email": "contact@villa-des-sables-du-lagon.com",
     "site": "https://www.villa-des-sables-du-lagon.com",
     "conditions_url": "https://www.villa-des-sables-du-lagon.com/fr/conditions-de-reservation",
     "conditions_url_en": "https://www.villa-des-sables-du-lagon.com/en/booking-conditions",
@@ -27,7 +28,7 @@ VILLA = {
 
 # Canaux de réservation. id_required : pièce d'identité demandée (Airbnb vérifie déjà l'identité).
 CHANNELS = {
-    "airbnb":  {"label": "Airbnb",        "id_required": False, "platform": True},
+    "airbnb":  {"label": "Airbnb",        "id_required": True,  "platform": True},
     "booking": {"label": "Booking.com",   "id_required": True,  "platform": True},
     "abritel": {"label": "Abritel / Vrbo", "id_required": True, "platform": True},
     "lodgify": {"label": "Site direct",   "id_required": True,  "platform": False},

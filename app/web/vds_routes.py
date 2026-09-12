@@ -424,7 +424,7 @@ def admin_attestation(request: Request, code: str, rid: int):
 
 
 @router.post("/c/{code}/checkin/{rid}/manual")
-def admin_manual(request: Request, code: str, rid: int, channel: str = Form("sms"), text: str = Form("")):
+def admin_manual(request: Request, code: str, rid: int, channel: str = Form("sms"), text: str = Form(""), mode: str = Form("")):
     """Journalise une relance / invitation envoyée à la main (SMS, WhatsApp, messagerie…) avec son texte et son auteur."""
     company, redir = _guard(request, code)
     if redir:
@@ -435,8 +435,9 @@ def admin_manual(request: Request, code: str, rid: int, channel: str = Form("sms
         return RedirectResponse(f"/c/{code}/checkin/{rid}?msg=Texte vide : rien d'enregistré.", status_code=303)
     u = current_user(request)
     who = (u.name or u.email) if u else "?"
-    service.log_manual(res, channel if channel in ("sms", "whatsapp", "airbnb", "booking", "abritel", "email", "telephone") else "autre", text.strip(), who)
-    return RedirectResponse(f"/c/{code}/checkin/{rid}?msg=Relance {channel} enregistrée (par {who}).", status_code=303)
+    service.log_manual(res, channel if channel in ("sms", "whatsapp", "airbnb", "booking", "abritel", "email", "telephone") else "autre", text.strip(), who, mode=mode)
+    what = "Invitation (premier contact)" if mode == "invite" or (mode not in ("invite", "remind") and res.status == "pending") else "Relance"
+    return RedirectResponse(f"/c/{code}/checkin/{rid}?msg={what} {channel} enregistrée (par {who}).", status_code=303)
 
 
 SCENARIOS = {
@@ -481,14 +482,21 @@ def admin_tests_action(request: Request, code: str, action: str = Form(...), rid
     elif action == "reset":
         service.reset_test_reservation(rid)
         out.append("réservation remise à zéro")
+    elif action == "add_email":
+        service.set_test_email(rid)
+        out.append("email de test renseigné (le voyageur nous l'a communiqué)")
     elif action == "send_all":
         rs = {r.channel: r for r in service.test_reservations()}
-        plan = [("lodgify", "invitation"), ("airbnb", "invitation"), ("lodgify", "reminder"), ("lodgify", "prearrival7"),
-                ("booking", "new_booking"), ("airbnb", "new_booking")] + ([("lodgify", "erp")] if service.reference_file("erp") else [])
+        plan = [(ch, "invitation") for ch in ("lodgify", "airbnb", "booking", "abritel") if ch in rs and rs[ch].guest_email]
+        plan += [("lodgify", "reminder"), ("lodgify", "prearrival7"), ("booking", "new_booking"), ("airbnb", "new_booking")]
+        plan += [("lodgify", "erp")] if service.reference_file("erp") else []
         for ch, kind in plan:
             if ch in rs:
                 ok, info = _bench_send(rs[ch], kind)
                 out.append(f"{kind} {vcfg.CHANNELS[ch]['label']} : {'✅' if ok else '❌ ' + info}")
+        skipped = [vcfg.CHANNELS[ch]["label"] for ch in ("airbnb", "booking", "abritel") if ch in rs and not rs[ch].guest_email]
+        if skipped:
+            out.append("sans email (comme dans la réalité, relance manuelle SMS/WhatsApp) : " + ", ".join(skipped))
     else:
         with Session(engine) as s:
             res = s.get(VdsReservation, rid)

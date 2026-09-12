@@ -66,10 +66,9 @@
   <p class="hint">{{ T.identity_intro }}</p>
   <div class="mb-3"><label class="form-label">{{ T.full_name }} *</label><input class="form-control" name="full_name" value="{{ res.guest_name or '' }}" required autocomplete="name"></div>
   <div class="row g-2">
-    <div class="col-6 mb-3"><label class="form-label">{{ T.birth_date }} *</label><input class="form-control" type="date" name="birth_date" max="{{ max_birth }}" required></div>
-    <div class="col-6 mb-3"><label class="form-label">{{ T.birth_place }} *</label><input class="form-control" name="birth_place" required></div>
+    <div class="col-6 mb-3"><label class="form-label">{{ T.birth_date }} *</label><input class="form-control" type="date" name="birth_date" max="{{ max_birth }}" required data-err="{{ T.adult_error }}"></div>
+    <div class="col-6 mb-3"><label class="form-label">{{ T.nationality }}</label><input class="form-control" name="nationality" autocomplete="country-name"></div>
   </div>
-  <div class="mb-3"><label class="form-label">{{ T.nationality }}</label><input class="form-control" name="nationality" autocomplete="country-name"></div>
   <div class="mb-3"><label class="form-label">{{ T.street }} *</label><input class="form-control" name="street" required autocomplete="street-address"></div>
   <div class="row g-2">
     <div class="col-4 mb-3"><label class="form-label">{{ T.postal_code }} *</label><input class="form-control" name="postal_code" required autocomplete="postal-code"></div>
@@ -78,16 +77,12 @@
   <div class="mb-3"><label class="form-label">{{ T.country }} *</label><input class="form-control" name="country" required autocomplete="country-name" value="{{ 'France' if lang == 'fr' else '' }}"></div>
   <div class="mb-3"><label class="form-label">{{ T.email }} *</label><input class="form-control" type="email" name="email" value="{{ res.guest_email or '' }}" required autocomplete="email" inputmode="email"></div>
   <div class="mb-3"><label class="form-label">{{ T.phone }} *</label><input class="form-control" type="tel" name="phone" value="{{ res.guest_phone or '' }}" required autocomplete="tel" inputmode="tel"></div>
-  <div class="row g-2">
-    <div class="col-6 mb-3"><label class="form-label">{{ T.arrival_time }} *</label>
-      <select class="form-select" name="arrival_time" required>
-        <option value="">—</option>
-        {% for h in ['16:00','16:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00'] %}<option>{{ h }}</option>{% endfor %}
-        <option value="?">{{ T.arrival_time_unknown }}</option>
-      </select></div>
-    <div class="col-6 mb-3"><label class="form-label">{{ T.occupants }} *</label><input class="form-control" type="number" name="occupants" min="1" max="{{ villa.capacity }}" value="{{ res.guests or '' }}" required inputmode="numeric"></div>
-  </div>
-  <div class="mb-2"><label class="form-label">{{ T.occupants_list }}</label><textarea class="form-control" name="occupants_list" rows="3"></textarea></div>
+  <div class="mb-2"><label class="form-label">{{ T.arrival_time }} <span class="text-muted">({{ T.optional }})</span></label>
+    <select class="form-select" name="arrival_time">
+      <option value="">—</option>
+      {% for h in ['16:00','16:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00'] %}<option>{{ h }}</option>{% endfor %}
+      <option value="?">{{ T.arrival_time_unknown }}</option>
+    </select></div>
   <div class="d-flex gap-2 mt-3"><button type="button" class="btn btn-outline-vds prev">{{ T.prev }}</button><button type="button" class="btn btn-vds flex-grow-1 next">{{ T.next }} <i class="bi bi-arrow-right"></i></button></div>
 </div></div>
 
@@ -174,7 +169,11 @@
       if (el.type === 'radio') { const grp = step.querySelectorAll(`input[name="${el.name}"]`); const any = Array.from(grp).some(x => x.checked);
         if (el.required && !any) { ok = false; grp.forEach(x => x.closest('.rule, .form-check')?.classList.add('border-danger')); } return; }
       el.classList.remove('is-invalid');
-      if (!el.checkValidity()) { ok = false; el.classList.add('is-invalid'); }
+      if (!el.checkValidity()) { ok = false; el.classList.add('is-invalid');
+        let fb = el.parentElement.querySelector('.invalid-feedback');
+        if (!fb) { fb = document.createElement('div'); fb.className = 'invalid-feedback'; el.insertAdjacentElement('afterend', fb); }
+        fb.textContent = (el.validity.valueMissing ? {{ T.required|tojson }} : (el.dataset.err || (el.type === 'email' ? {{ T.email_error|tojson }} : {{ T.invalid_value|tojson }})));
+      }
     });
     if (!ok) { const first = step.querySelector('.is-invalid, .border-danger'); first && first.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
     return ok;

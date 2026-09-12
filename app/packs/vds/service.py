@@ -234,12 +234,14 @@ def recent_messages(n: int = 20) -> List[VdsMessage]:
         return list(s.exec(select(VdsMessage).order_by(VdsMessage.id.desc()).limit(n)).all())
 
 
-def log_manual(res: VdsReservation, channel: str, text: str, by_user: str, kind: str = "reminder_manual") -> None:
-    """Relance / invitation envoyée À LA MAIN (SMS, WhatsApp, messagerie Airbnb/Booking, téléphone) :
-    journalisée avec son texte et son auteur, et la réservation avance (sent / reminded)."""
+def log_manual(res: VdsReservation, channel: str, text: str, by_user: str, kind: str = None, mode: str = None) -> None:
+    """Invitation (premier contact) ou relance envoyée À LA MAIN (SMS, WhatsApp, messagerie Airbnb/Booking, téléphone) :
+    journalisée avec son texte, son auteur et sa nature, et la réservation avance (sent / reminded)."""
+    mode = mode if mode in ("invite", "remind") else ("invite" if res.status == "pending" else "remind")
+    kind = kind or ("invitation_manual" if mode == "invite" else "reminder_manual")
     with Session(engine) as s:
         s.add(VdsMessage(reservation_id=res.id, kind=kind, channel=channel, to=res.guest_phone or res.guest_email or "",
-                         subject=f"{'Invitation' if res.status == 'pending' else 'Relance'} manuelle ({channel})",
+                         subject=f"{'Invitation (premier contact)' if mode == 'invite' else 'Relance'} manuelle ({channel})",
                          body=(text or "")[:4000], status="sent", sender=by_user, by_user=by_user))
         s.commit()
     now = datetime.utcnow()
@@ -256,9 +258,10 @@ def suggested_texts(res: VdsReservation) -> dict:
     v["phone"] = f" ({res.guest_phone})" if res.guest_phone else ""
     reminder = res.status in ("sent", "reminded")
     fix = lambda x: x.replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
-    return {"long": fix(t(res.lang, "mail_remind_body" if reminder else "mail_invite_body", **v)),
-            "short": fix(t(res.lang, "sms_remind" if reminder else "sms_invite", **v)),
-            "nolink": fix(t(res.lang, "nolink_remind" if reminder else "nolink_invite", **v))}
+    invite = {"long": fix(t(res.lang, "mail_invite_body", **v)), "short": fix(t(res.lang, "sms_invite", **v)), "nolink": fix(t(res.lang, "nolink_invite", **v))}
+    remind = {"long": fix(t(res.lang, "mail_remind_body", **v)), "short": fix(t(res.lang, "sms_remind", **v)), "nolink": fix(t(res.lang, "nolink_remind", **v))}
+    # mode par défaut : premier contact tant que rien n'a été envoyé, relance ensuite ; les deux jeux sont proposés
+    return {**(remind if reminder else invite), "invite": invite, "remind": remind, "mode": "remind" if reminder else "invite"}
 
 
 def messages_for(reservation_id: int) -> List[VdsMessage]:
@@ -355,8 +358,8 @@ def send_new_booking_alert(res: VdsReservation, reason: str) -> Tuple[bool, str]
             f"Canal : {label}\nVoyageur : {res.guest_name or '?'}\nSéjour : {fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} personnes\n"
             f"Référence : {res.booking_ref or res.id}\nTéléphone : {res.guest_phone or '— inconnu'}\nEmail : {res.guest_email or '— inconnu'}\n\n"
             f"Merci de lui demander de remplir le formulaire d'arrivée via la messagerie {label if res.channel != 'lodgify' else ''}, "
-            f"par SMS ou WhatsApp, puis d'enregistrer l'envoi sur la fiche : {admin_url()}/c/VDS/checkin/{res.id}\n\n"
-            f"Lien du formulaire : {public_url(res)}\n\nMessage suggéré ({'sans lien, Airbnb refuse les liens' if res.channel == 'airbnb' else 'SMS / WhatsApp'}) :\n"
+            f"par SMS ou WhatsApp, puis d'enregistrer l'envoi sur sa fiche de suivi Vaelan (accès collaborateurs) : {admin_url()}/c/VDS/checkin/{res.id}\n\n"
+            f"Formulaire du voyageur (lien public) : {public_url(res)}\n\nMessage suggéré ({'sans lien, Airbnb refuse les liens' if res.channel == 'airbnb' else 'SMS / WhatsApp'}) :\n"
             f"----------------------------------------\n{txt}\n----------------------------------------\n")
     _tg_notify(f"🆕 <b>Nouvelle réservation {_tg_esc(label)}</b> à inviter à la main — {_tg_esc(res.guest_name or '?')} · "
                f"{fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} pers. · tél {_tg_esc(res.guest_phone or '—')}\n"
@@ -386,7 +389,8 @@ def send_prearrival_alert(res: VdsReservation, days_left: int) -> Tuple[bool, st
         f"La réservation {res.booking_ref or res.id} ({label}) arrive le {fmt_date(res.arrival)} "
         f"et le formulaire d'arrivée n'est pas complété (statut : {res.status}, {res.reminder_count or 0} relance(s)).\n"
         f"Email : {res.guest_email or 'AUCUN — envoyer le lien via la messagerie de la plateforme'}\n"
-        f"Lien du formulaire : {public_url(res)}\nDétail : {admin_url()}/c/VDS/checkin/{res.id}\n")
+        f"Formulaire du voyageur (lien public) : {public_url(res)}\n"
+        f"Fiche de suivi Vaelan (accès collaborateurs) : {admin_url()}/c/VDS/checkin/{res.id}\n")
 
 
 # ------------------------------------------------------------------ banc de test bout en bout
@@ -409,10 +413,21 @@ def create_test_set() -> List[VdsReservation]:
     for ch, lang, name, ref in TEST_SET:
         if ch in have:
             continue
-        out.append(create_reservation(ch, booking_ref=ref, guest_name=name, guest_email=email, guest_phone="+262 692 00 00 00",
+        # comme dans la réalité : seul le site direct (Lodgify) fournit l'email ; les plateformes ne donnent que le téléphone
+        out.append(create_reservation(ch, booking_ref=ref, guest_name=name, guest_email=email if ch == "lodgify" else None, guest_phone="+262 692 00 00 00",
                                       arrival=today + timedelta(days=10), departure=today + timedelta(days=17), guests=4,
                                       lang=lang, source="test", notes="Banc de test bout en bout — à purger après validation"))
     return out
+
+
+def set_test_email(rid: int) -> None:
+    """Le voyageur nous a communiqué son email (messagerie plateforme, téléphone…) : on le renseigne → relances par email possibles."""
+    with Session(engine) as s:
+        r = s.get(VdsReservation, rid)
+        if r and r.source == "test":
+            r.guest_email = (params().get("test_email") or "").strip() or None
+            s.add(r)
+            s.commit()
 
 
 def reset_test_reservation(rid: int) -> None:
@@ -425,7 +440,7 @@ def reset_test_reservation(rid: int) -> None:
             for x in s.exec(select(m).where(m.reservation_id == rid)).all():
                 s.delete(x)
         r.status, r.invited_at, r.reminded_at, r.reminder_count, r.alerted_at, r.completed_at, r.erp_sent_at = "pending", None, None, 0, None, None, None
-        r.guest_email = (params().get("test_email") or "").strip() or None
+        r.guest_email = ((params().get("test_email") or "").strip() or None) if r.channel == "lodgify" else None
         s.add(r)
         s.commit()
 
@@ -481,7 +496,7 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
         "street": _clean(form.get("street")), "postal_code": _clean(form.get("postal_code"), 12),
         "city": _clean(form.get("city"), 80), "country": _clean(form.get("country"), 60), "address": address,
         "email": _clean(form.get("email"), 120).lower(), "phone": _clean(form.get("phone"), 30),
-        "arrival_time": _clean(form.get("arrival_time"), 20), "occupants": _clean(form.get("occupants"), 3),
+        "arrival_time": _clean(form.get("arrival_time"), 20), "occupants": _clean(form.get("occupants"), 3) or str(res.guests or ""),
         "occupants_list": " · ".join(x.strip() for x in str(form.get("occupants_list") or "").splitlines() if x.strip())[:1200],
         "erp": bool(form.get("erp")), "marketing": marketing,
         "mkt_email": _clean(form.get("mkt_email"), 120).lower() if marketing in ("email", "both") else "",
@@ -518,6 +533,7 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
     # confirmation au voyageur + alerte interne
     v = _mail_vars(res)
     v["date"] = fmt_dt(resp.submitted_at, lang)
+    v["file"] = recap.name
     to = data["email"] or res.guest_email
     if to:
         subject = t(lang, "mail_confirm_subject", **v)
@@ -534,7 +550,9 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
                f"Séjour : {fmt_date(res.arrival)} → {fmt_date(res.departure)} · {data['occupants'] or res.guests or '?'} personnes · "
                f"arrivée prévue {data['arrival_time'] or '?'}\n"
                f"Règles : {'toutes acceptées' if resp.rules_ok else 'REFUS : ' + resp.refused_rules}\n"
-               f"Marketing : {marketing}\n\nDétail : {admin_url()}/c/VDS/checkin/{res.id}\n",
+               f"Marketing : {marketing}\nAttestation signée : {recap.name} (jointe à la confirmation envoyée au voyageur)\n"
+               f"Pièce(s) d'identité : {len(uploads)} fichier(s)\n\n"
+               f"Fiche de suivi Vaelan (accès collaborateurs) : {admin_url()}/c/VDS/checkin/{res.id}\n",
                kind="alert")
     return resp, recap
 
@@ -553,7 +571,8 @@ def save_refusal(res: VdsReservation, refused: List[str], lang: str, ip: str) ->
     send_alert(res, f"[VDS] ⚠️ Règles REFUSÉES — {res.guest_name or '?'} · {fmt_date(res.arrival)} — annulation demandée",
                f"Le voyageur {res.guest_name or '?'} (réservation {res.booking_ref or res.id}, {config.CHANNELS[res.channel]['label']}, "
                f"séjour {fmt_date(res.arrival)} → {fmt_date(res.departure)}) a répondu NON à : {labels}\n"
-               f"et a demandé l'annulation via le formulaire.\n\nDétail : {admin_url()}/c/VDS/checkin/{res.id}\n", kind="refusal")
+               f"et a demandé l'annulation via le formulaire.\n\nFormulaire du voyageur (lien public) : {public_url(res)}\n"
+               f"Fiche de suivi Vaelan (accès collaborateurs) : {admin_url()}/c/VDS/checkin/{res.id}\n", kind="refusal")
 
 
 # ------------------------------------------------------------------ PDF récapitulatif
@@ -571,6 +590,11 @@ def rule_rows(d: dict, lang: str = "fr"):
     return out
 
 
+def _badge(ans: str) -> str:
+    """Réponse OUI (fond vert) / NON (fond rouge) / — dans l'attestation PDF."""
+    return {"OUI": "<span class='yes'>OUI</span>", "NON": "<span class='no'>NON</span>"}.get(ans, ans)
+
+
 def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: Optional[bytes]) -> bytes:
     """Attestation formelle : règles acceptées une à une, identité, consentements, signature horodatée."""
     import fitz
@@ -582,25 +606,26 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: Optio
     rows = ""
     for (txt, ans, confirmed), r in zip(rule_rows(d, lang), (config.RULES if not d.get("legacy_rules") else [None] * 99)):
         extra = ("<br/><span class='c'>☑ " + esc(conf_txt.get(r["key"])) + "</span>") if (r and confirmed) else ""
-        rows += f"<tr><td class='q'>{esc(txt)}</td><td class='a'>{ans}{extra}</td></tr>"
+        rows += f"<tr><td class='q'>{esc(txt)}</td><td class='a'>{_badge(ans)}{extra}</td></tr>"
     mk = dict((m[0], m[1] if lang == "fr" else m[2]) for m in config.MARKETING)
-    ident = [
-        (t(lang, "full_name"), d.get("full_name")), (t(lang, "birth_date"), fmt_date(d.get("birth_date"), lang)),
-        (t(lang, "birth_place"), d.get("birth_place")), (t(lang, "nationality"), d.get("nationality")),
-        ("Adresse" if lang == "fr" else "Address", d.get("address")), (t(lang, "email"), d.get("email") or res.guest_email),
-        ("Téléphone" if lang == "fr" else "Phone", d.get("phone")), (t(lang, "arrival_time"), d.get("arrival_time")),
-        ("Occupants", (d.get("occupants") or "") + ((" — " + d.get("occupants_list")) if d.get("occupants_list") else "")),
-    ]
+    ident = [(t(lang, "full_name"), d.get("full_name")), (t(lang, "birth_date"), fmt_date(d.get("birth_date"), lang))]
+    if d.get("birth_place"):                                   # anciennes réponses seulement
+        ident.append((t(lang, "birth_place"), d.get("birth_place")))
+    ident += [(t(lang, "nationality"), d.get("nationality")),
+              ("Adresse" if lang == "fr" else "Address", d.get("address")), (t(lang, "email"), d.get("email") or res.guest_email),
+              ("Téléphone" if lang == "fr" else "Phone", d.get("phone")), (t(lang, "arrival_time"), d.get("arrival_time")),
+              ("Occupants", str(d.get("occupants") or res.guests or "") + ((" — " + d.get("occupants_list")) if d.get("occupants_list") else ""))]
     ident_rows = "".join(f"<tr><td class='q'>{esc(k)}</td><td class='a'>{esc(v)}</td></tr>" for k, v in ident)
-    n_id = len([f for f in files_for(res.id, "id_document") if f.response_id == resp.id])
+    id_files = [f.name for f in files_for(res.id, "id_document") if f.response_id == resp.id]
+    n_id = len(id_files)
     cons = [
         ("État des risques (ERP)" if lang == "fr" else "Risk assessment (ERP)", "OUI" if d.get("erp") else "NON"),
         ("Offres promotionnelles" if lang == "fr" else "Promotional offers", mk.get(d.get("marketing"), d.get("marketing"))
          + ((" — " + d.get("mkt_email")) if d.get("mkt_email") else "") + ((" — " + d.get("mkt_phone")) if d.get("mkt_phone") else "")),
         ("RGPD", "OUI" if d.get("rgpd") else "NON"),
-        ("Pièce d'identité jointe" if lang == "fr" else "ID document attached", f"{n_id} fichier(s)" if n_id else ("non demandée" if not config.CHANNELS[res.channel]["id_required"] else "—")),
+        ("Pièce d'identité jointe" if lang == "fr" else "ID document attached", (f"{n_id} fichier(s) : " + ", ".join(id_files)) if n_id else ("non demandée" if not config.CHANNELS[res.channel]["id_required"] else "—")),
     ]
-    cons_rows = "".join(f"<tr><td class='q'>{esc(k)}</td><td class='a'>{esc(v)}</td></tr>" for k, v in cons)
+    cons_rows = "".join(f"<tr><td class='q'>{esc(k)}</td><td class='a'>{_badge(v) if v in ('OUI', 'NON') else esc(v)}</td></tr>" for k, v in cons)
     when = fmt_dt(resp.submitted_at, lang)
     title = ("Attestation d'acceptation des règles et conditions de location" if lang == "fr"
              else "Certificate of acceptance of the rules and rental conditions")
@@ -635,7 +660,7 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: Optio
     <p class='meta'>{'Signé le' if lang=='fr' else 'Signed on'} {when} ({'heure de La Réunion' if lang=='fr' else 'Réunion time'}) · IP {esc(resp.ip)}<br/>
     {esc(t(lang, 'sign_legal'))}</p>
     {sig_html}
-    <p class='foot'>{'Document généré par' if lang=='fr' else 'Document generated by'} Vaelan — {esc(config.VILLA['name'])} · {esc(config.VILLA['rgpd_email'])}</p>
+    <p class='foot'>{esc(config.VILLA['name'])} · {esc(config.VILLA['contact_email'])} · {'document généré par' if lang=='fr' else 'document generated by'} Vaelan</p>
     """
     css = """
     body { font-family: sans-serif; font-size: 9.5pt; color: #1d2b3a; }
@@ -647,6 +672,7 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: Optio
     table { width: 100%; border-collapse: collapse; }
     td { border-bottom: 0.4pt solid #d5dbe1; padding: 3pt 4pt; vertical-align: top; }
     td.q { width: 78%; } td.a { width: 22%; font-weight: bold; color: #234159; }
+    span.yes { background-color: #d1e7dd; color: #0f5132; padding: 1pt 6pt; } span.no { background-color: #f8d7da; color: #842029; padding: 1pt 6pt; }
     span.c { font-weight: normal; color: #55606b; font-size: 8pt; }
     div.hdr { text-align: center; }
     """

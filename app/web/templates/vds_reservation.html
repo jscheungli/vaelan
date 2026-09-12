@@ -39,8 +39,13 @@
     {% if res.status in ('pending','sent','reminded') %}
     <div class="card shadow-sm mb-3 border-warning"><div class="card-body">
       <h3 class="h6 text-uppercase text-muted">Inviter / relancer manuellement (SMS, WhatsApp, messagerie de la plateforme, téléphone)</h3>
-      <p class="small text-muted mb-2">1. Choisissez le canal, copiez le message suggéré (modifiable). 2. Envoyez-le depuis votre téléphone ou la messagerie. 3. Collez ici ce que vous avez réellement envoyé et validez : c'est journalisé avec votre nom.</p>
+      <p class="small text-muted mb-2">1. Choisissez premier contact ou relance, puis le canal ; copiez le message suggéré (modifiable). 2. Envoyez-le depuis votre téléphone ou la messagerie. 3. Collez ici ce que vous avez réellement envoyé et validez : c'est journalisé avec votre nom.</p>
       <form method="post" action="/c/{{ company.code }}/checkin/{{ res.id }}/manual" id="manualform">
+        <div class="btn-group btn-group-sm mb-2" role="group">
+          <input type="radio" class="btn-check" name="mode" value="invite" id="mode_invite" {% if suggested.mode == 'invite' %}checked{% endif %}><label class="btn btn-outline-dark" for="mode_invite"><i class="bi bi-hand-thumbs-up"></i> Premier contact (merci pour la réservation)</label>
+          <input type="radio" class="btn-check" name="mode" value="remind" id="mode_remind" {% if suggested.mode == 'remind' %}checked{% endif %}><label class="btn btn-outline-dark" for="mode_remind"><i class="bi bi-bell"></i> Relance (formulaire toujours pas complété)</label>
+        </div>
+        <div class="small text-muted mb-2">{% if suggested.mode == 'invite' %}Aucun message n'a encore été envoyé à ce voyageur : premier contact proposé.{% else %}Ce voyageur a déjà été contacté{% if res.reminder_count %} et relancé {{ res.reminder_count }} fois{% endif %} : relance proposée.{% endif %}</div>
         <div class="d-flex gap-2 align-items-end mb-2">
           <div><label class="form-label small mb-0">Canal</label>
             <select name="channel" class="form-select form-select-sm" id="manualchannel">
@@ -61,9 +66,10 @@
       </form>
       <script>
         (function(){ const S = {{ suggested|tojson }}; const sel = document.getElementById('manualchannel'), ta = document.getElementById('manualtext');
-          function fill(){ ta.value = (sel.value === 'sms' || sel.value === 'whatsapp') ? S.short : (sel.value === 'airbnb' ? S.nolink : S.long);
+          function fill(){ const M = document.getElementById('mode_remind').checked ? S.remind : S.invite;
+            ta.value = (sel.value === 'sms' || sel.value === 'whatsapp') ? M.short : (sel.value === 'airbnb' ? M.nolink : M.long);
             document.getElementById('manualhint').classList.toggle('d-none', sel.value !== 'airbnb'); }
-          sel.addEventListener('change', fill); fill();
+          sel.addEventListener('change', fill); document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', fill)); fill();
           document.getElementById('manualcopy').addEventListener('click', function(){ navigator.clipboard.writeText(ta.value); this.innerHTML = '<i class="bi bi-check"></i> copié'; }); })();
       </script>
     </div></div>
