@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Banc de test check-in · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/checkin">Check-in voyageurs</a></li>
+  <li class="breadcrumb-item active">Banc de test</li>
+</ol></nav>
+<div class="d-flex align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">Banc de test bout en bout</h1>
+  <a class="btn btn-sm btn-outline-secondary ms-auto" href="/c/{{ company.code }}/checkin/config"><i class="bi bi-gear"></i> Configuration</a>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<div class="alert alert-light border small py-2">
+  Tous les emails du banc partent à <strong>{{ test_email or '⚠ adresse de test non renseignée' }}</strong>, sujet préfixé <code>[TEST]</code>, expéditeur <code>{{ sender }}</code>.
+  Les alertes Telegram sont préfixées « 🧪 TEST ». Les réservations de test sont ignorées par les relances automatiques et le point du jour.
+  Liens voyageurs sur <code>{{ base }}</code>.
+</div>
+
+{% if not rs %}
+<form method="post" class="mb-3"><input type="hidden" name="action" value="create">
+  <button class="btn btn-dark"><i class="bi bi-plus-lg"></i> Créer le jeu de test (une réservation par canal)</button>
+  <span class="small text-muted ms-2">Airbnb en anglais, Booking, Abritel et site direct en français · arrivée dans 10 jours · email = adresse de test.</span>
+</form>
+{% else %}
+<div class="d-flex flex-wrap gap-2 mb-3">
+  <form method="post"><input type="hidden" name="action" value="send_all"><button class="btn btn-dark"><i class="bi bi-envelope"></i> Envoyer un exemplaire de chaque email</button></form>
+  <form method="post"><input type="hidden" name="action" value="create"><button class="btn btn-outline-secondary">Recréer les canaux manquants</button></form>
+  <form method="post" class="ms-auto"><input type="hidden" name="action" value="purge"><button class="btn btn-outline-danger" onclick="return confirm('Supprimer toutes les réservations de test, leurs réponses, fichiers et envois ?')"><i class="bi bi-trash"></i> Purger le jeu de test</button></form>
+</div>
+<div class="small text-muted mb-3">« Chaque email » = invitation FR + EN, relance, alerte J-7 sans formulaire, alerte nouvelle réservation Booking (message SMS suggéré) et Airbnb (sans lien), état des risques si chargé. La <strong>confirmation signée</strong> (avec attestation PDF), l'alerte « formulaire signé » et l'alerte « règles refusées » se déclenchent en remplissant les formulaires ci-dessous.</div>
+
+<div class="row g-3">
+{% for r in rs %}{% set ch = channels[r.channel] %}
+<div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body small">
+  <div class="d-flex align-items-center gap-2 mb-2">
+    <strong class="fs-6">{{ ch.label }}</strong> <span class="badge text-bg-{{ labels[r.status][1] }}">{{ labels[r.status][0] }}</span>
+    <span class="text-muted">{{ r.guest_name }} · {{ 'EN' if r.lang == 'en' else 'FR' }} · {{ fmt_date(r.arrival) }} → {{ fmt_date(r.departure) }} · réf. {{ r.booking_ref }}</span>
+    <a class="ms-auto" href="/c/{{ company.code }}/checkin/{{ r.id }}">fiche</a>
+  </div>
+  <div class="mb-2"><span class="text-muted">Scénario :</span> {{ scenarios[r.channel] }}</div>
+  <div class="mb-2"><span class="text-muted">Formulaire :</span>
+    <a class="btn btn-sm btn-outline-dark py-0" href="{{ urls[r.id] }}?lang=fr" target="_blank">ouvrir FR</a>
+    <a class="btn btn-sm btn-outline-dark py-0" href="{{ urls[r.id] }}?lang=en" target="_blank">ouvrir EN</a>
+    <a class="btn btn-sm btn-outline-secondary py-0" href="{{ generic[r.channel] }}" target="_blank">lien générique {{ ch.label }}</a>
+    <button class="btn btn-sm btn-outline-secondary py-0" onclick="navigator.clipboard.writeText('{{ urls[r.id] }}');this.textContent='copié'" title="Copier le lien"><i class="bi bi-link-45deg"></i></button>
+    <div class="text-muted"><code>{{ urls[r.id] }}</code></div>
+  </div>
+  <form method="post" class="d-flex flex-wrap gap-1 mb-2"><input type="hidden" name="rid" value="{{ r.id }}">
+    <button name="action" value="invitation" class="btn btn-sm btn-outline-dark py-0">Invitation</button>
+    <button name="action" value="reminder" class="btn btn-sm btn-outline-dark py-0">Relance</button>
+    <button name="action" value="prearrival7" class="btn btn-sm btn-outline-dark py-0">Alerte J-7</button>
+    <button name="action" value="prearrival2" class="btn btn-sm btn-outline-dark py-0">Alerte J-2</button>
+    <button name="action" value="new_booking" class="btn btn-sm btn-outline-dark py-0">Nouvelle résa à inviter</button>
+    {% if erp %}<button name="action" value="erp" class="btn btn-sm btn-outline-dark py-0">État des risques</button>{% endif %}
+    {% if r.status != 'pending' %}<button name="action" value="reset" class="btn btn-sm btn-outline-warning py-0 ms-auto" onclick="return confirm('Remettre cette réservation de test à zéro (réponses, fichiers et envois effacés) ?')">Remettre à zéro</button>{% endif %}
+  </form>
+  {% if resp[r.id] %}<div><a href="/c/{{ company.code }}/checkin/{{ r.id }}/attestation.pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Attestation PDF</a> · réponse du {{ fmt_dt(resp[r.id].submitted_at) }}{% if not resp[r.id].rules_ok %} · <span class="text-danger">règles refusées</span>{% endif %}</div>{% endif %}
+  {% if msgs[r.id] %}<div class="mt-1 text-muted">Envois : {% for m in msgs[r.id] %}<a href="/c/{{ company.code }}/checkin/message/{{ m.id }}" class="text-decoration-none"><span class="badge text-bg-{{ 'success' if m.status=='sent' else ('secondary' if m.status=='skipped' else 'danger') }}">{{ m.kind }}</span></a> {% endfor %}</div>{% endif %}
+</div></div></div>
+{% endfor %}
+</div>
+
+<div class="card shadow-sm mt-3"><div class="card-body small">
+  <h3 class="h6 text-uppercase text-muted">À vérifier dans votre boîte et dans le navigateur</h3>
+  <div class="row">
+    <div class="col-md-6"><ul class="mb-0">
+      <li>Expéditeur affiché « La Villa des Sables du Lagon », adresse contact@villa-des-sables-du-lagon.com, pas de mention « via » ni d'avertissement de votre messagerie.</li>
+      <li>Une réponse à l'email arrive bien dans la boîte contact.</li>
+      <li>Logo, mise en page, pied de page ; version texte lisible.</li>
+      <li>Tous les liens pointent sur <code>{{ base }}</code> et s'ouvrent.</li>
+      <li>Confirmation signée : attestation PDF jointe, complète et lisible.</li>
+    </ul></div>
+    <div class="col-md-6"><ul class="mb-0">
+      <li>Formulaire sur mobile : bandeau réservation, logo canal, drapeaux FR/EN, encarts « en savoir plus ».</li>
+      <li>Airbnb : pas d'étape pièce d'identité ; autres canaux : envoi de photo ou fichier.</li>
+      <li>Un « Non » sur une règle → modale → « ces règles ne me conviennent pas » → alerte refus reçue.</li>
+      <li>Lien générique : saisir la référence (ex. TEST-BOOKING) renvoie vers le formulaire personnel.</li>
+      <li>Lien déjà utilisé → page « formulaire déjà rempli » ; lien inconnu → « lien invalide ».</li>
+    </ul></div>
+  </div>
+  <div class="mt-2 text-muted">Quand tout est validé : purger le jeu de test, décocher le mode bêta dans la configuration, puis activer l'invitation automatique si souhaité.</div>
+</div></div>
+{% endif %}
+{% endblock %}

@@ -60,7 +60,7 @@ app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, max_age=60
 
 class PublicHostMiddleware:
     """Sous-domaine voyageurs (checkin.villa-des-sables-du-lagon.com, hébergé ici) :
-    /<token> -> /checkin/<token>, /nouveau/<canal> -> /checkin/nouveau/<canal>, / -> site de la villa ;
+    /<token> (et /<token>/refus) -> /checkin/…, /nouveau/<canal> -> /checkin/nouveau/<canal>, / -> site de la villa ;
     tout le reste (back-office, login) est renvoyé vers vaelan.com. Les autres hôtes ne sont pas touchés."""
     PASS = ("/checkin/", "/static/", "/healthz")
 
@@ -77,7 +77,7 @@ class PublicHostMiddleware:
                     return await RedirectResponse(vcfg.VILLA["site"], status_code=302)(scope, receive, send)
                 if not path.startswith(self.PASS):
                     seg = path.strip("/").split("/")
-                    if len(seg) == 1 or (len(seg) == 2 and seg[0] == "nouveau"):
+                    if len(seg) == 1 or (len(seg) == 2 and (seg[0] == "nouveau" or seg[1] == "refus")):
                         scope["path"] = "/checkin" + path
                         scope["raw_path"] = scope["path"].encode()
                     else:

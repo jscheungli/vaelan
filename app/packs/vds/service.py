@@ -206,10 +206,15 @@ def _tg_esc(x) -> str:
     return str(x if x is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _tg_notify(text: str) -> None:
+def is_test(res) -> bool:
+    """Réservation du banc de test (source « test ») : tous ses envois vont à l'adresse de test, préfixés [TEST]."""
+    return bool(res is not None and getattr(res, "source", None) == "test")
+
+
+def _tg_notify(text: str, res=None) -> None:
     try:
         from . import telegram as _vtg
-        _vtg.notify(text)
+        _vtg.notify(("🧪 <b>TEST</b> — " if is_test(res) else "") + text)
     except Exception as e:
         print(f"[telegram] notification : {e}")
 
@@ -289,6 +294,9 @@ def guest_send(res: VdsReservation, kind: str, to: str, subject: str, body: str,
     (sujet préfixé du destinataire réel) — rien ne part au client."""
     test = beta_redirect()
     real_to = to
+    if is_test(res):
+        to, test = (params().get("test_email") or to), None
+        subject = f"[TEST] {subject}"
     if test:
         subject = f"[BÊTA → {to}] {subject}"
         body = f"*** MODE BÊTA — ce message était destiné à {to} ; il vous est redirigé pour validation. ***\n\n" + body
@@ -320,8 +328,11 @@ def send_invitation(res: VdsReservation, reminder: bool = False) -> Tuple[bool, 
 
 
 def send_alert(res: Optional[VdsReservation], subject: str, body: str, kind: str = "alert") -> Tuple[bool, str]:
-    """Alerte interne (propriétaire / gestionnaire)."""
+    """Alerte interne (propriétaire / gestionnaire). Réservation de test : adresse de test seulement."""
     to = alert_emails()
+    if is_test(res):
+        to = [x for x in [(params().get("test_email") or "").strip()] if x]
+        subject = f"[TEST] {subject}"
     if not to:
         log_message(res.id if res else None, kind, "", subject, body, False, "alertes : aucun destinataire (configuration)")
         return False, "aucun destinataire"
@@ -349,9 +360,11 @@ def send_new_booking_alert(res: VdsReservation, reason: str) -> Tuple[bool, str]
             f"----------------------------------------\n{txt}\n----------------------------------------\n")
     _tg_notify(f"🆕 <b>Nouvelle réservation {_tg_esc(label)}</b> à inviter à la main — {_tg_esc(res.guest_name or '?')} · "
                f"{fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} pers. · tél {_tg_esc(res.guest_phone or '—')}\n"
-               f"Fiche (message prêt à copier) : {admin_url()}/c/VDS/checkin/{res.id}")
+               f"Fiche (message prêt à copier) : {admin_url()}/c/VDS/checkin/{res.id}", res=res)
     test = beta_redirect()
     real = ", ".join(to)
+    if is_test(res):
+        to, test, subject = [x for x in [(params().get("test_email") or "").strip()] if x], None, f"[TEST] {subject}"
     if test:
         subject = f"[BÊTA → {real or '—'}] {subject}"
         body = f"*** MODE BÊTA — cette alerte était destinée à {real or '—'}. ***\n\n" + body
@@ -363,6 +376,72 @@ def send_new_booking_alert(res: VdsReservation, reason: str) -> Tuple[bool, str]
     ok, info = mailer.send_branded(to, subject, body, b, lang="fr")
     log_message(res.id, "new_booking", f"{to[0]} (bêta · réel : {real})" if test else real, subject, body, ok, info, sender=mailer.branded_from(b))
     return ok, info
+
+
+def send_prearrival_alert(res: VdsReservation, days_left: int) -> Tuple[bool, str]:
+    """Alerte interne « arrivée dans N jours sans formulaire » (J-7 / J-2 par défaut)."""
+    label = config.CHANNELS[res.channel]["label"]
+    return send_alert(
+        res, f"[VDS] Arrivée dans {days_left} j SANS formulaire — {res.guest_name or '?'} · {label}",
+        f"La réservation {res.booking_ref or res.id} ({label}) arrive le {fmt_date(res.arrival)} "
+        f"et le formulaire d'arrivée n'est pas complété (statut : {res.status}, {res.reminder_count or 0} relance(s)).\n"
+        f"Email : {res.guest_email or 'AUCUN — envoyer le lien via la messagerie de la plateforme'}\n"
+        f"Lien du formulaire : {public_url(res)}\nDétail : {admin_url()}/c/VDS/checkin/{res.id}\n")
+
+
+# ------------------------------------------------------------------ banc de test bout en bout
+TEST_SET = [  # (canal, langue, nom, référence)
+    ("airbnb", "en", "Test Airbnb", "TEST-AIRBNB"), ("booking", "fr", "Test Booking", "TEST-BOOKING"),
+    ("abritel", "fr", "Test Abritel", "TEST-ABRITEL"), ("lodgify", "fr", "Test Site direct", "TEST-DIRECT")]
+
+
+def test_reservations() -> List[VdsReservation]:
+    with Session(engine) as s:
+        return list(s.exec(select(VdsReservation).where(VdsReservation.source == "test").order_by(VdsReservation.id)).all())
+
+
+def create_test_set() -> List[VdsReservation]:
+    """Une réservation de test par canal (email = adresse de test, arrivée dans 10 jours) ; ne recrée pas celles qui existent."""
+    email = (params().get("test_email") or "").strip()
+    have = {r.channel for r in test_reservations()}
+    today = now_local().date()
+    out = []
+    for ch, lang, name, ref in TEST_SET:
+        if ch in have:
+            continue
+        out.append(create_reservation(ch, booking_ref=ref, guest_name=name, guest_email=email, guest_phone="+262 692 00 00 00",
+                                      arrival=today + timedelta(days=10), departure=today + timedelta(days=17), guests=4,
+                                      lang=lang, source="test", notes="Banc de test bout en bout — à purger après validation"))
+    return out
+
+
+def reset_test_reservation(rid: int) -> None:
+    """Remet une réservation de test à « à inviter » et efface ses réponses, fichiers et envois."""
+    with Session(engine) as s:
+        r = s.get(VdsReservation, rid)
+        if not r or r.source != "test":
+            return
+        for m in (VdsFile, VdsResponse, VdsMessage):
+            for x in s.exec(select(m).where(m.reservation_id == rid)).all():
+                s.delete(x)
+        r.status, r.invited_at, r.reminded_at, r.reminder_count, r.alerted_at, r.completed_at, r.erp_sent_at = "pending", None, None, 0, None, None, None
+        r.guest_email = (params().get("test_email") or "").strip() or None
+        s.add(r)
+        s.commit()
+
+
+def purge_test_set() -> int:
+    """Supprime toutes les réservations de test avec leurs réponses, fichiers et envois."""
+    n = 0
+    with Session(engine) as s:
+        for r in s.exec(select(VdsReservation).where(VdsReservation.source == "test")).all():
+            for m in (VdsFile, VdsResponse, VdsMessage):
+                for x in s.exec(select(m).where(m.reservation_id == r.id)).all():
+                    s.delete(x)
+            s.delete(r)
+            n += 1
+        s.commit()
+    return n
 
 
 def send_erp(res: VdsReservation) -> Tuple[bool, str]:
@@ -447,7 +526,7 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
     _tg_notify(f"✅ <b>Formulaire signé</b> — {_tg_esc(resp.full_name or res.guest_name)} · {_tg_esc(config.CHANNELS[res.channel]['label'])} · "
                f"{fmt_date(res.arrival)} → {fmt_date(res.departure)} · {data['occupants'] or res.guests or '?'} pers."
                + (f" · arrivée prévue {_tg_esc(data['arrival_time'])}" if data.get("arrival_time") else "")
-               + f"\nFiche : {admin_url()}/c/VDS/checkin/{res.id}")
+               + f"\nFiche : {admin_url()}/c/VDS/checkin/{res.id}", res=res)
     send_alert(res, f"[VDS] Formulaire d'arrivée signé — {res.guest_name} · {config.CHANNELS[res.channel]['label']} · "
                     f"{fmt_date(res.arrival)} → {fmt_date(res.departure)}",
                f"Réservation {res.booking_ref or res.id} ({config.CHANNELS[res.channel]['label']})\n"
@@ -470,7 +549,7 @@ def save_refusal(res: VdsReservation, refused: List[str], lang: str, ip: str) ->
     update_reservation(res.id, status="refused")
     labels = "; ".join(next((r["fr"] for r in config.RULES if r["key"] == k), k)[:80] for k in keys)
     _tg_notify(f"⛔ <b>Règles refusées</b> — {_tg_esc(res.guest_name or '?')} · {fmt_date(res.arrival)} → {fmt_date(res.departure)} · annulation demandée.\n"
-               f"Refus : {_tg_esc(labels)}\nFiche : {admin_url()}/c/VDS/checkin/{res.id}")
+               f"Refus : {_tg_esc(labels)}\nFiche : {admin_url()}/c/VDS/checkin/{res.id}", res=res)
     send_alert(res, f"[VDS] ⚠️ Règles REFUSÉES — {res.guest_name or '?'} · {fmt_date(res.arrival)} — annulation demandée",
                f"Le voyageur {res.guest_name or '?'} (réservation {res.booking_ref or res.id}, {config.CHANNELS[res.channel]['label']}, "
                f"séjour {fmt_date(res.arrival)} → {fmt_date(res.departure)}) a répondu NON à : {labels}\n"

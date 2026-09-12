@@ -220,6 +220,7 @@ def admin_list(request: Request, code: str, view: str = "avenir"):
     return templates.TemplateResponse(request, "vds_checkin.html",
                                       _ctx(request, company=company, rs=rs, view=view, counts=counts, runs=runs, warns=warns,
                                            labels=STATUS_LABEL, channels=vcfg.CHANNELS, today=today, base=service.base_url(),
+                                           urls={r.id: service.public_url(r) for r in rs},
                                            smtp=mailer.configured(), fmt_dt=service.fmt_dt, answered=answered))
 
 
@@ -436,6 +437,81 @@ def admin_manual(request: Request, code: str, rid: int, channel: str = Form("sms
     who = (u.name or u.email) if u else "?"
     service.log_manual(res, channel if channel in ("sms", "whatsapp", "airbnb", "booking", "abritel", "email", "telephone") else "autre", text.strip(), who)
     return RedirectResponse(f"/c/{code}/checkin/{rid}?msg=Relance {channel} enregistrée (par {who}).", status_code=303)
+
+
+SCENARIOS = {
+    "airbnb": "formulaire en anglais, sans étape pièce d'identité ; le compléter et signer → confirmation EN avec attestation PDF + alerte « signé ».",
+    "booking": "répondre « Non » à une règle → modale de refus → alerte « règles refusées » ; puis remettre à zéro et compléter avec une pièce d'identité.",
+    "abritel": "compléter avec une photo de pièce d'identité prise au téléphone (réduction automatique) ; vérifier l'encart événements « site direct ».",
+    "lodgify": "site direct : règles « conditions de location », événements au cas par cas ; tester le lien générique avec la référence TEST-DIRECT.",
+}
+
+
+@router.get("/c/{code}/checkin/tests", response_class=HTMLResponse)
+def admin_tests(request: Request, code: str, msg: str = ""):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    rs = service.test_reservations()
+    with Session(engine) as s:
+        resp = {r.id: s.exec(select(VdsResponse).where(VdsResponse.reservation_id == r.id).order_by(VdsResponse.id.desc())).first() for r in rs}
+    p = service.params()
+    return templates.TemplateResponse(request, "vds_tests.html",
+                                      _ctx(request, company=company, rs=rs, msg=msg, labels=STATUS_LABEL, channels=vcfg.CHANNELS,
+                                           scenarios=SCENARIOS, urls={r.id: service.public_url(r) for r in rs},
+                                           generic={k: service.generic_url(k) for k in vcfg.CHANNELS}, resp=resp,
+                                           msgs={r.id: service.messages_for(r.id) for r in rs}, test_email=p.get("test_email"),
+                                           sender=mailer.branded_from(service.brand()), base=service.base_url(),
+                                           erp=bool(service.reference_file("erp")), fmt_date=service.fmt_date, fmt_dt=service.fmt_dt))
+
+
+@router.post("/c/{code}/checkin/tests")
+def admin_tests_action(request: Request, code: str, action: str = Form(...), rid: int = Form(0)):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    if not (service.params().get("test_email") or "").strip() and action not in ("purge",):
+        return RedirectResponse(f"/c/{code}/checkin/tests?msg=Renseignez d'abord l'adresse de test dans la configuration.", status_code=303)
+    out = []
+    if action == "create":
+        n = len(service.create_test_set())
+        out.append(f"{n} réservation(s) de test créée(s)")
+    elif action == "purge":
+        out.append(f"{service.purge_test_set()} réservation(s) de test supprimée(s)")
+    elif action == "reset":
+        service.reset_test_reservation(rid)
+        out.append("réservation remise à zéro")
+    elif action == "send_all":
+        rs = {r.channel: r for r in service.test_reservations()}
+        plan = [("lodgify", "invitation"), ("airbnb", "invitation"), ("lodgify", "reminder"), ("lodgify", "prearrival7"),
+                ("booking", "new_booking"), ("airbnb", "new_booking")] + ([("lodgify", "erp")] if service.reference_file("erp") else [])
+        for ch, kind in plan:
+            if ch in rs:
+                ok, info = _bench_send(rs[ch], kind)
+                out.append(f"{kind} {vcfg.CHANNELS[ch]['label']} : {'✅' if ok else '❌ ' + info}")
+    else:
+        with Session(engine) as s:
+            res = s.get(VdsReservation, rid)
+        if res and service.is_test(res):
+            ok, info = _bench_send(res, action)
+            out.append(f"{action} : {'✅ envoyé' if ok else '❌ ' + info}")
+    return RedirectResponse(f"/c/{code}/checkin/tests?msg={' · '.join(out)}", status_code=303)
+
+
+def _bench_send(res: VdsReservation, kind: str):
+    """Un email du banc de test (toujours vers l'adresse de test, préfixé [TEST])."""
+    res = service.by_token(res.token)
+    if kind == "invitation":
+        return service.send_invitation(res)
+    if kind == "reminder":
+        return service.send_invitation(res, reminder=True)
+    if kind in ("prearrival7", "prearrival2"):
+        return service.send_prearrival_alert(res, 7 if kind == "prearrival7" else 2)
+    if kind == "new_booking":
+        return service.send_new_booking_alert(res, "réservation de test — canal sans invitation automatique")
+    if kind == "erp":
+        return service.send_erp(res)
+    return False, "action inconnue"
 
 
 @router.get("/c/{code}/checkin/{rid}", response_class=HTMLResponse)

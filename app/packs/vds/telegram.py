@@ -78,7 +78,7 @@ def notify(text: str) -> int:
 def _upcoming(days: int = 30) -> List[VdsReservation]:
     today = service.now_local().date()
     with Session(engine) as s:
-        rs = s.exec(select(VdsReservation).where(VdsReservation.status != "cancelled",
+        rs = s.exec(select(VdsReservation).where(VdsReservation.status != "cancelled", VdsReservation.source != "test",
                                                  VdsReservation.arrival != None,   # noqa: E711
                                                  VdsReservation.arrival <= today + timedelta(days=days),
                                                  VdsReservation.departure >= today - timedelta(days=1))).all()

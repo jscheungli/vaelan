@@ -6,7 +6,8 @@
   <li class="breadcrumb-item"><a href="/c/{{ company.code }}/checkin">Check-in voyageurs</a></li>
   <li class="breadcrumb-item active">Configuration</li>
 </ol></nav>
-<h1 class="h4">Configuration du check-in</h1>
+<div class="d-flex align-items-center gap-2 mb-2"><h1 class="h4 mb-0">Configuration du check-in</h1>
+  <a class="btn btn-sm btn-outline-secondary ms-auto" href="/c/{{ company.code }}/checkin/tests"><i class="bi bi-flask"></i> Banc de test bout en bout</a></div>
 {% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
 <div class="row g-3">
 <div class="col-lg-7">
@@ -22,7 +23,7 @@
   <div class="mb-2"><label class="form-label small mb-0">Alertes internes — destinataires (virgules)</label><input name="alert_emails" class="form-control form-control-sm" value="{{ p.alert_emails }}" placeholder="vous@…, gestionnaire@…"></div>
   <div class="mb-2"><label class="form-label small mb-0">Nouvelle réservation à inviter à la main (Airbnb / Booking / Abritel, ou site direct sans email) — destinataires</label><input name="new_booking_emails" class="form-control form-control-sm" value="{{ p.new_booking_emails }}" placeholder="contact@villa-des-sables-du-lagon.com">
     <div class="small text-muted">Envoyée à chaque synchro Lodgify (8h et 17h) pour les nouvelles réservations, avec le message prêt à copier. Les réservations du site direct avec email reçoivent l'invitation automatique (si activée).</div></div>
-  <div class="mb-2"><label class="form-label small mb-0">Adresse d'envoi (vide = contact@villa-des-sables-du-lagon.com) — nom affiché « La Villa des Sables du Lagon » (« via Vaelan » ; l'adresse doit être sur un domaine vérifié chez Postmark</label><input name="from_email" class="form-control form-control-sm" value="{{ p.from_email }}" placeholder="villa-des-sables-du-lagon@vaelan.com"></div>
+  <div class="mb-2"><label class="form-label small mb-0">Adresse d'envoi (vide = contact@villa-des-sables-du-lagon.com) — nom affiché « La Villa des Sables du Lagon » ; le domaine doit être vérifié chez Postmark (DKIM + Return-Path)</label><input name="from_email" class="form-control form-control-sm" value="{{ p.from_email }}" placeholder="contact@villa-des-sables-du-lagon.com"></div>
   <div class="mb-2"><label class="form-label small mb-0">Adresse de réponse (Reply-To) des emails voyageurs</label><input name="reply_to" class="form-control form-control-sm" value="{{ p.reply_to }}"></div>
   <div class="form-check small mb-3"><input class="form-check-input" type="checkbox" name="auto_invite" value="1" id="ai" {% if p.auto_invite %}checked{% endif %}><label class="form-check-label" for="ai">Invitation automatique dès qu'une réservation confirmée (Booked) arrive de Lodgify avec un email</label></div>
   <h3 class="h6 text-uppercase text-muted">Relances</h3>
@@ -35,7 +36,7 @@
   <h3 class="h6 text-uppercase text-muted">Liens publics</h3>
   <div class="mb-3"><label class="form-label small mb-0">Racine des liens du formulaire (vide = https://vaelan.com)</label>
     <input name="base_url" class="form-control form-control-sm" value="{{ p.base_url }}" placeholder="https://checkin.villa-des-sables-du-lagon.com">
-    <div class="small text-muted">Cible : <code>https://scilessablesdulagon.vaelan.com</code> — à renseigner une fois le sous-domaine déclaré dans Render (Settings → Custom Domains) et servi en HTTPS.</div></div>
+    <div class="small text-muted">Sous-domaine de la villa hébergé par Vaelan (CNAME Namecheap → vaelan.onrender.com, Custom Domain Render). Les liens voyageurs deviennent <code>…/&lt;jeton&gt;</code>.</div></div>
   <h3 class="h6 text-uppercase text-muted">Données</h3>
   <div class="row g-2 mb-3">
     <div class="col-6 col-md-4"><label class="form-label small mb-0">Purge des pièces d'identité (jours après départ)</label><input name="purge_id_days" type="number" class="form-control form-control-sm" value="{{ p.purge_id_days }}"></div>

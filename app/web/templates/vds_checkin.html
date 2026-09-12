@@ -9,6 +9,7 @@
 <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
   <h1 class="h4 mb-0 me-auto">Formulaires d'arrivée — La Villa des Sables du Lagon</h1>
   <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/export.xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+  <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/tests"><i class="bi bi-flask"></i> Banc de test</a>
   <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/checkin/config"><i class="bi bi-gear"></i> Configuration</a>
   <button class="btn btn-sm btn-dark" data-bs-toggle="collapse" data-bs-target="#newres"><i class="bi bi-plus-lg"></i> Réservation manuelle</button>
 </div>
@@ -71,7 +72,7 @@
     <td class="small text-muted text-nowrap">{{ fmt_dt(r.reminded_at or r.invited_at) if (r.reminded_at or r.invited_at) else '' }}</td>
     <td class="text-end text-nowrap">
       <a class="btn btn-sm btn-outline-secondary py-0" href="/c/{{ company.code }}/checkin/{{ r.id }}">détail</a>
-      {% if r.status in ('pending','sent','reminded') %}<button class="btn btn-sm btn-outline-secondary py-0" onclick="navigator.clipboard.writeText('{{ base }}/checkin/{{ r.token }}');this.textContent='copié'" title="Copier le lien du formulaire"><i class="bi bi-link-45deg"></i></button>{% endif %}
+      {% if r.status in ('pending','sent','reminded') %}<button class="btn btn-sm btn-outline-secondary py-0" onclick="navigator.clipboard.writeText('{{ urls[r.id] }}');this.textContent='copié'" title="Copier le lien du formulaire"><i class="bi bi-link-45deg"></i></button>{% endif %}
     </td>
   </tr>
   {% else %}<tr><td colspan="10" class="text-muted">{% if view == 'sansdate' %}Toutes les réponses historiques sont rattachées à un séjour.{% else %}Aucune réservation dans cette vue. Synchronisez Lodgify ou créez une réservation manuelle.{% endif %}</td></tr>{% endfor %}

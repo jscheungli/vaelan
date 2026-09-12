@@ -120,7 +120,8 @@ def run_reminders(ctx) -> str:
     now = datetime.utcnow()
     invited = reminded = alerted = erp = purged = 0
     with Session(engine) as s:
-        rs = list(s.exec(select(VdsReservation).where(VdsReservation.status.in_(["pending", "sent", "reminded", "completed"]))).all())
+        rs = list(s.exec(select(VdsReservation).where(VdsReservation.status.in_(["pending", "sent", "reminded", "completed"]),
+                                                      VdsReservation.source != "test")).all())   # le banc de test n'est pas relancé
     ctx.log(f"{len(rs)} réservations actives · {today:%d/%m/%Y}")
     ctx.log("Rappel : l'état des risques (ERP) est envoyé par la notification automatique Lodgify (validité 6 mois, à renouveler dans Lodgify).")
     for k, r in enumerate(rs):
@@ -151,12 +152,7 @@ def run_reminders(ctx) -> str:
         alert_days = set(p.get("alert_days") or [])
         due_alert = days_left in alert_days or (alert_days and days_left <= max(alert_days) and not r.alerted_at)
         if due_alert and (not r.alerted_at or (now - r.alerted_at).days >= 1):
-            ok, info = service.send_alert(
-                r, f"[VDS] Arrivée dans {days_left} j SANS formulaire — {r.guest_name or '?'} · {config.CHANNELS[r.channel]['label']}",
-                f"La réservation {r.booking_ref or r.id} ({config.CHANNELS[r.channel]['label']}) arrive le {service.fmt_date(r.arrival)} "
-                f"et le formulaire d'arrivée n'est pas complété (statut : {r.status}, {r.reminder_count or 0} relance(s)).\n"
-                f"Email : {r.guest_email or 'AUCUN — envoyer le lien via la messagerie de la plateforme'}\n"
-                f"Lien du formulaire : {service.public_url(r)}\nDétail : {service.base_url()}/c/VDS/checkin/{r.id}\n")
+            ok, info = service.send_prearrival_alert(r, days_left)
             service.update_reservation(r.id, alerted_at=now)
             alerted += 1 if ok else 0
     # --- purge des pièces d'identité N jours après le départ ---
