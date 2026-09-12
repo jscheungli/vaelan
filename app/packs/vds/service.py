@@ -252,16 +252,15 @@ def log_manual(res: VdsReservation, channel: str, text: str, by_user: str, kind:
 
 
 def suggested_texts(res: VdsReservation) -> dict:
-    """Textes prêts à copier pour une relance manuelle : SMS/WhatsApp (court) et messagerie (long)."""
+    """Textes prêts à copier pour un envoi manuel par SMS / WhatsApp : premier contact et relance."""
     v = _mail_vars(res)
     v["name"] = v["name"] or ""
     v["phone"] = f" ({res.guest_phone})" if res.guest_phone else ""
     reminder = res.status in ("sent", "reminded")
     fix = lambda x: x.replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
-    invite = {"long": fix(t(res.lang, "mail_invite_body", **v)), "short": fix(t(res.lang, "sms_invite", **v)), "nolink": fix(t(res.lang, "nolink_invite", **v))}
-    remind = {"long": fix(t(res.lang, "mail_remind_body", **v)), "short": fix(t(res.lang, "sms_remind", **v)), "nolink": fix(t(res.lang, "nolink_remind", **v))}
-    # mode par défaut : premier contact tant que rien n'a été envoyé, relance ensuite ; les deux jeux sont proposés
-    return {**(remind if reminder else invite), "invite": invite, "remind": remind, "mode": "remind" if reminder else "invite"}
+    # textes à copier pour SMS / WhatsApp (toujours avec le lien) ; par email, c'est le bouton « Inviter / relancer par email »
+    # mode par défaut : premier contact tant que rien n'a été envoyé, relance ensuite ; les deux textes sont proposés
+    return {"invite": fix(t(res.lang, "sms_invite", **v)), "remind": fix(t(res.lang, "sms_remind", **v)), "mode": "remind" if reminder else "invite"}
 
 
 def messages_for(reservation_id: int) -> List[VdsMessage]:
@@ -351,15 +350,15 @@ def send_new_booking_alert(res: VdsReservation, reason: str) -> Tuple[bool, str]
     p = params()
     to = [e.strip() for e in re.split(r"[;,\s]+", p.get("new_booking_emails") or "") if "@" in e]
     label = config.CHANNELS.get(res.channel, {}).get("label", res.channel)
-    sug = suggested_texts(res)
-    txt = sug["nolink"] if res.channel == "airbnb" else sug["short"]
+    txt = suggested_texts(res)["invite"]
     subject = f"[VDS] Nouvelle réservation {label} à inviter — {res.guest_name or '?'} · {fmt_date(res.arrival)} → {fmt_date(res.departure)}"
     body = (f"Bonjour,\n\nUne nouvelle réservation vient d'arriver et ne recevra pas d'invitation automatique ({reason}).\n\n"
             f"Canal : {label}\nVoyageur : {res.guest_name or '?'}\nSéjour : {fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} personnes\n"
             f"Référence : {res.booking_ref or res.id}\nTéléphone : {res.guest_phone or '— inconnu'}\nEmail : {res.guest_email or '— inconnu'}\n\n"
-            f"Merci de lui demander de remplir le formulaire d'arrivée via la messagerie {label if res.channel != 'lodgify' else ''}, "
-            f"par SMS ou WhatsApp, puis d'enregistrer l'envoi sur sa fiche de suivi Vaelan (accès collaborateurs) : {admin_url()}/c/VDS/checkin/{res.id}\n\n"
-            f"Formulaire du voyageur (lien public) : {public_url(res)}\n\nMessage suggéré ({'sans lien, Airbnb refuse les liens' if res.channel == 'airbnb' else 'SMS / WhatsApp'}) :\n"
+            f"Merci de lui envoyer le lien du formulaire par SMS ou WhatsApp au {res.guest_phone or 'numéro indiqué dans la réservation'}"
+            f"{' (la messagerie Airbnb bloque les liens)' if res.channel == 'airbnb' else ''}, puis d'enregistrer l'envoi sur sa fiche de suivi Vaelan "
+            f"(accès collaborateurs) : {admin_url()}/c/VDS/checkin/{res.id}\n\n"
+            f"Formulaire du voyageur (lien public) : {public_url(res)}\n\nMessage suggéré (SMS / WhatsApp, premier contact) :\n"
             f"----------------------------------------\n{txt}\n----------------------------------------\n")
     _tg_notify(f"🆕 <b>Nouvelle réservation {_tg_esc(label)}</b> à inviter à la main — {_tg_esc(res.guest_name or '?')} · "
                f"{fmt_date(res.arrival)} → {fmt_date(res.departure)} · {res.guests or '?'} pers. · tél {_tg_esc(res.guest_phone or '—')}\n"
@@ -491,8 +490,8 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
                                     _clean(form.get("country"), 60)] if x)
     data = {
         "rules": rules, "confirms": confirms,
-        "full_name": _clean(form.get("full_name"), 120), "birth_date": _clean(form.get("birth_date"), 10),
-        "birth_place": _clean(form.get("birth_place"), 120), "nationality": _clean(form.get("nationality"), 60),
+        "full_name": _clean(form.get("full_name"), 120), "birth_date": "", "birth_place": "",   # plus demandés (pièce d'identité jointe)
+        "nationality": _clean(form.get("nationality"), 60),
         "street": _clean(form.get("street")), "postal_code": _clean(form.get("postal_code"), 12),
         "city": _clean(form.get("city"), 80), "country": _clean(form.get("country"), 60), "address": address,
         "email": _clean(form.get("email"), 120).lower(), "phone": _clean(form.get("phone"), 30),
@@ -608,9 +607,10 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: Optio
         extra = ("<br/><span class='c'>☑ " + esc(conf_txt.get(r["key"])) + "</span>") if (r and confirmed) else ""
         rows += f"<tr><td class='q'>{esc(txt)}</td><td class='a'>{_badge(ans)}{extra}</td></tr>"
     mk = dict((m[0], m[1] if lang == "fr" else m[2]) for m in config.MARKETING)
-    ident = [(t(lang, "full_name"), d.get("full_name")), (t(lang, "birth_date"), fmt_date(d.get("birth_date"), lang))]
-    if d.get("birth_place"):                                   # anciennes réponses seulement
-        ident.append((t(lang, "birth_place"), d.get("birth_place")))
+    ident = [(t(lang, "full_name"), d.get("full_name"))]
+    for k in ("birth_date", "birth_place"):                    # anciennes réponses seulement (plus demandés)
+        if d.get(k):
+            ident.append((t(lang, k), fmt_date(d.get(k), lang) if k == "birth_date" else d.get(k)))
     ident += [(t(lang, "nationality"), d.get("nationality")),
               ("Adresse" if lang == "fr" else "Address", d.get("address")), (t(lang, "email"), d.get("email") or res.guest_email),
               ("Téléphone" if lang == "fr" else "Phone", d.get("phone")), (t(lang, "arrival_time"), d.get("arrival_time")),
