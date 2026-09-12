@@ -256,9 +256,26 @@ def ensure_plan(inc: PlIncident) -> dict:
     return fresh
 
 
+STATUS_LABELS = {"todo": ("à traiter", "warning"), "open": ("en cours", "primary"), "resolved": ("traité", "success"), "closed": ("traité", "success")}
+
+
+def display_status(inc: PlIncident, plan: dict = None):
+    """(libellé, couleur) : « à traiter » tant que rien n'a été renseigné, « en cours » dès la première action, « traité » quand tout est réglé ou marqué traité."""
+    if inc.status in ("resolved", "closed"):
+        return STATUS_LABELS[inc.status]
+    try:
+        plan = plan if plan is not None else json.loads(inc.plan or "{}")
+    except Exception:
+        plan = {}
+    return STATUS_LABELS["open" if plan.get("log") else "todo"]
+
+
+CONTACTED = "contacté, en attente de réponse"
+
+
 def record_answer(inc: PlIncident, shift_id: int, option_id: str, outcome: str, by: str = None, employee_id: int = None) -> PlIncident:
-    """outcome : confirm / refuse (par participant, `employee_id`), oui (tous confirmés → appliquer ; option à une seule personne : confirme et applique),
-    non / pas_de_reponse (option entière), unassign (laisser non couverte)."""
+    """outcome : contacted (personne sollicitée, on attend sa réponse ; par participant si `employee_id`), confirm / refuse (par participant, `employee_id`),
+    oui (tous confirmés → appliquer ; option à une seule personne : confirme et applique), non / pas_de_reponse (option entière), unassign (laisser non couverte)."""
     plan = ensure_plan(inc)
     entry = next((x for x in plan.get("shifts", []) if x["shift_id"] == shift_id), None)
     if not entry:
@@ -268,11 +285,21 @@ def record_answer(inc: PlIncident, shift_id: int, option_id: str, outcome: str, 
         entry["resolution"] = {"kind": "unassigned"}
         log.append({"shift_id": shift_id, "event": "plage laissée non couverte", "by": by})
         _apply_unassign(inc, entry)
+        from . import notify
+        notify.queue(inc.company_code, [inc.employee_id], service.week_monday(date.fromisoformat(entry["date"])), "remplacement", by=by, sites=[inc.site])
     else:
         opt = next((o for o in entry["options"] if o["id"] == option_id), None)
         if opt:
             parts = opt.setdefault("participants", [{"employee_id": opt["employee_id"], "name": opt["name"], "status": "à confirmer"}])
-            if outcome in ("confirm", "refuse"):
+            if outcome == "contacted":
+                for pt in parts:
+                    if employee_id is None or pt["employee_id"] == employee_id:
+                        if pt["status"] == "à confirmer":
+                            pt["status"] = "contacté"
+                        log.append({"shift_id": shift_id, "event": f"option {opt.get('letter')} · {pt['name']} : contacté, en attente de réponse", "by": by})
+                if opt["status"] in ("à contacter", CONTACTED):
+                    opt["status"] = CONTACTED
+            elif outcome in ("confirm", "refuse"):
                 for pt in parts:
                     if pt["employee_id"] == employee_id:
                         pt["status"] = "confirmé" if outcome == "confirm" else "refusé"
@@ -289,6 +316,12 @@ def record_answer(inc: PlIncident, shift_id: int, option_id: str, outcome: str, 
                     log.append({"shift_id": shift_id, "event": f"option {opt.get('letter')} retenue et appliquée ({opt['name']})", "by": by})
                     entry["resolution"] = {"kind": opt["kind"], "employee_id": opt["employee_id"], "name": opt["name"], "letter": opt.get("letter")}
                     _apply(inc, entry, opt)
+                    from . import notify
+                    wk = service.week_monday(date.fromisoformat(entry["date"]))
+                    ids = [pt["employee_id"] for pt in parts] + [inc.employee_id]
+                    sent = notify.queue(inc.company_code, ids, wk, "remplacement", by=by, extra=f"remplacement de {entry.get('absent', '')}".strip(), sites=[inc.site])
+                    entry["notified"] = [n.id for n in sent]
+                    log.append({"shift_id": shift_id, "event": f"{len(sent)} notification(s) préparée(s) : " + ", ".join(f"{n.employee_id}" for n in sent), "by": "Vaelan"})
                 else:
                     log.append({"shift_id": shift_id, "event": f"option {opt.get('letter')} : en attente de {', '.join(pt['name'] for pt in parts if pt['status'] != 'confirmé')}", "by": by})
             else:

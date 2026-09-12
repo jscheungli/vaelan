@@ -36,6 +36,7 @@
     <div class="col-md-2"><label class="form-label mb-0">Priorité d'appel</label><input type="number" min="1" max="9" class="form-control form-control-sm" name="priority" value="{{ e.priority if e else 5 }}"></div>
     <div class="col-md-2"><label class="form-label mb-0">Téléphone</label><input class="form-control form-control-sm" name="phone" value="{{ e.phone or '' if e else '' }}"></div>
     <div class="col-md-2"><label class="form-label mb-0">Telegram</label><input class="form-control form-control-sm" name="telegram" value="{{ e.telegram or '' if e else '' }}" placeholder="@…"></div>
+    <div class="col-md-4"><label class="form-label mb-0">Email <span class="text-muted">(notifications automatiques)</span></label><input type="email" class="form-control form-control-sm" name="email" value="{{ e.email or '' if e else '' }}"></div>
     <div class="col-12"><label class="form-label mb-0">Note</label><input class="form-control form-control-sm" name="note" value="{{ e.note or '' if e else '' }}" placeholder="ex. préfère les matins, ne conduit pas…"></div>
   </div>
   <div class="mt-2"><button class="btn btn-sm btn-dark">Enregistrer</button></div>
@@ -54,7 +55,7 @@
       <button class="btn btn-sm btn-outline-dark py-0 ms-auto" data-bs-toggle="modal" data-bs-target="#emp{{ e.id }}"><i class="bi bi-pencil"></i></button>
     </div>
     <div class="mt-1">{% for k, lvl in ep.items()|sort(attribute=1) %}{% set p = posts.get(k) %}<span class="badge me-1" style="background:{{ p.color if p else '#ccc' }};color:#222;opacity:{{ 1.05 - lvl*0.15 }}">{{ p.label if p else k }} · {{ lvl }}</span>{% endfor %}</div>
-    <div class="text-muted mt-1">{% set off = e_list(e, 'days_off') %}{% if off %}repos fixe {{ off|map('int')|map('string')|list|join(',') }} · {% endif %}{% set cfa = e_list(e, 'cfa_days') %}{% if cfa %}CFA {% for wd in cfa %}{{ days_short[wd] }} {% endfor %}· {% endif %}mobile : {{ e_list(e, 'mobility')|join(', ') or '—' }} · flex {{ e.flexibility }} · priorité {{ e.priority }} · {{ e.phone or 'tél. ?' }} · {{ e.telegram or 'Telegram ?' }}</div>
+    <div class="text-muted mt-1">{% set off = e_list(e, 'days_off') %}{% if off %}repos fixe {{ off|map('int')|map('string')|list|join(',') }} · {% endif %}{% set cfa = e_list(e, 'cfa_days') %}{% if cfa %}CFA {% for wd in cfa %}{{ days_short[wd] }} {% endfor %}· {% endif %}mobile : {{ e_list(e, 'mobility')|join(', ') or '—' }} · flex {{ e.flexibility }} · priorité {{ e.priority }} · {{ e.phone or 'tél. ?' }} · {{ e.telegram or 'Telegram ?' }} · {{ e.email or 'email ?' }}</div>
   </div></div></div>
   <div class="modal fade" id="emp{{ e.id }}" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">{{ full_name(e) }}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">{{ empform(e, e.id) }}</div></div></div></div>
 {% endfor %}

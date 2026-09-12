@@ -24,7 +24,7 @@
   {% for i in incidents %}{% set p = json.loads(i.plan or '{}') %}
     <tr class="small"><td>{{ i.id }}</td><td class="fw-semibold">{{ emap.get(i.employee_id, '?') }}</td><td>{{ i.date_from.strftime('%d/%m') }} → {{ i.date_to.strftime('%d/%m') }}</td><td>{{ i.reason }}</td>
       <td>{{ p.shifts|length }} touchée(s) · {{ p.shifts|selectattr('resolution')|list|length }} réglée(s)</td>
-      <td><span class="badge text-bg-{{ 'success' if i.status == 'resolved' else ('secondary' if i.status == 'closed' else 'warning') }}">{{ {'open':'en cours','resolved':'résolu','closed':'clos'}[i.status] }}</span></td>
+      {% set st = status_of(i, p) %}<td><span class="badge text-bg-{{ st[1] }}">{{ st[0] }}</span></td>
       <td class="text-end"><a class="btn btn-sm btn-outline-dark py-0" href="/c/{{ company.code }}/planning/incidents/{{ i.id }}">ouvrir</a></td></tr>
   {% else %}<tr><td colspan="7" class="text-muted small">Aucun incident déclaré.</td></tr>{% endfor %}
 </tbody></table></div></div>

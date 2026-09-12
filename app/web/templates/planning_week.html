@@ -54,9 +54,11 @@
     <div class="btn-group btn-group-sm"><button class="btn btn-outline-dark dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-magic"></i> Générer</button>
       <ul class="dropdown-menu"><li><a class="dropdown-item" href="#" data-act="gen-week">Cette semaine (remplace les plages auto en brouillon)</a></li><li><a class="dropdown-item" href="#" data-act="gen-month">Le mois de {{ monday.strftime('%B %Y') }}</a></li><li><a class="dropdown-item" href="#" data-act="gen-4w">Les 4 prochaines semaines</a></li></ul></div>
     <div class="btn-group btn-group-sm"><button class="btn btn-outline-dark dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-printer"></i> Imprimer</button>
-      <ul class="dropdown-menu"><li><a class="dropdown-item" href="/c/{{ company.code }}/planning/semaine/{{ monday.isoformat() }}/pdf?site={{ site }}&view=emp" target="_blank">Par salarié (A4 paysage, signature)</a></li><li><a class="dropdown-item" href="/c/{{ company.code }}/planning/semaine/{{ monday.isoformat() }}/pdf?site={{ site }}&view=post" target="_blank">Par poste (A4 paysage)</a></li></ul></div>
+      <ul class="dropdown-menu"><li><a class="dropdown-item" href="/c/{{ company.code }}/planning/semaine/{{ monday.isoformat() }}/pdf?site={{ site }}&view=emp" target="_blank">Par salarié (A4 paysage, signature)</a></li><li><a class="dropdown-item" href="/c/{{ company.code }}/planning/semaine/{{ monday.isoformat() }}/pdf?site={{ site }}&view=post" target="_blank">Par poste (A4 paysage)</a></li>
+      <li><hr class="dropdown-divider"></li><li><form method="post" action="/c/{{ company.code }}/planning/notifications/week/{{ monday.isoformat() }}?site={{ site }}"><button class="dropdown-item">Notifier les salariés des changements de cette semaine</button></form></li></ul></div>
     <button class="btn btn-sm btn-outline-danger position-relative" id="btnalerts" data-bs-toggle="offcanvas" data-bs-target="#alerts"><i class="bi bi-exclamation-triangle"></i> Alertes <span class="badge text-bg-danger" id="nalerts">{{ wd.alerts|length }}</span></button>
     <button class="btn btn-sm {{ 'btn-outline-secondary' if wd.published else 'btn-success' }}" id="btnpub">{{ 'Dépublier' if wd.published else 'Publier la semaine' }}</button>
+    <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/notifications?site={{ site }}" title="Notifications aux salariés"><i class="bi bi-bell"></i>{% if n_notif %} <span class="badge text-bg-warning">{{ n_notif }}</span>{% endif %}</a>
     <a class="btn btn-sm btn-warning position-relative" href="/c/{{ company.code }}/planning/incidents?site={{ site }}"><i class="bi bi-life-preserver"></i> Remplacements{% if n_inc %} <span class="badge text-bg-dark">{{ n_inc }}</span>{% endif %}</a>
     <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/controles?site={{ site }}" title="Contrôles et alertes"><i class="bi bi-shield-check"></i></a>
     <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/salaries?site={{ site }}" title="Salariés"><i class="bi bi-person-lines-fill"></i></a>
@@ -255,7 +257,7 @@ document.querySelectorAll("[data-act]").forEach(a => a.addEventListener("click",
       const r = await api("/generate", "POST", { from: iso(from), to: iso(to) }); flash(`${r.created} plages générées, ${r.assigned} assignées${r.unassigned.length ? ", " + r.unassigned.length + " sans personne disponible" : ""}.`); }
     await load();
   } catch (e) { flash("Erreur : " + e.message, "danger"); } }));
-$("#btnpub").addEventListener("click", async () => { const r = await api(`/week/${MONDAY}/publish`, "POST", { unpublish: D.published }); flash(D.published ? "Semaine repassée en brouillon." : `Semaine publiée (${r.updated} plages).`); await load(); });
+$("#btnpub").addEventListener("click", async () => { const r = await api(`/week/${MONDAY}/publish`, "POST", { unpublish: D.published }); flash(D.published ? "Semaine repassée en brouillon." : `Semaine publiée (${r.updated} plages). ${r.notified} salarié(s) à notifier : ${r.emailed} par email, ${r.manual} à envoyer à la main (<a href="/c/${CODE}/planning/notifications?site=${SITE}">voir</a>).`); await load(); });
 load();
 </script>
 {% endblock %}

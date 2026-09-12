@@ -104,6 +104,8 @@ DEFAULT_CONFIG = {
     "holidays": {"types": [k for k, _, _, _ in HOLIDAY_TYPES], "closed_types": ["noel", "jour_an"], "premium_pct": 100, "compensation": True, "confirm_days": 21},
     "supervision": {"manager_posts": ["VENTE_RESP", "VENTE_MATIN"], "manager_required": True},
     "publication": {"horizon_weeks": 2},
+    # responsables à prévenir à chaque changement validé, par établissement : [{role, name, email, phone}]
+    "managers": {},
     "alerts": {"enabled": True, "emails": "jscheungli@gmail.com", "daily": True, "weekly": True, "horizon_days": 14,
                "rules": {k: True for k in ["day_max", "rest", "week_max", "avg12", "consecutive", "days_week", "sunday_consecutive",
                                            "sunday_share", "cfa", "days_off", "sunday_off", "overtime", "coverage", "unassigned", "manager"]}},
@@ -124,6 +126,8 @@ def level_weight(lvl) -> int:
 
 
 # Questionnaire de configuration : étapes
+MANAGER_ROLES = ["Responsable d'équipe", "Responsable planning", "Responsable d'établissement", "Direction"]
+
 WIZARD_STEPS = [
     (1, "Postes", "Gabarits de plages : horaires, pause, couleur"),
     (2, "Couverture", "Personnes attendues par poste et par jour, selon la saison"),

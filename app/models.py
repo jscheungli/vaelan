@@ -417,6 +417,7 @@ class PlEmployee(SQLModel, table=True):
     priority: int = 5                                      # ordre d'appel pour un remplacement (1 = en premier)
     phone: Optional[str] = None
     telegram: Optional[str] = None
+    email: Optional[str] = None
     note: Optional[str] = None
     source: str = "manual"                                 # manual / skello
     external_key: Optional[str] = Field(default=None, index=True)   # « Prénom NOM » Skello
@@ -475,3 +476,24 @@ class PlIncident(SQLModel, table=True):
     created_by: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PlNotification(SQLModel, table=True):
+    """Notification d'un salarié après un changement validé : résumé des modifications + sa semaine.
+    Envoyée par email si l'adresse est connue, sinon texte prêt à copier (SMS / WhatsApp) à marquer envoyé."""
+    __tablename__ = "pl_notifications"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    site: str = Field(index=True)
+    employee_id: Optional[int] = Field(default=None, foreign_key="pl_employees.id", index=True)
+    recipient: Optional[str] = None                        # responsable (rôle · nom) quand employee_id est vide
+    week_monday: _dt.date = Field(index=True)
+    reason: str = "modification"                           # publication / remplacement / modification
+    subject: str = ""
+    text: str = ""
+    snapshot: str = "[]"                                   # plages de la semaine au moment de l'envoi (JSON)
+    channel: str = "manual"                                # email / manual
+    status: str = "pending"                                # pending / sent
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    sent_at: Optional[datetime] = None
+    by_user: Optional[str] = None

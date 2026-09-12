@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Notifications · Planning · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/planning">Planning</a></li>
+  <li class="breadcrumb-item active">Notifications</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0"><i class="bi bi-bell"></i> Notifications aux salariés — {{ sites[site] }}</h1>
+  <span class="badge {{ 'text-bg-warning' if n_pending else 'text-bg-success' }}">{{ n_pending }} à envoyer à la main</span>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<p class="small text-muted">Une notification est préparée pour chaque personne dont la semaine a changé : à la publication d'une semaine, à l'application d'un remplacement, ou à la demande depuis la grille (menu Imprimer → Notifier). Elle part automatiquement par email quand l'adresse est renseignée sur la fiche ; sinon copiez le texte, envoyez-le par SMS ou WhatsApp, puis marquez-le envoyé. La prochaine notification ne contiendra que ce qui a changé depuis l'envoi précédent. Les <a href="/c/{{ company.code }}/planning/config?step=3&site={{ site }}">responsables de l'établissement</a> reçoivent en plus un résumé de l'ensemble des changements.</p>
+{% for n in items %}{% set e = emap.get(n.employee_id) if n.employee_id else none %}
+<div class="card shadow-sm mb-2 {{ 'border-warning' if n.status == 'pending' else 'opacity-75' }}"><div class="card-body py-2">
+  <div class="d-flex flex-wrap align-items-center gap-2 small">
+    {% if e %}<strong>{{ full_name(e) }}</strong>
+    <span class="text-muted">{{ e.phone or 'tél. ?' }}{% if e.email %} · {{ e.email }}{% endif %}</span>
+    {% else %}<span class="badge text-bg-dark">responsable</span> <strong>{{ n.recipient }}</strong>{% endif %}
+    <span class="badge text-bg-light border">semaine du {{ n.week_monday.strftime('%d/%m') }} · {{ n.reason }}</span>
+    <span class="badge text-bg-{{ 'success' if n.status == 'sent' else 'warning' }}">{{ 'envoyée ' ~ (n.channel) ~ ' ' ~ fmt_dt(n.sent_at) if n.status == 'sent' else 'à envoyer' }}</span>
+    <span class="ms-auto d-flex gap-1">
+      <button class="btn btn-sm btn-outline-secondary py-0" onclick="navigator.clipboard.writeText(document.getElementById('t{{ n.id }}').value);this.textContent='copié'"><i class="bi bi-clipboard"></i> Copier</button>
+      {% if n.status == 'pending' %}<form method="post" action="/c/{{ company.code }}/planning/notifications/{{ n.id }}/sent" class="d-inline"><button name="channel" value="sms" class="btn btn-sm btn-success py-0">Envoyée par SMS</button> <button name="channel" value="whatsapp" class="btn btn-sm btn-success py-0">par WhatsApp</button></form>{% endif %}
+    </span>
+  </div>
+  <textarea id="t{{ n.id }}" class="form-control form-control-sm mt-1" rows="{{ 4 if n.status == 'sent' else 9 }}" readonly>{{ n.text }}</textarea>
+</div></div>
+{% else %}<div class="text-muted small">Aucune notification.</div>{% endfor %}
+{% endblock %}

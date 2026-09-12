@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from app.core.db import engine
 from app.core.security import current_user
 from app.models import PlEmployee, PlPost, PlShift, PlIncident
-from app.packs.planning import config as pcfg, service, generator, replace, jobs as pjobs
+from app.packs.planning import config as pcfg, service, generator, replace, jobs as pjobs, notify
 from app.core.jobs import start_job
 from app.models import Run
 from app.web.routes import templates, _ctx, _company_or_redirect
@@ -65,7 +65,7 @@ def _wizard_ctx(request, company, cfg, step):
                 holiday_dates=hol, level_max=pcfg.LEVEL_MAX, coverage=service.site_coverage(cfg, site),
                 days=pcfg.DAYS, days_short=pcfg.DAYS_SHORT, posts=service.posts(code_or(company), site), seasons=pcfg.SEASONS,
                 employees=service.employees(code_or(company), site, active_only=False), e_posts=service.e_posts, e_list=service.e_list,
-                full_name=service.full_name, post_keys=[p.key for p in service.posts(code_or(company), site)], json=json)
+                full_name=service.full_name, post_keys=[p.key for p in service.posts(code_or(company), site)], json=json, manager_roles=pcfg.MANAGER_ROLES)
 
 
 def code_or(company):
@@ -127,6 +127,10 @@ async def planning_config_save(request: Request, code: str, step: int):
                            "premium_pct": f("holiday_premium", 100), "compensation": bool(g("holiday_compensation")), "confirm_days": int(f("holiday_confirm_days", 21))}
         upd["supervision"] = {"manager_posts": [p.key for p in service.posts(code, site) if g(f"mgr_{p.key}")], "manager_required": bool(g("manager_required"))}
         upd["publication"] = {"horizon_weeks": int(f("horizon_weeks", 2))}
+        mg = dict(cfg.get("managers") or {})
+        mg[site] = [{"role": g(f"mgr{i}_role"), "name": g(f"mgr{i}_name"), "email": (g(f"mgr{i}_email") or "").strip().lower(), "phone": g(f"mgr{i}_phone")}
+                    for i in range(4) if g(f"mgr{i}_name") or g(f"mgr{i}_email")]
+        upd["managers"] = mg
     elif step == 4:
         for e in service.employees(code, site, active_only=False):
             _save_employee_form(code, site, e, form)
@@ -157,7 +161,7 @@ def _save_employee_form(code: str, site: str, e, form, prefix: str = None) -> No
     fields = dict(posts=json.dumps(posts), sunday=g("sunday", "oui"), max_days=int(g("max_days", e.max_days)),
                   days_off=json.dumps([wd for wd in range(7) if g(f"off_{wd}")]), cfa_days=json.dumps([wd for wd in range(7) if g(f"cfa_{wd}")]),
                   mobility=json.dumps([st for st in pcfg.SITES if st != e.site and g(f"mob_{st}")]),
-                  flexibility=int(g("flexibility", e.flexibility)), priority=int(g("priority", e.priority)), phone=g("phone"), telegram=g("telegram"),
+                  flexibility=int(g("flexibility", e.flexibility)), priority=int(g("priority", e.priority)), phone=g("phone"), telegram=g("telegram"), email=(g("email") or "").strip().lower() or None,
                   active=bool(g("active")), weekly_hours=float(str(g("weekly_hours", e.weekly_hours)).replace(",", ".")))
     if g("first_name"):
         fields.update(first_name=g("first_name"), last_name=g("last_name", e.last_name), contract_type=g("contract_type", e.contract_type), note=g("note"),
@@ -186,10 +190,11 @@ def planning_week(request: Request, code: str, monday: str, view: str = "emp", m
     service.ensure_posts(code, site)
     wd = service.week_data(code, site, m)
     n_inc = len(service.incidents(code, site))
+    n_notif = sum(1 for n in notify.pending(code, site) if n.status == "pending")
     return templates.TemplateResponse(request, "planning_week.html",
                                       _ctx(request, company=company, cfg=cfg, site=site, sites=pcfg.SITES, monday=m, prev=(m - timedelta(days=7)).isoformat(),
                                            next=(m + timedelta(days=7)).isoformat(), today=service.week_monday(date.today()).isoformat(), view=view, wd=wd,
-                                           days_short=pcfg.DAYS_SHORT, msg=msg, n_inc=n_inc, absence_types=pcfg.ABSENCE_TYPES, full_name=service.full_name))
+                                           days_short=pcfg.DAYS_SHORT, msg=msg, n_inc=n_inc, n_notif=n_notif, absence_types=pcfg.ABSENCE_TYPES, full_name=service.full_name))
 
 
 @router.get("/c/{code}/planning/semaine/{monday}/pdf")
@@ -320,8 +325,10 @@ async def api_publish(request: Request, code: str, monday: str):
     cfg = service.get_config(code)
     site = _site(request, cfg)
     b = await request.json()
-    n = service.publish_week(code, site, service.week_monday(_d(monday)), status="draft" if b.get("unpublish") else "published")
-    return {"updated": n}
+    m = service.week_monday(_d(monday))
+    n = service.publish_week(code, site, m, status="draft" if b.get("unpublish") else "published")
+    notified = [] if b.get("unpublish") else notify.queue_week(code, site, m, by=_who(request))
+    return {"updated": n, "notified": len(notified), "emailed": sum(1 for x in notified if x.status == "sent"), "manual": sum(1 for x in notified if x.status == "pending")}
 
 
 # ============================== contrôles et alertes ==============================
@@ -362,6 +369,41 @@ async def planning_controls_save(request: Request, code: str):
     service.save_config({"alerts": {"enabled": bool(form.get("enabled")), "emails": (form.get("emails") or "").strip(), "daily": bool(form.get("daily")),
                                     "weekly": bool(form.get("weekly")), "horizon_days": int(form.get("horizon_days") or 14), "rules": rules}}, code)
     return RedirectResponse(f"/c/{code}/planning/controles?msg=Réglages des contrôles enregistrés.", status_code=303)
+
+
+# ============================== notifications aux salariés ==============================
+@router.get("/c/{code}/planning/notifications", response_class=HTMLResponse)
+def planning_notifications(request: Request, code: str, msg: str = ""):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    cfg = service.get_config(code)
+    site = _site(request, cfg)
+    items = notify.pending(code, site)
+    emap = {e.id: e for e in service.employees(code, None, active_only=False)}
+    return templates.TemplateResponse(request, "planning_notifications.html",
+                                      _ctx(request, company=company, site=site, sites=pcfg.SITES, items=items, emap=emap, msg=msg,
+                                           n_pending=sum(1 for n in items if n.status == "pending"), full_name=service.full_name, fmt_dt=lambda d: d.strftime("%d/%m %H:%M") if d else ""))
+
+
+@router.post("/c/{code}/planning/notifications/{nid}/sent")
+def planning_notification_sent(request: Request, code: str, nid: int, channel: str = Form("manual")):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    notify.mark_sent(nid, by=_who(request), channel=channel)
+    return RedirectResponse(f"/c/{code}/planning/notifications?msg=Notification marquée envoyée.", status_code=303)
+
+
+@router.post("/c/{code}/planning/notifications/week/{monday}")
+def planning_notifications_week(request: Request, code: str, monday: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    cfg = service.get_config(code)
+    site = _site(request, cfg)
+    n = notify.queue_week(code, site, service.week_monday(_d(monday)), by=_who(request), reason="modification")
+    return RedirectResponse(f"/c/{code}/planning/notifications?site={site}&msg={len(n)} notification(s) préparée(s) pour la semaine du {monday}.", status_code=303)
 
 
 # ============================== salariés ==============================
@@ -407,7 +449,7 @@ def planning_incidents(request: Request, code: str, msg: str = ""):
     emps = service.employees(code, site)
     emap = {e.id: service.full_name(e) for e in service.employees(code, active_only=False)}
     return templates.TemplateResponse(request, "planning_incidents.html",
-                                      _ctx(request, company=company, site=site, sites=pcfg.SITES, incidents=incs, employees=emps, emap=emap,
+                                      _ctx(request, status_of=replace.display_status, company=company, site=site, sites=pcfg.SITES, incidents=incs, employees=emps, emap=emap,
                                            absence_types=pcfg.ABSENCE_TYPES, today=date.today().isoformat(), msg=msg, json=json))
 
 
@@ -435,7 +477,7 @@ def planning_incident(request: Request, code: str, iid: int, msg: str = ""):
     plan = replace.ensure_plan(inc)
     pmap = service.post_map(code, inc.site)
     return templates.TemplateResponse(request, "planning_incident.html",
-                                      _ctx(request, company=company, site=inc.site, sites=pcfg.SITES, inc=inc, plan=plan, posts=pmap,
+                                      _ctx(request, status_of=replace.display_status, company=company, site=inc.site, sites=pcfg.SITES, inc=inc, plan=plan, posts=pmap,
                                            days_short=pcfg.DAYS_SHORT, msg=msg, date=date))
 
 

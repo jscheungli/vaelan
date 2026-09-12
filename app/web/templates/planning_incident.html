@@ -10,9 +10,9 @@
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
   <h1 class="h4 mb-0">{{ plan.employee }} absent(e) du {{ inc.date_from.strftime('%d/%m') }} au {{ inc.date_to.strftime('%d/%m') }}</h1>
   <span class="badge text-bg-light border">{{ inc.reason }}</span>
-  <span class="badge text-bg-{{ 'success' if inc.status == 'resolved' else ('secondary' if inc.status == 'closed' else 'warning') }}">{{ {'open':'en cours','resolved':'résolu','closed':'clos'}[inc.status] }}</span>
+  {% set st = status_of(inc) %}<span class="badge text-bg-{{ st[1] }}">{{ st[0] }}</span>
   <a class="btn btn-sm btn-outline-secondary ms-auto" href="/c/{{ company.code }}/planning/semaine/{{ inc.date_from.isoformat() }}?site={{ inc.site }}"><i class="bi bi-calendar-week"></i> Voir la semaine</a>
-  {% if inc.status != 'closed' %}<form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/close"><button class="btn btn-sm btn-outline-secondary">Clore</button></form>{% endif %}
+  {% if inc.status not in ('closed', 'resolved') %}<form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/close"><button class="btn btn-sm btn-outline-success"><i class="bi bi-check2"></i> Marquer traité</button></form>{% endif %}
 </div>
 <p class="small text-muted">Pour chaque plage touchée, les options sont classées de la plus pertinente (A) à la moins pertinente, sur toute la société, établissement d'origine d'abord. Chaque option dit pourquoi elle est proposée et ce qu'elle entraîne. Vous pouvez retenir n'importe laquelle ; rien ne change dans le planning avant votre choix.</p>
 {% if not plan.shifts %}<div class="alert alert-light border">Aucune plage planifiée pour cette personne sur ces dates : rien à remplacer.</div>{% endif %}
@@ -21,24 +21,24 @@
   <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
     <span class="badge fs-6" style="background:{{ p.color if p else '#ccc' }};color:#222">{{ p.label if p else sh.post }}</span>
     <strong>{{ days_short[date.fromisoformat(sh.date).weekday()] }} {{ date.fromisoformat(sh.date).strftime('%d/%m') }}</strong> · {{ sh.start }} → {{ sh.end }} · {{ sh.hours }} h · besoin ce jour : {{ sh.need }} personne(s)
-    {% if sh.resolution %}<span class="badge text-bg-success ms-auto"><i class="bi bi-check2"></i> {{ 'laissée non couverte' if sh.resolution.kind == 'unassigned' else 'option ' ~ sh.resolution.letter ~ ' retenue : ' ~ sh.resolution.name }}</span>{% else %}<span class="badge text-bg-warning ms-auto">{{ sh.options|length }} option(s)</span>{% endif %}
+    {% if sh.resolution %}<span class="badge text-bg-success ms-auto"><i class="bi bi-check2"></i> {{ 'laissée non couverte' if sh.resolution.kind == 'unassigned' else 'option ' ~ sh.resolution.letter ~ ' retenue : ' ~ sh.resolution.name }}</span>{% if sh.notified %}<a class="btn btn-sm btn-outline-secondary py-0" href="/c/{{ company.code }}/planning/notifications?site={{ inc.site }}"><i class="bi bi-bell"></i> {{ sh.notified|length }} notification(s)</a>{% endif %}{% else %}<span class="badge text-bg-warning ms-auto">{{ sh.options|length }} option(s)</span>{% endif %}
   </div>
   {% if not sh.resolution %}
     {% for o in sh.options %}
-    <div class="border rounded p-2 mb-2 {{ 'bg-light opacity-75' if o.status not in ('à contacter',) }}">
+    <div class="border rounded p-2 mb-2 {{ 'bg-light opacity-75' if o.status in ('pas disponible', 'refusée', 'pas de réponse') }}">
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="badge text-bg-dark fs-6">{{ o.letter }}</span>
         <span class="fw-semibold">{{ o.name }}</span>
         <span class="badge text-bg-light border">{{ {'call': 'à appeler', 'move': 'déjà sur place · sans appel', 'swap': 'échange de jour', 'chain': 'en chaîne · ' ~ (o.steps|length) ~ ' personnes'}[o.kind] }}</span>
         {% if o.site != inc.site %}<span class="badge text-bg-info">{{ sites.get(o.site, o.site) }}</span>{% endif %}
         {% if o.kind != 'chain' %}<span class="small text-muted">{{ o.phone or 'tél. inconnu' }}{% if o.telegram %} · {{ o.telegram }}{% endif %} · {{ o.week_hours }} h / {{ o.contract|int }} h cette semaine</span>{% endif %}
-        {% if o.status not in ('à contacter',) %}<span class="badge text-bg-{{ 'success' if o.status == 'tous confirmés' else ('secondary' if o.status in ('pas disponible', 'refusée') else 'warning') }}">{{ o.status }}</span>{% endif %}
+        {% if o.status not in ('à contacter',) %}<span class="badge text-bg-{{ 'success' if o.status == 'tous confirmés' else ('secondary' if o.status in ('pas disponible', 'refusée') else ('primary' if o.status == 'contacté, en attente de réponse' else 'warning')) }}">{{ o.status }}</span>{% endif %}
         <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="ms-auto d-inline"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="option_id" value="{{ o.id }}">
           {% set all_ok = o.participants|selectattr('status', 'equalto', 'confirmé')|list|length == o.participants|length %}
           {% if o.participants|length == 1 %}<button name="outcome" value="oui" class="btn btn-sm btn-success py-0" {% if o.status in ('pas disponible', 'refusée') %}disabled{% endif %}>Retenir</button>
           {% elif all_ok %}<button name="outcome" value="oui" class="btn btn-sm btn-success py-0">Appliquer (tous ont confirmé)</button>
           {% else %}<span class="small text-muted">à appliquer une fois les {{ o.participants|length }} confirmations obtenues</span>{% endif %}
-          {% if o.status == 'à contacter' and o.participants|length == 1 %} <button name="outcome" value="non" class="btn btn-sm btn-outline-secondary py-0">Pas dispo</button> <button name="outcome" value="pas_de_reponse" class="btn btn-sm btn-outline-warning py-0">Pas de réponse</button>{% endif %}
+          {% if o.participants|length == 1 and o.status in ('à contacter', 'contacté, en attente de réponse') %}{% if o.status == 'à contacter' %} <button name="outcome" value="contacted" class="btn btn-sm btn-outline-primary py-0" title="Personne sollicitée, on attend sa réponse"><i class="bi bi-telephone"></i> Contacté</button>{% endif %} <button name="outcome" value="non" class="btn btn-sm btn-outline-secondary py-0">Pas dispo</button> <button name="outcome" value="pas_de_reponse" class="btn btn-sm btn-outline-warning py-0">Pas de réponse</button>{% endif %}
         </form>
       </div>
       {% if o.kind == 'chain' %}
@@ -47,8 +47,8 @@
         {% for pt in o.participants %}
           <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="d-inline-flex align-items-center gap-1 border rounded px-2 py-1"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="option_id" value="{{ o.id }}"><input type="hidden" name="employee_id" value="{{ pt.employee_id }}">
             <span class="fw-semibold">{{ pt.name }}</span>{% if pt.phone %}<span class="text-muted">{{ pt.phone }}</span>{% endif %}
-            <span class="badge text-bg-{{ 'success' if pt.status == 'confirmé' else ('secondary' if pt.status == 'refusé' else 'light border') }}">{{ pt.status }}</span>
-            {% if pt.status == 'à confirmer' and o.status not in ('refusée', 'retenue') %}<button name="outcome" value="confirm" class="btn btn-sm btn-outline-success py-0">a confirmé</button><button name="outcome" value="refuse" class="btn btn-sm btn-outline-secondary py-0">refuse</button>{% endif %}
+            <span class="badge text-bg-{{ 'success' if pt.status == 'confirmé' else ('secondary' if pt.status == 'refusé' else ('primary' if pt.status == 'contacté' else 'light border')) }}">{{ pt.status }}</span>
+            {% if pt.status in ('à confirmer', 'contacté') and o.status not in ('refusée', 'retenue') %}{% if pt.status == 'à confirmer' %}<button name="outcome" value="contacted" class="btn btn-sm btn-outline-primary py-0" title="contacté, en attente de réponse"><i class="bi bi-telephone"></i></button>{% endif %}<button name="outcome" value="confirm" class="btn btn-sm btn-outline-success py-0">a confirmé</button><button name="outcome" value="refuse" class="btn btn-sm btn-outline-secondary py-0">refuse</button>{% endif %}
           </form>
         {% endfor %}
       </div>

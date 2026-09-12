@@ -93,6 +93,16 @@
   {% for p in posts if p.active %}<label class="me-2"><input class="form-check-input" type="checkbox" name="mgr_{{ p.key }}" value="1" {% if p.key in cfg.supervision.manager_posts %}checked{% endif %}> {{ p.label }}</label>{% endfor %}</div>
   <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="manager_required" id="mr" value="1" {% if cfg.supervision.manager_required %}checked{% endif %}><label class="form-check-label" for="mr">Alerter si aucun responsable n'est planifié un jour d'ouverture</label></div>
   <div class="mt-2 col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Semaines à garder publiées d'avance</label><input type="number" min="1" max="8" class="form-control form-control-sm" name="horizon_weeks" value="{{ cfg.publication.horizon_weeks }}"><div class="form-text">le bilan du lundi signale les semaines manquantes</div></div>
+  <h3 class="h6 text-uppercase text-muted mt-3">Responsables à prévenir — {{ sites[site] }}</h3>
+  <p class="small text-muted mb-1">À chaque changement validé (publication d'une semaine, remplacement appliqué), ces personnes reçoivent le résumé de ce qui a changé, en plus des salariés concernés. Email = envoi automatique ; sans email, le texte est à copier depuis Planning → Notifications. Un bloc par établissement : changez d'établissement en haut de page pour renseigner les autres.</p>
+  {% set mg = (cfg.managers or {}).get(site, []) %}
+  <table class="table table-sm small align-middle" style="max-width:820px"><thead><tr class="text-muted"><th>Rôle</th><th>Nom</th><th>Email</th><th>Téléphone</th></tr></thead><tbody>
+  {% for i in range(4) %}{% set m = mg[i] if i < mg|length else {} %}
+    <tr><td><select class="form-select form-select-sm" name="mgr{{ i }}_role">{% for r in manager_roles %}<option {% if (m.get('role') or (manager_roles[i] if i < manager_roles|length else '')) == r %}selected{% endif %}>{{ r }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="mgr{{ i }}_name" value="{{ m.get('name', '') }}"></td>
+      <td><input type="email" class="form-control form-control-sm" name="mgr{{ i }}_email" value="{{ m.get('email', '') }}"></td>
+      <td><input class="form-control form-control-sm" name="mgr{{ i }}_phone" value="{{ m.get('phone', '') }}"></td></tr>
+  {% endfor %}</tbody></table>
 
 {% elif step == 4 %}
   <p class="small text-muted">Une carte par salarié de {{ sites[site] }}. Postes : − et + règlent le niveau, — = n'intervient pas, 1 = poste préféré, puis 2, 3… par ordre de préférence décroissant (jusqu'à {{ level_max }}). Les niveaux et habitudes viennent de l'historique ; mobilité, flexibilité, priorité d'appel, téléphone et Telegram sont à renseigner par vous. Le pool de remplacement est la société entière : l'établissement d'origine passe en premier.</p>
@@ -115,6 +125,7 @@
       <span>priorité d'appel <input type="number" min="1" max="9" class="form-control form-control-sm d-inline-block" style="width:58px" name="{{ e.id }}_priority" value="{{ e.priority }}"></span>
       <span>tél. <input class="form-control form-control-sm d-inline-block" style="width:150px" name="{{ e.id }}_phone" value="{{ e.phone or '' }}" placeholder="+262 6…"></span>
       <span>Telegram <input class="form-control form-control-sm d-inline-block" style="width:130px" name="{{ e.id }}_telegram" value="{{ e.telegram or '' }}" placeholder="@…"></span>
+      <span>email <input type="email" class="form-control form-control-sm d-inline-block" style="width:210px" name="{{ e.id }}_email" value="{{ e.email or '' }}"></span>
     </div>
   </div>
   {% endfor %}
