@@ -89,8 +89,16 @@
     <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Nuit : fin</label><input type="time" class="form-control form-control-sm" name="night_end" value="{{ cfg.night.end }}"></div>
     <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Majoration nuit (%)</label><input type="number" class="form-control form-control-sm" name="night_premium" value="{{ cfg.night.premium_pct }}"></div>
     <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Majoration férié travaillé (%)</label><input type="number" class="form-control form-control-sm" name="holiday_premium" value="{{ cfg.holidays.premium_pct }}"></div>
-    <div class="col-md-6"><label class="form-label small mb-0 fw-semibold">Jours fériés (AAAA-MM-JJ, virgules)</label><textarea class="form-control form-control-sm" rows="3" name="holiday_dates">{{ cfg.holidays.dates|join(', ') }}</textarea><div class="form-text">Réunion : 20 décembre inclus</div></div>
-    <div class="col-md-6"><label class="form-label small mb-0 fw-semibold">Fériés où le magasin est fermé</label><textarea class="form-control form-control-sm" rows="3" name="holiday_closed">{{ cfg.holidays.closed|join(', ') }}</textarea><div class="form-text">observé : fermé 25/12 et 01/01, ouvert le 1er mai et les autres</div></div>
+    <div class="col-12"><div class="fw-semibold small">Jours fériés : cochez les types, Vaelan calcule la date chaque année (Pâques, Ascension, Pentecôte sont mobiles). « Fermé » = aucune plage ce jour-là.</div>
+      <div class="table-responsive"><table class="table table-sm w-auto align-middle"><thead><tr class="small text-muted"><th>Férié</th><th>Férié chez nous</th><th>Magasin fermé</th>{% for y, _ in holiday_dates.items() %}<th>{{ y }}</th>{% endfor %}</tr></thead><tbody>
+      {% for k, lbl, kind, spec in holiday_types %}
+        <tr><td>{{ lbl }} <span class="text-muted small">{{ 'mobile' if kind == 'mobile' else '' }}</span></td>
+          <td class="text-center"><input class="form-check-input" type="checkbox" name="hol_{{ k }}" value="1" {% if k in cfg.holidays.types %}checked{% endif %}></td>
+          <td class="text-center"><input class="form-check-input" type="checkbox" name="holclosed_{{ k }}" value="1" {% if k in cfg.holidays.closed_types %}checked{% endif %}></td>
+          {% for y, dd in holiday_dates.items() %}<td class="small text-muted">{{ dd[k].strftime('%a %d/%m') }}</td>{% endfor %}</tr>
+      {% endfor %}</tbody></table></div>
+      <div class="form-text">observé : fermé le 25 décembre et le 1er janvier, ouvert en équipe réduite les autres, 1er mai compris.</div></div>
+    <div class="col-md-4"><label class="form-label small mb-0 fw-semibold">Rappel par email avant chaque férié (jours)</label><input type="number" class="form-control form-control-sm" name="holiday_confirm_days" value="{{ cfg.holidays.confirm_days }}"><div class="form-text">pour reconfirmer ouvert / fermé et l'équipe prévue</div></div>
     <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" name="holiday_compensation" id="hc" value="1" {% if cfg.holidays.compensation %}checked{% endif %}><label class="form-check-label" for="hc">Férié travaillé → jour de récupération <span class="text-muted small">(69 récupérations posées dans l'année)</span></label></div></div>
   </div>
 
@@ -109,7 +117,7 @@
   <div class="form-text">Déduit des absences « École - CFA » : surtout le mardi ; certains apprentis alternent par semaines entières (à gérer en absences).</div>
 
 {% elif step == 7 %}
-  <p class="small text-muted">Une carte par salarié. Niveau sur un poste : cliquez pour passer de — à 1 (peut dépanner), 2 (tient le poste), 3 (poste principal). Les niveaux et habitudes viennent de l'historique ; mobilité, flexibilité, priorité d'appel et Telegram sont à renseigner par vous.</p>
+  <p class="small text-muted">Une carte par salarié. Niveau sur un poste : cliquez pour passer de — à 1 (préféré, poste principal), 2 (tient le poste), 3 (peut dépanner). Les niveaux et habitudes viennent de l'historique ; mobilité, flexibilité, priorité d'appel et Telegram sont à renseigner par vous.</p>
   {% set active_posts = posts|selectattr('active')|list %}
   {% for e in employees %}{% set ep = e_posts(e) %}{% set off = e_list(e, 'days_off') %}{% set mob = e_list(e, 'mobility') %}
   <div class="border rounded p-2 mb-2 {{ '' if e.active else 'bg-light' }}">
@@ -124,7 +132,7 @@
     <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
       <span class="small text-muted me-1">Postes :</span>
       {% for p in active_posts %}{% set lvl = ep.get(p.key, 0) %}
-        <button type="button" class="btn btn-sm py-0 lvl-btn {{ 'btn-outline-secondary' if not lvl else '' }}" data-lvl="{{ lvl }}" data-color="{{ p.color }}" style="{% if lvl %}background:{{ p.color }};border-color:{{ p.color }};color:#222;opacity:{{ 0.55 + lvl*0.15 }}{% endif %}">{{ p.label }}{% if lvl %} · {{ lvl }}{% endif %}</button>
+        <button type="button" class="btn btn-sm py-0 lvl-btn {{ 'btn-outline-secondary' if not lvl else '' }}" data-lvl="{{ lvl }}" data-color="{{ p.color }}" style="{% if lvl %}background:{{ p.color }};border-color:{{ p.color }};color:#222;opacity:{{ 1.05 - lvl*0.15 }}{% endif %}">{{ p.label }}{% if lvl %} · {{ lvl }}{% endif %}</button>
         <input type="hidden" name="lvl_{{ e.id }}_{{ p.key }}" value="{{ lvl }}">
       {% endfor %}
     </div>
@@ -138,7 +146,7 @@
   </div>
   {% endfor %}
   <script>document.querySelectorAll('.lvl-btn').forEach(b => b.addEventListener('click', () => { const inp = b.nextElementSibling; let l = (parseInt(inp.value) + 1) % 4; inp.value = l;
-    b.textContent = b.textContent.split(' · ')[0] + (l ? ' · ' + l : ''); if (l) { b.className = 'btn btn-sm py-0 lvl-btn'; b.style.cssText = `background:${b.dataset.color};border-color:${b.dataset.color};color:#222;opacity:${0.55 + l*0.15}`; } else { b.className = 'btn btn-sm py-0 lvl-btn btn-outline-secondary'; b.style.cssText = ''; } }));</script>
+    b.textContent = b.textContent.split(' · ')[0] + (l ? ' · ' + l : ''); if (l) { b.className = 'btn btn-sm py-0 lvl-btn'; b.style.cssText = `background:${b.dataset.color};border-color:${b.dataset.color};color:#222;opacity:${1.05 - l*0.15}`; } else { b.className = 'btn btn-sm py-0 lvl-btn btn-outline-secondary'; b.style.cssText = ''; } }));</script>
 
 {% elif step == 8 %}{% set Rp = cfg.replacement %}{% set Pu = cfg.publication %}{% set Co = cfg.counters %}
   <div class="row g-3">
@@ -157,7 +165,7 @@
     <div class="col-md-6"><div class="fw-semibold">Établissement</div>{{ sites[site] }} · ouvert {{ cfg.opening['0'][0] }} → {{ cfg.opening['0'][1] }} en semaine, {{ cfg.opening['6'][0] }} → {{ cfg.opening['6'][1] }} le dimanche · renforts : {{ cfg.other_sites|join(', ') or 'aucun' }}</div>
     <div class="col-md-6"><div class="fw-semibold">Postes actifs</div>{{ posts|selectattr('active')|map(attribute='label')|join(' · ') }}</div>
     <div class="col-md-6"><div class="fw-semibold">Temps de travail</div>{{ cfg.rules.day_max_hours }} h/jour · {{ cfg.rules.week_max_hours }} h/semaine · repos {{ cfg.rules.rest_min_hours }} h · {{ cfg.rules.consecutive_max_days }} jours consécutifs max · tolérance {{ cfg.rules.overtime_tolerance }} h</div>
-    <div class="col-md-6"><div class="fw-semibold">Dimanches, nuit, fériés</div>dimanche {{ (cfg.sunday.max_share*100)|round|int }} % max, {{ cfg.sunday.consecutive_max }} consécutifs · nuit {{ cfg.night.start }}–{{ cfg.night.end }} +{{ cfg.night.premium_pct }} % · fermé {{ cfg.holidays.closed|join(', ') }}</div>
+    <div class="col-md-6"><div class="fw-semibold">Dimanches, nuit, fériés</div>dimanche {{ (cfg.sunday.max_share*100)|round|int }} % max, {{ cfg.sunday.consecutive_max }} consécutifs, +{{ cfg.sunday.premium_pct }} % · nuit {{ cfg.night.start }}–{{ cfg.night.end }} +{{ cfg.night.premium_pct }} % · {{ cfg.holidays.types|length }} fériés, fermé : {{ cfg.holidays.closed_types|join(', ') }}</div>
     <div class="col-md-6"><div class="fw-semibold">Salariés actifs</div>{{ employees|selectattr('active')|list|length }} ({{ employees|selectattr('active')|selectattr('contract_type','equalto','CDI')|list|length }} CDI)</div>
     <div class="col-md-6"><div class="fw-semibold">Remplacements</div>{{ cfg.replacement.parallel }} sollicitations en parallèle · réponse sous {{ cfg.replacement.answer_minutes }} min · prévenance {{ cfg.publication.notice_days }} j</div>
   </div>

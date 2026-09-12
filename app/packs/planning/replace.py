@@ -57,7 +57,7 @@ def build_plan(company_code: str, site: str, employee_id: int, d_from: date, d_t
                 continue
             working = [x for x in day if x.kind == "work"]
             wh = _hours_week(company_code, e.id, d)
-            base = lvl * 10 + e.flexibility * 6 - e.priority * 2 + (8 if e.site == site else 0)
+            base = service.level_weight(lvl) * 10 + e.flexibility * 6 - e.priority * 2 + (8 if e.site == site else 0)
             if not working:
                 wk_days = len({x.date for x in service.employee_shifts(company_code, e.id, monday, monday + timedelta(days=6)) if x.kind == "work"})
                 if d.weekday() in service.e_list(e, "cfa_days") or not _rest_ok(company_code, e.id, d, sh.start, R):

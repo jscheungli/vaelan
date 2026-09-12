@@ -54,6 +54,15 @@ def _register_schedules():
     scheduler.register("vds_daily", 8, _vds_daily)
     scheduler.register("vds_sync_pm", 17, _vds_sync_pm)
 
+    from app.packs.planning import jobs as pl_jobs
+
+    def _planning_control():
+        with Session(engine) as s:
+            c = s.exec(select(Company).where(Company.code == "STERNA")).first()
+        start_job("planning_control", lambda ctx: pl_jobs.run_control(ctx, "STERNA", "daily"), company_id=c.id if c else None, pack="planning",
+                  label="Contrôle du planning — règles de la convention collective et règles internes")
+    scheduler.register("planning_control", 7, _planning_control)
+
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, max_age=60 * 60 * 12)

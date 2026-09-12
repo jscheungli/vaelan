@@ -157,11 +157,11 @@ def import_skello(paths: List[str], company_code: str = config.COMPANY_CODE, sit
             for k, c in cnt.items():
                 share = c / tot
                 if share >= 0.35:
-                    posts[k] = 3
+                    posts[k] = 1                       # préféré (poste principal)
                 elif share >= 0.12 or c >= 15:
-                    posts[k] = 2
+                    posts[k] = 2                       # tient le poste
                 elif c >= 5:
-                    posts[k] = 1
+                    posts[k] = 3                       # peut dépanner
             # habitudes
             wdays = {r["date"] for r in work}
             weeks = len({d.isocalendar()[:2] for d in wdays}) or 1

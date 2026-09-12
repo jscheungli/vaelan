@@ -10,7 +10,9 @@ from sqlmodel import Session, select
 from app.core.db import engine
 from app.core.security import current_user
 from app.models import PlEmployee, PlPost, PlShift, PlIncident
-from app.packs.planning import config as pcfg, service, generator, replace
+from app.packs.planning import config as pcfg, service, generator, replace, jobs as pjobs
+from app.core.jobs import start_job
+from app.models import Run
 from app.web.routes import templates, _ctx, _company_or_redirect
 
 router = APIRouter()
@@ -57,7 +59,10 @@ def planning_home(request: Request, code: str):
 # ============================== configuration (questionnaire) ==============================
 def _wizard_ctx(request, company, cfg, step):
     site = _site(request, cfg)
-    return _ctx(request, company=company, cfg=cfg, step=step, steps=pcfg.WIZARD_STEPS, sites=pcfg.SITES, site=site,
+    from datetime import date as _date
+    hol = {y: pcfg.holiday_dates(y) for y in (_date.today().year, _date.today().year + 1)}
+    return _ctx(request, company=company, cfg=cfg, step=step, steps=pcfg.WIZARD_STEPS, sites=pcfg.SITES, site=site, holiday_types=pcfg.HOLIDAY_TYPES,
+                holiday_dates=hol, level_labels=pcfg.LEVEL_LABELS,
                 days=pcfg.DAYS, days_short=pcfg.DAYS_SHORT, posts=service.posts(code_or(company), site), seasons=pcfg.SEASONS,
                 employees=service.employees(code_or(company), site, active_only=False), e_posts=service.e_posts, e_list=service.e_list,
                 full_name=service.full_name, post_keys=[p.key for p in service.posts(code_or(company), site)], json=json)
@@ -122,9 +127,10 @@ async def planning_config_save(request: Request, code: str, step: int):
     elif step == 5:
         upd["sunday"] = {"max_share": f("sunday_max_share", 0.5), "consecutive_max": int(f("sunday_consecutive_max", 2)), "premium_pct": f("sunday_premium", 0)}
         upd["night"] = {"start": g("night_start", "20:00"), "end": g("night_end", "06:00"), "premium_pct": f("night_premium", 25)}
-        dates = [x.strip() for x in str(g("holiday_dates", "")).replace("\n", ",").split(",") if x.strip()]
-        closed = [x.strip() for x in str(g("holiday_closed", "")).replace("\n", ",").split(",") if x.strip()]
-        upd["holidays"] = {"dates": dates, "closed": closed, "premium_pct": f("holiday_premium", 100), "compensation": bool(g("holiday_compensation"))}
+        types = [k for k, _, _, _ in pcfg.HOLIDAY_TYPES if g(f"hol_{k}")]
+        closed = [k for k, _, _, _ in pcfg.HOLIDAY_TYPES if g(f"holclosed_{k}")]
+        upd["holidays"] = {"types": types, "closed_types": closed, "premium_pct": f("holiday_premium", 100), "compensation": bool(g("holiday_compensation")),
+                           "confirm_days": int(f("holiday_confirm_days", 21))}
     elif step == 6:
         upd["supervision"] = {"manager_posts": [p.key for p in service.posts(code, site) if g(f"mgr_{p.key}")], "manager_required": bool(g("manager_required")),
                               "manager_at_opening": bool(g("manager_at_opening")), "apprentice_never_alone": bool(g("apprentice_never_alone"))}
@@ -186,6 +192,19 @@ def planning_week(request: Request, code: str, monday: str, view: str = "emp", m
                                       _ctx(request, company=company, cfg=cfg, site=site, sites=pcfg.SITES, monday=m, prev=(m - timedelta(days=7)).isoformat(),
                                            next=(m + timedelta(days=7)).isoformat(), today=service.week_monday(date.today()).isoformat(), view=view, wd=wd,
                                            days_short=pcfg.DAYS_SHORT, msg=msg, n_inc=n_inc, absence_types=pcfg.ABSENCE_TYPES, full_name=service.full_name))
+
+
+@router.get("/c/{code}/planning/semaine/{monday}/pdf")
+def planning_week_pdf(request: Request, code: str, monday: str, view: str = "emp"):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    cfg = service.get_config(code)
+    site = _site(request, cfg)
+    m = service.week_monday(_d(monday))
+    from fastapi.responses import Response
+    pdf = service.week_pdf(code, site, m, view=view)
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="planning_{site}_semaine_{m.isoformat()}_{view}.pdf"'})
 
 
 def _shift_json(x: PlShift) -> dict:
@@ -307,6 +326,46 @@ async def api_publish(request: Request, code: str, monday: str):
     return {"updated": n}
 
 
+# ============================== contrôles et alertes ==============================
+@router.get("/c/{code}/planning/controles", response_class=HTMLResponse)
+def planning_controls(request: Request, code: str, msg: str = ""):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    cfg = service.get_config(code)
+    found = pjobs.collect(code, cfg)
+    review = pjobs.weekly_review(code, cfg)
+    state = pjobs._sent_state(code)
+    with Session(engine) as s:
+        runs = s.exec(select(Run).where(Run.kind == "planning_control").order_by(Run.id.desc()).limit(8)).all()
+    return templates.TemplateResponse(request, "planning_controls.html",
+                                      _ctx(request, company=company, cfg=cfg, alerts=cfg.get("alerts") or {}, catalog=pcfg.RULES_CATALOG, found=found,
+                                           sites=pcfg.SITES, site=_site(request, cfg), state=state, runs=runs, msg=msg, n_total=sum(len(v) for v in found.values()),
+                                           smtp=mailer_configured(), review=review, review_labels=pjobs.REVIEW_LABELS))
+
+
+def mailer_configured() -> bool:
+    from app.core import mailer
+    return mailer.configured()
+
+
+@router.post("/c/{code}/planning/controles")
+async def planning_controls_save(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    form = await request.form()
+    if form.get("action") == "run":
+        u = current_user(request)
+        rid = start_job("planning_control", lambda ctx: pjobs.run_control(ctx, code, "daily", force_email=bool(form.get("email"))), company_id=company.id, pack="planning",
+                        label="Contrôle du planning (à la demande)", user=u)
+        return RedirectResponse(f"/c/{code}/planning/controles?msg=Contrôle lancé (tâche #{rid}) : le résultat s'affiche dans Tâches et par email si de nouveaux écarts apparaissent.", status_code=303)
+    rules = {k: bool(form.get(f"rule_{k}")) for k, _, _, _ in pcfg.RULES_CATALOG}
+    service.save_config({"alerts": {"enabled": bool(form.get("enabled")), "emails": (form.get("emails") or "").strip(), "daily": bool(form.get("daily")),
+                                    "weekly": bool(form.get("weekly")), "horizon_days": int(form.get("horizon_days") or 14), "rules": rules}}, code)
+    return RedirectResponse(f"/c/{code}/planning/controles?msg=Réglages des contrôles enregistrés.", status_code=303)
+
+
 # ============================== salariés ==============================
 @router.get("/c/{code}/planning/salaries", response_class=HTMLResponse)
 def planning_employees(request: Request, code: str, msg: str = ""):
@@ -318,7 +377,8 @@ def planning_employees(request: Request, code: str, msg: str = ""):
     emps = service.employees(code, site, active_only=False)
     return templates.TemplateResponse(request, "planning_employees.html",
                                       _ctx(request, company=company, site=site, sites=pcfg.SITES, employees=emps, posts=service.post_map(code, site),
-                                           e_posts=service.e_posts, e_list=service.e_list, full_name=service.full_name, days_short=pcfg.DAYS_SHORT, msg=msg))
+                                           e_posts=service.e_posts, e_list=service.e_list, full_name=service.full_name, days_short=pcfg.DAYS_SHORT, msg=msg,
+                                           level_labels=pcfg.LEVEL_LABELS))
 
 
 @router.post("/c/{code}/planning/salaries/{eid}")

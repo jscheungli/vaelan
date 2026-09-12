@@ -110,7 +110,7 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
                 wh = week_hours(e.id, d)
                 if wh + dur > R["week_max_hours"]:
                     continue
-                score = {"niveau": lvl * 12}
+                score = {"niveau": service.level_weight(lvl) * 12}
                 remaining = e.weekly_hours - wh
                 score["heures"] = min(remaining, dur) * 3 if remaining > 0 else -(dur - remaining) * 6
                 if wh + dur > e.weekly_hours + R.get("overtime_tolerance", 2):
@@ -118,7 +118,7 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
                 score["habitude"] = c["pattern"].get(d.weekday(), 50) / 10
                 if d.weekday() == 6:
                     score["dimanche"] = -18 * sundays_recent(e.id, d)
-                if c["posts"] and max(c["posts"].values()) == lvl:
+                if c["posts"] and min(c["posts"].values()) == lvl:
                     score["poste_principal"] = 6
                 total = sum(score.values())
                 if best_score is None or total > best_score:
@@ -167,9 +167,9 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
                             continue
                         nxt = works(e.id, day + timedelta(days=1))
                         need = service.coverage_for(cfg, day)
-                        if not need and day.isoformat() in cfg.get("holidays", {}).get("closed", []):
+                        if service.is_closed(cfg, day):
                             continue
-                        for pk, lvl in sorted(c["posts"].items(), key=lambda kv: -kv[1]):
+                        for pk, lvl in sorted(c["posts"].items(), key=lambda kv: kv[1]):
                             p = pmap.get(pk)
                             if not p or not p.active:
                                 continue
@@ -182,7 +182,7 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
                                 continue
                             have = sum(1 for x in existing if x.date == day and x.kind == "work" and x.employee_id and x.post_key == pk)
                             ratio = have / max(1, need.get(pk, 1))
-                            score = lvl * 10 - ratio * 8 + c["pattern"].get(dd, 50) / 10 + (6 if need.get(pk) else 0)
+                            score = service.level_weight(lvl) * 10 - ratio * 8 + c["pattern"].get(dd, 50) / 10 + (6 if need.get(pk) else 0)
                             if best is None or score > best[0]:
                                 best = (score, day, p, dur, lvl)
                     if not best:

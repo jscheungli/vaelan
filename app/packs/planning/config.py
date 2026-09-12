@@ -59,8 +59,35 @@ COVERAGE = {
 SEASONS = {"default": "Reste de l'année", "dec_jan": "Décembre – janvier", "jul_aug": "Juillet – août", "mar_mai": "Mars – mai"}
 SEASON_OF_MONTH = {12: "dec_jan", 1: "dec_jan", 7: "jul_aug", 8: "jul_aug", 3: "mar_mai", 4: "mar_mai", 5: "mar_mai"}
 
-HOLIDAYS_2026 = ["2026-01-01", "2026-04-06", "2026-05-01", "2026-05-08", "2026-05-14", "2026-05-25", "2026-07-14",
-                 "2026-08-15", "2026-11-01", "2026-11-11", "2026-12-20", "2026-12-25"]
+# Jours fériés : on configure des TYPES, Vaelan calcule la date chaque année (Pâques, Ascension, Pentecôte sont mobiles).
+HOLIDAY_TYPES = [
+    ("jour_an", "Jour de l'an", "fixe", (1, 1)), ("paques", "Lundi de Pâques", "mobile", 1), ("mai_1", "Fête du Travail", "fixe", (5, 1)),
+    ("mai_8", "Victoire 1945", "fixe", (5, 8)), ("ascension", "Ascension", "mobile", 39), ("pentecote", "Lundi de Pentecôte", "mobile", 50),
+    ("juillet_14", "Fête nationale", "fixe", (7, 14)), ("aout_15", "Assomption", "fixe", (8, 15)), ("toussaint", "Toussaint", "fixe", (11, 1)),
+    ("nov_11", "Armistice", "fixe", (11, 11)), ("dec_20", "Abolition de l'esclavage (La Réunion)", "fixe", (12, 20)), ("noel", "Noël", "fixe", (12, 25)),
+]
+
+
+def easter(year: int) -> date:
+    """Dimanche de Pâques (algorithme de Meeus/Jones/Butcher)."""
+    a = year % 19; b = year // 100; c = year % 100; d = b // 4; e = b % 4; f = (b + 8) // 25; g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30; i = c // 4; k = c % 4; l = (32 + 2 * e + 2 * i - h - k) % 7; m = (a + 11 * h + 22 * l) / 451
+    month = (h + l - 7 * int(m) + 114) // 31; day = (h + l - 7 * int(m) + 114) % 31 + 1
+    return date(year, month, day)
+
+
+def holiday_dates(year: int, types=None) -> dict:
+    """{clé: date} pour l'année demandée, limité aux types donnés (tous par défaut)."""
+    from datetime import timedelta
+    out = {}
+    for key, label, kind, spec in HOLIDAY_TYPES:
+        if types is not None and key not in types:
+            continue
+        out[key] = date(year, *spec) if kind == "fixe" else easter(year) + timedelta(days=spec)
+    return out
+
+
+HOLIDAY_LABELS = {k: l for k, l, _, _ in HOLIDAY_TYPES}
 
 ABSENCE_TYPES = ["Repos hebdomadaire", "Congé payé", "Arrêt maladie", "École - CFA", "Jour férié", "Récupération",
                  "Absence injustifiée", "Absence autorisée", "Repos compensateur", "Formation", "Visite médicale"]
@@ -78,16 +105,45 @@ DEFAULT_CONFIG = {
         "modulation_min": 24.0, "modulation_max": 46.0, "rest_min_hours": 11.0, "rest_days_per_week": 2,
         "consecutive_max_days": 6, "default_pause": 0.5, "split_days_allowed": True, "overtime_tolerance": 3.0,
     },
-    "sunday": {"max_share": 0.5, "consecutive_max": 2, "premium_pct": 0},
-    "night": {"start": "20:00", "end": "06:00", "premium_pct": 25},
-    "holidays": {"dates": HOLIDAYS_2026, "closed": ["2026-12-25", "2026-01-01"], "premium_pct": 100, "compensation": True},
+    "sunday": {"max_share": 0.5, "consecutive_max": 2, "premium_pct": 20},      # CCN 843 art. 28 : +20 % minimum (Skello : 0 % → à corriger)
+    "night": {"start": "20:00", "end": "06:00", "premium_pct": 25},              # CCN 843 : 20h-6h +25 % (travailleur de nuit : ≥ 3 h entre 21h et 6h)
+    "overtime": {"t1_from": 36, "t1_pct": 25, "t2_from": 44, "t2_pct": 50, "annual_quota": 220},   # CCN 843 : 36e-43e h +25 %, 44e+ +50 %, contingent 220 h
+    "holidays": {"types": [k for k, _, _, _ in HOLIDAY_TYPES], "closed_types": ["noel", "jour_an"], "premium_pct": 100, "compensation": True,
+                 "confirm_days": 21},   # rappel par email N jours avant chaque férié (ouvert ou fermé selon la configuration)
     "supervision": {"manager_posts": ["VENTE_RESP", "VENTE_MATIN"], "manager_required": True, "manager_at_opening": False,
                     "apprentice_never_alone": True},
     "replacement": {"immediate_if_days": 1, "delay_hours": 24, "parallel": 3, "answer_minutes": 30},
     "publication": {"notice_days": 7, "horizon_weeks": 2},
     "counters": {"period": "annuelle", "alert_hours": 20},
+    "alerts": {"enabled": True, "emails": "jscheungli@gmail.com", "daily": True, "weekly": True, "horizon_days": 14,
+               "rules": {k: True for k in ["day_max", "day_span", "rest", "week_max", "avg12", "consecutive", "days_week", "sunday_consecutive",
+                                           "sunday_share", "cfa", "days_off", "sunday_off", "overtime", "coverage", "unassigned", "manager"]}},
     "validated_at": None, "wizard_step": 1,
 }
+
+# Règles contrôlées : clé -> (libellé, référence, niveau)
+RULES_CATALOG = [
+    ("day_max", "Durée quotidienne maximale (10 h de travail effectif)", "Code du travail L3121-18 · CCN 843", "danger"),
+    ("day_span", "Amplitude maximale d'une journée (13 h)", "Code du travail (repos quotidien 11 h)", "warning"),
+    ("rest", "Repos quotidien de 11 h entre deux journées", "Code du travail L3131-1 · CCN 843", "danger"),
+    ("week_max", "Durée hebdomadaire maximale (48 h)", "Code du travail L3121-20 · CCN 843", "danger"),
+    ("avg12", "Moyenne maximale sur 12 semaines (44 h)", "CCN 843 (avenant n° 57)", "danger"),
+    ("consecutive", "Jours de travail consécutifs (6 maximum)", "Code du travail L3132-1", "danger"),
+    ("days_week", "Jours travaillés au-delà du maximum du salarié", "règle interne (contrat)", "warning"),
+    ("sunday_consecutive", "Dimanches consécutifs au-delà du maximum", "règle interne (rotation)", "warning"),
+    ("sunday_share", "Part de dimanches travaillés au-delà du maximum (8 dernières semaines)", "règle interne (rotation)", "warning"),
+    ("cfa", "Plage posée un jour de CFA", "contrat d'apprentissage", "danger"),
+    ("days_off", "Plage posée un jour habituellement non travaillé", "habitude du salarié", "warning"),
+    ("sunday_off", "Plage un dimanche pour un salarié exempté", "règle interne", "danger"),
+    ("overtime", "Heures au-delà du contrat + tolérance (heures supplémentaires)", "CCN 843 : 36e-43e h +25 %, 44e+ +50 %", "warning"),
+    ("coverage", "Couverture d'un poste inférieure au besoin", "règle interne (couverture)", "danger"),
+    ("unassigned", "Plage sans personne assignée", "règle interne", "danger"),
+    ("manager", "Aucun responsable de vente un jour d'ouverture", "règle interne (encadrement)", "warning"),
+]
+
+# Niveau sur un poste : 1 = préféré (poste principal), 2 = tient le poste, 3 = peut dépanner ; 0 = non.
+LEVEL_LABELS = {1: "1 · préféré", 2: "2 · tient le poste", 3: "3 · dépanne"}
+LEVEL_WEIGHT = {1: 3, 2: 2, 3: 1}       # poids dans les scores (plus le niveau est petit, plus le poids est fort)
 
 # Questionnaire de configuration : étapes
 WIZARD_STEPS = [
