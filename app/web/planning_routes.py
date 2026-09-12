@@ -432,7 +432,7 @@ def planning_incident(request: Request, code: str, iid: int, msg: str = ""):
     inc = service.get_incident(iid)
     if not inc:
         return RedirectResponse(f"/c/{code}/planning/incidents", status_code=303)
-    plan = json.loads(inc.plan or "{}")
+    plan = replace.ensure_plan(inc)
     pmap = service.post_map(code, inc.site)
     return templates.TemplateResponse(request, "planning_incident.html",
                                       _ctx(request, company=company, site=inc.site, sites=pcfg.SITES, inc=inc, plan=plan, posts=pmap,

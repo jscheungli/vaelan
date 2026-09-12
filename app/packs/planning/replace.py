@@ -234,11 +234,33 @@ def build_plan(company_code: str, site: str, employee_id: int, d_from: date, d_t
     return {"employee": service.full_name(absent) if absent else "?", "employee_id": employee_id, "site": site, "shifts": per_shift}
 
 
+def ensure_plan(inc: PlIncident) -> dict:
+    """Plan de l'incident au format courant : un incident créé avec une version antérieure (options par familles,
+    plans A/B/C par tranches) est recalculé, les plages déjà réglées sont conservées."""
+    try:
+        plan = json.loads(inc.plan or "{}")
+    except Exception:
+        plan = {}
+    old = [x for x in plan.get("shifts", []) if not isinstance(x.get("options"), list) or any("participants" not in o for o in x.get("options", []))]
+    if not plan.get("shifts") or not old:
+        return plan
+    fresh = build_plan(inc.company_code, inc.site, inc.employee_id, inc.date_from, inc.date_to)
+    done = {x["shift_id"]: x.get("resolution") for x in plan.get("shifts", []) if x.get("resolution")}
+    for x in fresh["shifts"]:
+        x["absent"] = fresh["employee"]
+        if x["shift_id"] in done:
+            x["resolution"] = done[x["shift_id"]]
+    fresh["log"] = plan.get("log", []) + [{"shift_id": None, "event": "options recalculées avec la nouvelle version du module", "by": "Vaelan"}]
+    inc.plan = json.dumps(fresh, ensure_ascii=False)
+    service.save_incident(inc)
+    return fresh
+
+
 def record_answer(inc: PlIncident, shift_id: int, option_id: str, outcome: str, by: str = None, employee_id: int = None) -> PlIncident:
     """outcome : confirm / refuse (par participant, `employee_id`), oui (tous confirmés → appliquer ; option à une seule personne : confirme et applique),
     non / pas_de_reponse (option entière), unassign (laisser non couverte)."""
-    plan = json.loads(inc.plan or "{}")
-    entry = next((x for x in plan["shifts"] if x["shift_id"] == shift_id), None)
+    plan = ensure_plan(inc)
+    entry = next((x for x in plan.get("shifts", []) if x["shift_id"] == shift_id), None)
     if not entry:
         return inc
     log = plan.setdefault("log", [])
