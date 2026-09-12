@@ -77,7 +77,7 @@ class PublicHostMiddleware:
                     return await RedirectResponse(vcfg.VILLA["site"], status_code=302)(scope, receive, send)
                 if not path.startswith(self.PASS):
                     seg = path.strip("/").split("/")
-                    if len(seg) == 1 or (len(seg) == 2 and (seg[0] == "nouveau" or seg[1] == "refus")):
+                    if len(seg) == 1 or (len(seg) == 2 and (seg[0] == "nouveau" or seg[1] in ("refus", "email"))):
                         scope["path"] = "/checkin" + path
                         scope["raw_path"] = scope["path"].encode()
                     else:

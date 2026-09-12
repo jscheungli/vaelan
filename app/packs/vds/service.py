@@ -329,6 +329,25 @@ def send_invitation(res: VdsReservation, reminder: bool = False) -> Tuple[bool, 
     return ok, info
 
 
+def send_self_link(res: VdsReservation, email: str) -> Tuple[bool, str]:
+    """Le voyageur demande, depuis le formulaire, à recevoir son lien par email (pas de pièce sous la main, plus pratique
+    sur ordinateur). L'adresse saisie devient l'email de la réservation (pré-remplie ensuite dans le formulaire).
+    Garde-fou : un envoi par minute et par réservation."""
+    email = (email or "").strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", email):
+        return False, "invalid"
+    last = next((m for m in messages_for(res.id) if m.kind == "self_link"), None)
+    if last and (datetime.utcnow() - last.sent_at).total_seconds() < 60:
+        return True, "déjà envoyé il y a moins d'une minute"
+    if email != (res.guest_email or ""):
+        update_reservation(res.id, guest_email=email)
+        res = by_token(res.token)
+    v = _mail_vars(res)
+    v["name"] = v["name"] or ""
+    fix = lambda x: x.replace("Bonjour ,", "Bonjour,").replace("Hello ,", "Hello,")
+    return guest_send(res, "self_link", email, t(res.lang, "mail_self_subject", **v), fix(t(res.lang, "mail_self_body", **v)))
+
+
 def send_alert(res: Optional[VdsReservation], subject: str, body: str, kind: str = "alert") -> Tuple[bool, str]:
     """Alerte interne (propriétaire / gestionnaire). Réservation de test : adresse de test seulement."""
     to = alert_emails()

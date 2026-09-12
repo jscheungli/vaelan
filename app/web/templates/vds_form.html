@@ -15,7 +15,10 @@
   </div>
 </div>
 {% if request.query_params.get('err') %}
-<div class="alert alert-danger mt-2 small">{% if request.query_params.get('err') == 'sign' %}{{ T.sign_missing }}{% elif request.query_params.get('err') == 'id' %}{{ T.id_intro }}{% else %}{{ T.required }}{% endif %}</div>
+<div class="alert alert-danger mt-2 small">{% if request.query_params.get('err') == 'sign' %}{{ T.sign_missing }}{% elif request.query_params.get('err') == 'id' %}{{ T.id_intro }}{% elif request.query_params.get('err') == 'email' %}{{ T.self_error }}{% else %}{{ T.required }}{% endif %}</div>
+{% endif %}
+{% if request.query_params.get('mailed') %}
+<div class="alert alert-success mt-2 small"><i class="bi bi-envelope-check me-1"></i> {{ t('self_sent', email=res.guest_email or '') }}</div>
 {% endif %}
 
 <div class="mt-2 mb-3">
@@ -34,6 +37,12 @@
   <p class="hint mb-2"><i class="bi bi-stopwatch"></i> {{ T.welcome_steps }}</p>
   <div class="alert alert-warning small py-2 mb-3"><i class="bi bi-person-vcard me-1"></i> {{ T.welcome_need_id }}</div>
   <button type="button" class="btn btn-vds w-100 mt-2 next">{{ T.start }} <i class="bi bi-arrow-right"></i></button>
+  {% if res.channel != 'lodgify' %}{# site direct : le voyageur a déjà reçu le lien par email (Lodgify) #}
+  <div class="text-center mt-3">
+    <button type="button" class="btn btn-outline-vds btn-sm" data-bs-toggle="modal" data-bs-target="#selfmail"><i class="bi bi-envelope-paper me-1"></i> {{ T.self_btn }}</button>
+    <div class="hint small mt-1">{{ T.self_why }}</div>
+  </div>
+  {% endif %}
 </div></div>
 
 <!-- 1 · règles -->
@@ -90,6 +99,7 @@
 <div class="step card" data-title="{{ T.step_id }}"><div class="card-body p-4">
   <h2 class="h4">{{ T.id_title }}</h2>
   <p class="hint">{{ T.id_intro }}</p>
+  {% if res.channel != 'lodgify' %}<p class="small"><i class="bi bi-envelope-paper me-1"></i> {{ T.self_later }} <a href="#" data-bs-toggle="modal" data-bs-target="#selfmail">{{ T.self_btn }}</a></p>{% endif %}
   <div class="mb-2"><label class="form-label">{{ T.id_files }} *</label>
     <input class="form-control" type="file" name="id_files" id="idfiles" accept="image/*,.pdf,.heic,.heif" multiple required>
     <div class="hint mt-1">{{ T.file_type }} · max {{ max_mb }} MB</div>
@@ -146,6 +156,18 @@
 {% endblock %}
 
 {% block scripts %}
+{% if res.channel != 'lodgify' %}<div class="modal fade" id="selfmail" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+  <form method="post" action="/checkin/{{ res.token }}/email">
+    <input type="hidden" name="lang" value="{{ lang }}"><input type="text" name="website" class="d-none" tabindex="-1" autocomplete="off">
+    <div class="modal-header"><h5 class="modal-title"><i class="bi bi-envelope-paper me-1"></i> {{ T.self_title }}</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{{ T.self_cancel }}"></button></div>
+    <div class="modal-body">
+      <p class="small text-muted">{{ T.self_why }}</p>
+      <label class="form-label">{{ T.self_email }}</label>
+      <input class="form-control" type="email" name="email" value="{{ res.guest_email or '' }}" required autocomplete="email" inputmode="email">
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{{ T.self_cancel }}</button><button class="btn btn-vds">{{ T.self_send }}</button></div>
+  </form>
+</div></div></div>{% endif %}
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
 <script>

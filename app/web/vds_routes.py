@@ -136,6 +136,22 @@ async def public_submit(request: Request, token: str):
     return RedirectResponse(f"/checkin/{token}?lang={lang}&done=1", status_code=303)
 
 
+@router.post("/checkin/{token}/email")
+async def public_self_link(request: Request, token: str):
+    """Le voyageur se fait envoyer le lien de son formulaire par email (bouton « Recevoir le lien par email »)."""
+    res = service.by_token(token)
+    if not res or res.status in ("cancelled", "completed") or res.channel == "lodgify":   # site direct : lien déjà reçu par email
+        return RedirectResponse(f"/checkin/{token}", status_code=303)
+    form = await request.form()
+    lang = "en" if form.get("lang") == "en" else "fr"
+    if form.get("website"):                     # pot de miel anti-robots
+        return RedirectResponse(f"/checkin/{token}?lang={lang}", status_code=303)
+    ok, info = service.send_self_link(res, form.get("email") or "")
+    if not ok and info == "invalid":
+        return RedirectResponse(f"/checkin/{token}?lang={lang}&err=email", status_code=303)
+    return RedirectResponse(f"/checkin/{token}?lang={lang}&mailed=1", status_code=303)
+
+
 @router.post("/checkin/{token}/refus", response_class=HTMLResponse)
 async def public_refuse(request: Request, token: str):
     res = service.by_token(token)
