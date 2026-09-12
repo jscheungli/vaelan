@@ -108,8 +108,10 @@ def admin_users(request: Request):
         companies = s.exec(select(Company).order_by(Company.code)).all()
         access = {(a.user_id, a.company_id): a.role
                   for a in s.exec(select(UserCompanyAccess)).all()}
+    norm = {"admin": "comptable", "operator": "comptable", "viewer": "gestion"}
+    summary = {usr.id: [(c.code, norm.get(access[(usr.id, c.id)], access[(usr.id, c.id)])) for c in companies if (usr.id, c.id) in access] for usr in users}
     return templates.TemplateResponse(request, "admin_users.html",
-                                      _ctx(request, users=users, companies=companies, access=access))
+                                      _ctx(request, users=users, companies=companies, access=access, summary=summary, n_companies=len(companies)))
 
 
 @router.post("/admin/users/add")
@@ -149,7 +151,7 @@ def admin_user_access(request: Request, user_id: int = Form(...),
         else:
             s.add(UserCompanyAccess(user_id=user_id, company_id=company_id, role=role))
         s.commit()
-    return RedirectResponse("/admin/users", status_code=303)
+    return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
 @router.post("/admin/users/{uid}/toggle")
@@ -165,6 +167,101 @@ def admin_user_toggle(request: Request, uid: int):
             s.add(target)
             s.commit()
     return RedirectResponse("/admin/users", status_code=303)
+
+
+ROLE_LABELS = {"comptable": "Comptable — toutes les fonctionnalités de la société",
+               "gestion": "Gestion — Clients + Paiements (ou check-in)", "salaires": "Salaires — paie, comptes 421 uniquement"}
+
+
+def _company_rows(companies):
+    """Sociétés groupées pour la fiche d'accès, avec leurs modules et les rôles qui ont un sens."""
+    from app.core.security import company_features
+    groups = [("Groupe FDF — boulangeries et labo (caisse TopOrder, paie)", []), ("Groupe ISFAHAAN — Odoo / Inqom × Pennylane", []),
+              ("Location saisonnière — SCI Les Sables du Lagon", []), ("Sans module activé", [])]
+    for c in companies:
+        f = company_features(c.code)
+        roles = []
+        if f - {"salaires"}:
+            roles.append("comptable")
+        if f & {"clients", "paiements", "checkin"}:
+            roles.append("gestion")
+        if "salaires" in f:
+            roles.append("salaires")
+        row = {"c": c, "features": sorted(f), "roles": roles}
+        idx = 0 if (f & {"suivi", "clients"} or f == {"salaires"}) else 1 if (f & {"odoo", "inqom"}) else 2 if "checkin" in f else 3
+        groups[idx][1].append(row)
+    return [(g, rows) for g, rows in groups if rows]
+
+
+@router.get("/admin/users/{uid}", response_class=HTMLResponse)
+def admin_user_detail(request: Request, uid: int, msg: str = ""):
+    from app.models import User, UserCompanyAccess
+    u, redir = _require_super(request)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        target = s.get(User, uid)
+        if not target:
+            return RedirectResponse("/admin/users", status_code=303)
+        companies = s.exec(select(Company).order_by(Company.code)).all()
+        access = {a.company_id: a.role for a in s.exec(select(UserCompanyAccess).where(UserCompanyAccess.user_id == uid)).all()}
+    norm = {"admin": "comptable", "operator": "comptable", "viewer": "gestion"}
+    access = {k: norm.get(v, v) for k, v in access.items()}
+    return templates.TemplateResponse(request, "admin_user.html",
+                                      _ctx(request, target=target, groups=_company_rows(companies), access=access, msg=msg,
+                                           role_labels=ROLE_LABELS, me=u))
+
+
+@router.post("/admin/users/{uid}/access")
+async def admin_user_access_bulk(request: Request, uid: int):
+    """Enregistre d'un coup les rôles de l'utilisateur sur toutes les sociétés (champs role_<company_id>)."""
+    from app.models import User, UserCompanyAccess
+    u, redir = _require_super(request)
+    if redir:
+        return redir
+    form = await request.form()
+    with Session(engine) as s:
+        target = s.get(User, uid)
+        if not target:
+            return RedirectResponse("/admin/users", status_code=303)
+        existing = {a.company_id: a for a in s.exec(select(UserCompanyAccess).where(UserCompanyAccess.user_id == uid)).all()}
+        n = 0
+        for c in s.exec(select(Company)).all():
+            role = (form.get(f"role_{c.id}") or "").strip()
+            a = existing.get(c.id)
+            if role in ("comptable", "gestion", "salaires"):
+                if a and a.role != role:
+                    a.role = role
+                    s.add(a)
+                elif not a:
+                    s.add(UserCompanyAccess(user_id=uid, company_id=c.id, role=role))
+                n += 1
+            elif a:
+                s.delete(a)
+        s.commit()
+    return RedirectResponse(f"/admin/users/{uid}?msg=Accès enregistrés : {n} société(s).", status_code=303)
+
+
+@router.post("/admin/users/{uid}/edit")
+def admin_user_edit(request: Request, uid: int, name: str = Form(""), is_superuser: str = Form(""), password: str = Form("")):
+    from app.models import User
+    from app.core.security import hash_password
+    u, redir = _require_super(request)
+    if redir:
+        return redir
+    with Session(engine) as s:
+        target = s.get(User, uid)
+        if not target:
+            return RedirectResponse("/admin/users", status_code=303)
+        if name.strip():
+            target.name = name.strip()
+        if target.id != u.id:                    # on ne se retire pas soi-même le superadmin
+            target.is_superuser = bool(is_superuser)
+        if password.strip():
+            target.password_hash = hash_password(password.strip())
+        s.add(target)
+        s.commit()
+    return RedirectResponse(f"/admin/users/{uid}?msg=Fiche enregistrée{' (mot de passe changé)' if password.strip() else ''}.", status_code=303)
 
 
 @router.get("/companies", response_class=HTMLResponse)

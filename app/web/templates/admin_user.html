@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ target.name }} · Accès · {{ app_name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/companies">Sociétés</a></li>
+  <li class="breadcrumb-item"><a href="/admin/users">Utilisateurs</a></li>
+  <li class="breadcrumb-item active">{{ target.name }}</li>
+</ol></nav>
+<div class="d-flex align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">{{ target.name }}</h1>
+  <span class="text-muted small">{{ target.email }}</span>
+  {% if target.active %}<span class="badge text-bg-success">actif</span>{% else %}<span class="badge text-bg-secondary">inactif</span>{% endif %}
+  {% if target.is_superuser %}<span class="badge text-bg-dark">superadmin</span>{% endif %}
+  <form method="post" action="/admin/users/{{ target.id }}/toggle" class="ms-auto">{% if target.id != me.id %}<button class="btn btn-sm btn-outline-secondary">{{ 'Désactiver le compte' if target.active else 'Réactiver le compte' }}</button>{% endif %}</form>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<div class="row g-3">
+<div class="col-lg-4">
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h3 class="h6 text-uppercase text-muted">Identité</h3>
+    <form method="post" action="/admin/users/{{ target.id }}/edit">
+      <div class="mb-2"><label class="form-label small mb-0">Nom</label><input name="name" class="form-control form-control-sm" value="{{ target.name }}"></div>
+      <div class="mb-2"><label class="form-label small mb-0">Nouveau mot de passe <span class="text-muted">(vide = inchangé)</span></label><input name="password" type="text" class="form-control form-control-sm" autocomplete="off"></div>
+      <div class="form-check small mb-2"><input class="form-check-input" type="checkbox" name="is_superuser" id="su" value="1" {% if target.is_superuser %}checked{% endif %} {% if target.id == me.id %}disabled{% endif %}><label class="form-check-label" for="su">Superadmin — toutes les sociétés, toutes les fonctionnalités</label></div>
+      <button class="btn btn-sm btn-dark">Enregistrer</button>
+    </form>
+  </div></div>
+  <div class="card shadow-sm"><div class="card-body small text-muted">
+    <div><strong>comptable</strong> : toutes les fonctionnalités de la société.</div>
+    <div><strong>gestion</strong> : Clients + Paiements ; pour la villa, le check-in.</div>
+    <div><strong>salaires</strong> : uniquement les comptes 421 des salariés.</div>
+    <div class="mt-1">Une société sans coche = aucun accès.</div>
+  </div></div>
+</div>
+<div class="col-lg-8">
+  <div class="card shadow-sm"><div class="card-body">
+    <h3 class="h6 text-uppercase text-muted">Accès par société</h3>
+    {% if target.is_superuser %}
+      <div class="text-muted small">Superadmin : accès à toutes les sociétés et à toutes les fonctionnalités. Décochez « superadmin » dans l'identité pour régler des accès société par société.</div>
+    {% else %}
+    <form method="post" action="/admin/users/{{ target.id }}/access">
+      {% for group, rows in groups %}
+        <div class="fw-semibold small text-uppercase text-muted mt-3 mb-1">{{ group }}</div>
+        {% for r in rows %}{% set cur = access.get(r.c.id, '') %}
+        <div class="d-flex flex-wrap align-items-center gap-2 py-2 border-bottom {{ 'bg-success-subtle rounded px-2' if cur }}">
+          <div style="min-width:220px;"><span class="fw-semibold">{{ r.c.name }}</span> <span class="text-muted small">{{ r.c.code }}</span>
+            <div class="text-muted" style="font-size:.7rem;">{{ r.features|join(' · ') or 'aucun module' }}</div></div>
+          <div class="btn-group btn-group-sm ms-auto" role="group">
+            <input type="radio" class="btn-check" name="role_{{ r.c.id }}" value="" id="r{{ r.c.id }}_0" {% if not cur %}checked{% endif %}><label class="btn btn-outline-secondary" for="r{{ r.c.id }}_0">aucun</label>
+            {% for role in r.roles %}
+            <input type="radio" class="btn-check" name="role_{{ r.c.id }}" value="{{ role }}" id="r{{ r.c.id }}_{{ role }}" {% if cur == role %}checked{% endif %}><label class="btn btn-outline-dark" for="r{{ r.c.id }}_{{ role }}" title="{{ role_labels[role] }}">{{ role }}</label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      {% endfor %}
+      <div class="mt-3 d-flex gap-2 align-items-center">
+        <button class="btn btn-dark"><i class="bi bi-check2"></i> Enregistrer les accès</button>
+        <a class="btn btn-outline-secondary" href="/admin/users">Retour à la liste</a>
+      </div>
+    </form>
+    {% endif %}
+  </div></div>
+</div>
+</div>
+{% endblock %}
