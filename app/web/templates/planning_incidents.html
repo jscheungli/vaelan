@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Remplacements · Planning · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/planning">Planning</a></li>
+  <li class="breadcrumb-item active">Remplacements</li>
+</ol></nav>
+<h1 class="h4">Absences et remplacements — {{ sites[site] }}</h1>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<div class="card shadow-sm mb-3 border-warning"><div class="card-body">
+  <h2 class="h6 text-uppercase text-muted">Déclarer une absence</h2>
+  <form method="post" action="/c/{{ company.code }}/planning/incidents/new?site={{ site }}" class="row g-2 align-items-end">
+    <div class="col-md-4"><label class="form-label small mb-0">Qui est absent ?</label><select name="employee_id" class="form-select form-select-sm" required>{% for e in employees %}<option value="{{ e.id }}">{{ e.first_name }} {{ e.last_name }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Du</label><input type="date" class="form-control form-control-sm" name="date_from" value="{{ today }}" required></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Au (inclus)</label><input type="date" class="form-control form-control-sm" name="date_to" value="{{ today }}"></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Motif</label><select name="reason" class="form-select form-select-sm">{% for a in absence_types if a != 'Repos hebdomadaire' %}<option>{{ a }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><button class="btn btn-sm btn-warning w-100"><i class="bi bi-life-preserver"></i> Chercher un remplaçant</button></div>
+  </form>
+  <div class="form-text">Je regarde les plages touchées, qui est déjà sur place et peut basculer, qui appeler et dans quel ordre, et les renforts possibles des autres établissements. Vous suivez le plan étape par étape.</div>
+</div></div>
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-sm align-middle mb-0">
+  <thead><tr class="small text-muted"><th>#</th><th>Absent</th><th>Dates</th><th>Motif</th><th>Plages</th><th>Statut</th><th></th></tr></thead><tbody>
+  {% for i in incidents %}{% set p = json.loads(i.plan or '{}') %}
+    <tr class="small"><td>{{ i.id }}</td><td class="fw-semibold">{{ emap.get(i.employee_id, '?') }}</td><td>{{ i.date_from.strftime('%d/%m') }} → {{ i.date_to.strftime('%d/%m') }}</td><td>{{ i.reason }}</td>
+      <td>{{ p.shifts|length }} touchée(s) · {{ p.shifts|selectattr('resolution')|list|length }} réglée(s)</td>
+      <td><span class="badge text-bg-{{ 'success' if i.status == 'resolved' else ('secondary' if i.status == 'closed' else 'warning') }}">{{ {'open':'en cours','resolved':'résolu','closed':'clos'}[i.status] }}</span></td>
+      <td class="text-end"><a class="btn btn-sm btn-outline-dark py-0" href="/c/{{ company.code }}/planning/incidents/{{ i.id }}">ouvrir</a></td></tr>
+  {% else %}<tr><td colspan="7" class="text-muted small">Aucun incident déclaré.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

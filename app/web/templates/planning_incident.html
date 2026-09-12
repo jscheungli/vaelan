@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Remplacement #{{ inc.id }} · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/planning">Planning</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/planning/incidents">Remplacements</a></li>
+  <li class="breadcrumb-item active">#{{ inc.id }}</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">{{ plan.employee }} absent(e) du {{ inc.date_from.strftime('%d/%m') }} au {{ inc.date_to.strftime('%d/%m') }}</h1>
+  <span class="badge text-bg-light border">{{ inc.reason }}</span>
+  <span class="badge text-bg-{{ 'success' if inc.status == 'resolved' else ('secondary' if inc.status == 'closed' else 'warning') }}">{{ {'open':'en cours','resolved':'résolu','closed':'clos'}[inc.status] }}</span>
+  <a class="btn btn-sm btn-outline-secondary ms-auto" href="/c/{{ company.code }}/planning/semaine/{{ inc.date_from.isoformat() }}?site={{ inc.site }}"><i class="bi bi-calendar-week"></i> Voir la semaine</a>
+  {% if inc.status != 'closed' %}<form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/close"><button class="btn btn-sm btn-outline-secondary">Clore</button></form>{% endif %}
+</div>
+{% if not plan.shifts %}<div class="alert alert-light border">Aucune plage planifiée pour cette personne sur ces dates : rien à remplacer.</div>{% endif %}
+{% for sh in plan.shifts %}{% set st = steps[sh.shift_id] %}{% set p = posts.get(sh.post) %}
+<div class="card shadow-sm mb-3 {{ 'border-success' if sh.resolution else '' }}"><div class="card-body">
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <span class="badge fs-6" style="background:{{ p.color if p else '#ccc' }};color:#222">{{ p.label if p else sh.post }}</span>
+    <strong>{{ days_short[date.fromisoformat(sh.date).weekday()] }} {{ date.fromisoformat(sh.date).strftime('%d/%m') }}</strong> · {{ sh.start }} → {{ sh.end }} · {{ sh.hours }} h
+    {% if sh.resolution %}<span class="badge text-bg-success ms-auto"><i class="bi bi-check2"></i> {{ 'laissée non couverte' if sh.resolution.kind == 'unassigned' else 'remplacé(e) par ' ~ sh.resolution.name }}</span>{% else %}<span class="badge text-bg-warning ms-auto">plan {{ st.plan_letter }}</span>{% endif %}
+  </div>
+  {% if not sh.resolution %}
+  {% for step in st.steps %}
+    <div class="mb-2"><div class="fw-semibold small text-uppercase text-muted">{{ step.title }}</div>
+    {% if step.kind == 'move' %}
+      {% for m in step['items'] %}<div class="d-flex flex-wrap align-items-center gap-2 border rounded p-2 mb-1"><span class="small">{{ m.text }}</span>
+        <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="ms-auto d-inline"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="employee_id" value="{{ m.employee_id }}">
+          <button name="outcome" value="oui" class="btn btn-sm btn-success py-0">Il/elle est d'accord → basculer</button> <button name="outcome" value="refuse" class="btn btn-sm btn-outline-secondary py-0">Non</button></form></div>{% endfor %}
+    {% elif step.kind in ('call', 'reinforcement') %}
+      <div class="small text-muted mb-1">{{ step.hint or '' }}</div>
+      {% for c in step['items'] %}<div class="d-flex flex-wrap align-items-center gap-2 border rounded p-2 mb-1 {{ 'bg-light' if c.status not in ('à contacter',) }}">
+        <span class="fw-semibold">{{ c.name }}</span>{% if c.site != inc.site %}<span class="badge text-bg-light border">{{ c.site }}</span>{% endif %}
+        <span class="small text-muted">{{ c.phone or 'tél. inconnu' }}{% if c.telegram %} · {{ c.telegram }}{% endif %} · niveau {{ c.level }} · {{ c.week_hours }} h / {{ c.contract|int }} h cette semaine · flex {{ c.flex }} · priorité {{ c.priority }}</span>
+        <span class="badge text-bg-{{ 'success' if c.status == 'disponible' else ('secondary' if c.status in ('pas disponible','refusé') else ('warning' if c.status == 'pas de réponse' else 'light border')) }}">{{ c.status }}</span>
+        {% if c.status in ('à contacter', 'pas de réponse') %}
+        <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="ms-auto d-inline"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="employee_id" value="{{ c.employee_id }}">
+          <button name="outcome" value="oui" class="btn btn-sm btn-success py-0">Disponible</button> <button name="outcome" value="non" class="btn btn-sm btn-outline-secondary py-0">Pas dispo</button> <button name="outcome" value="pas_de_reponse" class="btn btn-sm btn-outline-warning py-0">Pas de réponse</button></form>
+        {% endif %}
+      </div>{% endfor %}
+    {% else %}<div class="small text-muted">Aucun candidat ne reste dans les règles (compétence, repos, heures, dimanche).</div>{% endif %}
+    </div>
+  {% endfor %}
+  <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="d-flex gap-2 mt-2"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}">
+    <button name="outcome" value="next" class="btn btn-sm btn-outline-dark"><i class="bi bi-arrow-right"></i> Personne n'a répondu : plan suivant</button>
+    <button name="outcome" value="unassign" class="btn btn-sm btn-outline-danger" onclick="return confirm('Laisser cette plage non couverte ?')">Laisser non couverte</button>
+  </form>
+  {% endif %}
+</div></div>
+{% endfor %}
+{% if plan.log %}<div class="card shadow-sm"><div class="card-body small"><div class="fw-semibold text-uppercase text-muted">Journal</div>{% for l in plan.log %}<div>{{ l.event }} <span class="text-muted">— {{ l.by or '' }}</span></div>{% endfor %}</div></div>{% endif %}
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Salariés · Planning · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}/planning">Planning</a></li>
+  <li class="breadcrumb-item active">Salariés</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">Salariés — {{ sites[site] }}</h1>
+  <span class="text-muted small">{{ employees|selectattr('active')|list|length }} actifs · {{ employees|rejectattr('active')|list|length }} inactifs</span>
+  <button class="btn btn-sm btn-dark ms-auto" data-bs-toggle="modal" data-bs-target="#emp0"><i class="bi bi-person-plus"></i> Nouveau salarié</button>
+  <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/config?step=7"><i class="bi bi-ui-checks"></i> Édition groupée (questionnaire)</a>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+{% macro empform(e, eid) %}
+<form method="post" action="/c/{{ company.code }}/planning/salaries/{{ eid }}?site={{ site }}">
+  <div class="row g-2 small">
+    <div class="col-md-4"><label class="form-label mb-0">Prénom</label><input class="form-control form-control-sm" name="first_name" value="{{ e.first_name if e else '' }}" required></div>
+    <div class="col-md-4"><label class="form-label mb-0">Nom</label><input class="form-control form-control-sm" name="last_name" value="{{ e.last_name if e else '' }}" required></div>
+    <div class="col-md-2"><label class="form-label mb-0">Contrat</label><select name="contract_type" class="form-select form-select-sm">{% for c in ['CDI','CDD','Apprenti','Stage','Extra'] %}<option {% if e and e.contract_type == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-0">Heures/sem</label><input type="number" step="0.5" class="form-control form-control-sm" name="weekly_hours" value="{{ e.weekly_hours if e else 35 }}"></div>
+    <div class="col-md-3"><label class="form-label mb-0">Début de contrat</label><input type="date" class="form-control form-control-sm" name="start_date" value="{{ e.start_date or '' if e else '' }}"></div>
+    <div class="col-md-3"><label class="form-label mb-0">Fin de contrat</label><input type="date" class="form-control form-control-sm" name="end_date" value="{{ e.end_date or '' if e else '' }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0">Jours max/sem</label><input type="number" min="1" max="6" class="form-control form-control-sm" name="max_days" value="{{ e.max_days if e else 5 }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0">Dimanche</label><select name="sunday" class="form-select form-select-sm"><option value="oui" {% if not e or e.sunday == 'oui' %}selected{% endif %}>oui</option><option value="non" {% if e and e.sunday == 'non' %}selected{% endif %}>non</option></select></div>
+    <div class="col-md-2 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="active" value="1" {% if not e or e.active %}checked{% endif %} id="a{{ eid }}"><label class="form-check-label" for="a{{ eid }}">actif</label></div></div>
+    <div class="col-12"><label class="form-label mb-0">Postes tenus (0 = non, 1 = peut dépanner, 2 = tient le poste, 3 = poste principal)</label>
+      <div class="d-flex flex-wrap gap-2">{% set ep = e_posts(e) if e else {} %}{% for k, p in posts.items() if p.active or (e and k in ep) %}
+        <span class="badge" style="background:{{ p.color }};color:#222">{{ p.label }} <select name="lvl_{{ k }}" class="form-select form-select-sm d-inline-block py-0" style="width:auto;font-size:.75rem">{% for v in [0,1,2,3] %}<option value="{{ v }}" {% if ep.get(k, 0) == v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></span>{% endfor %}</div></div>
+    <div class="col-md-6"><label class="form-label mb-0">Jours non travaillés (fixes)</label><div>{% set off = e_list(e, 'days_off') if e else [] %}{% for wd in range(7) %}<label class="me-2"><input type="checkbox" class="form-check-input" name="off_{{ wd }}" value="1" {% if wd in off %}checked{% endif %}> {{ days_short[wd] }}</label>{% endfor %}</div></div>
+    <div class="col-md-6"><label class="form-label mb-0">Jours de CFA (apprentis)</label><div>{% set cfa = e_list(e, 'cfa_days') if e else [] %}{% for wd in range(7) %}<label class="me-2"><input type="checkbox" class="form-check-input" name="cfa_{{ wd }}" value="1" {% if wd in cfa %}checked{% endif %}> {{ days_short[wd] }}</label>{% endfor %}</div></div>
+    <div class="col-md-4"><label class="form-label mb-0">Mobile vers</label><div>{% set mob = e_list(e, 'mobility') if e else [] %}{% for k, v in sites.items() if k != site %}<label class="me-2"><input type="checkbox" class="form-check-input" name="mob_{{ k }}" value="1" {% if k in mob %}checked{% endif %}> {{ v|replace("O'Copain ", "") }}</label>{% endfor %}</div></div>
+    <div class="col-md-2"><label class="form-label mb-0">Flexibilité</label><select name="flexibility" class="form-select form-select-sm">{% for v, l in [(1,'1 · peu'),(2,'2 · normale'),(3,'3 · très')] %}<option value="{{ v }}" {% if e and e.flexibility == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-0">Priorité d'appel</label><input type="number" min="1" max="9" class="form-control form-control-sm" name="priority" value="{{ e.priority if e else 5 }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0">Téléphone</label><input class="form-control form-control-sm" name="phone" value="{{ e.phone or '' if e else '' }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0">Telegram</label><input class="form-control form-control-sm" name="telegram" value="{{ e.telegram or '' if e else '' }}" placeholder="@…"></div>
+    <div class="col-12"><label class="form-label mb-0">Note</label><input class="form-control form-control-sm" name="note" value="{{ e.note or '' if e else '' }}" placeholder="ex. préfère les matins, ne conduit pas…"></div>
+  </div>
+  <div class="mt-2"><button class="btn btn-sm btn-dark">Enregistrer</button></div>
+</form>
+{% endmacro %}
+<div class="modal fade" id="emp0" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">Nouveau salarié</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">{{ empform(None, 0) }}</div></div></div></div>
+<div class="row g-2">
+{% for e in employees %}{% set ep = e_posts(e) %}
+  <div class="col-lg-6"><div class="card shadow-sm h-100 {{ '' if e.active else 'opacity-50' }}"><div class="card-body py-2 small">
+    <div class="d-flex align-items-center gap-2">
+      <strong>{{ full_name(e) }}</strong><span class="badge text-bg-light border">{{ e.contract_type }} · {{ e.weekly_hours|int }} h</span>
+      {% if not e.active %}<span class="badge text-bg-secondary">inactif</span>{% endif %}
+      {% if e.sunday == 'non' %}<span class="badge text-bg-light border">pas le dimanche</span>{% endif %}
+      <button class="btn btn-sm btn-outline-dark py-0 ms-auto" data-bs-toggle="modal" data-bs-target="#emp{{ e.id }}"><i class="bi bi-pencil"></i></button>
+    </div>
+    <div class="mt-1">{% for k, lvl in ep.items()|sort(attribute=1, reverse=true) %}{% set p = posts.get(k) %}<span class="badge me-1" style="background:{{ p.color if p else '#ccc' }};color:#222;opacity:{{ 0.55 + lvl*0.15 }}">{{ p.label if p else k }} · {{ lvl }}</span>{% endfor %}</div>
+    <div class="text-muted mt-1">{% set off = e_list(e, 'days_off') %}{% if off %}repos fixe {{ off|map('int')|map('string')|list|join(',') }} · {% endif %}{% set cfa = e_list(e, 'cfa_days') %}{% if cfa %}CFA {% for wd in cfa %}{{ days_short[wd] }} {% endfor %}· {% endif %}mobile : {{ e_list(e, 'mobility')|join(', ') or '—' }} · flex {{ e.flexibility }} · priorité {{ e.priority }} · {{ e.phone or 'tél. ?' }} · {{ e.telegram or 'Telegram ?' }}</div>
+  </div></div></div>
+  <div class="modal fade" id="emp{{ e.id }}" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">{{ full_name(e) }}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">{{ empform(e, e.id) }}</div></div></div></div>
+{% endfor %}
+</div>
+{% endblock %}

@@ -73,10 +73,11 @@ def role_for(user: User, company: Company) -> Optional[str]:
 # La paie est ISOLÉE : ni « gestion » ni « comptable » ne la voient — seule la rôle « salaires »
 # (et l'admin/superuser pour supervision).
 _CAISSE = {"suivi", "jobs", "clients", "paiements", "config"}   # modules Groupe FDF (TopOrder)
+_PLANNING = {"planning"}                                       # planning des équipes (boulangeries)
 _ODOO = {"odoo", "inqom", "jobs"}                               # modules Groupe ISFAHAAN (Odoo/Inqom × Pennylane)
 _FULL = _CAISSE                                                 # alias historique
 _VDS = {"checkin", "jobs"}                                     # SCI Les Sables du Lagon (villa, Lodgify)
-_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS
+_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS | _PLANNING
 
 # ---- Registre SOCIÉTÉ -> MODULES ----
 # Chaque société n'expose QUE les modules de son groupe : rien n'est partagé par défaut.
@@ -85,7 +86,7 @@ _ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS
 # société Odoo, pas de module Odoo sur une boulangerie, etc.).
 COMPANY_MODULES = {
     # Groupe FDF (boulangeries + labo — TopOrder)
-    "STERNA":    _CAISSE | {"salaires"},
+    "STERNA":    _CAISSE | {"salaires"} | _PLANNING,
     "KOOKABURA": _CAISSE | {"salaires"},
     "PP126.23":  {"salaires"},                 # paie seule
     # Groupe ISFAHAAN (Odoo × Pennylane — PAS de TopOrder)
@@ -117,11 +118,11 @@ def features_for(role: Optional[str], is_superuser: bool = False) -> set:
     if role == "salaires":
         return {"salaires"}
     if role in ("gestion", "viewer"):
-        return {"clients", "paiements", "checkin"}
+        return {"clients", "paiements", "checkin", "planning"}
     if role in ("comptable", "admin", "operator"):
         # le périmètre réel est ENSUITE intersecté avec les modules de la société :
         # un comptable ISFAHAAN ne voit que « odoo », un comptable FDF que la caisse.
-        return _CAISSE | _ODOO | {"treso", "interco"} | _VDS
+        return _CAISSE | _ODOO | {"treso", "interco"} | _VDS | _PLANNING
     return set()
 
 

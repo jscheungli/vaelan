@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}Planning S{{ monday.isocalendar()[1] }} · {{ company.name }}{% endblock %}
+{% block content %}
+<style>
+  .pl-wrap { overflow-x: auto; }
+  .pl-grid { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 980px; table-layout: fixed; }
+  .pl-grid th, .pl-grid td { border-bottom: 1px solid #e3e7ec; border-right: 1px solid #eef1f4; vertical-align: top; padding: 3px 4px; }
+  .pl-grid thead th { position: sticky; top: 0; background: #fff; z-index: 3; font-size: .8rem; text-align: center; }
+  .pl-grid th.first, .pl-grid td.first { position: sticky; left: 0; background: #fff; z-index: 2; width: 178px; font-size: .8rem; }
+  .pl-grid thead th.first { z-index: 4; }
+  .pl-grid td.cell { min-height: 46px; height: 46px; cursor: cell; }
+  .pl-grid td.cell.over { background: #eaf4ff; outline: 2px dashed #6ea8fe; outline-offset: -2px; }
+  .pl-grid td.cell.today { background: #fffdf2; }
+  .pl-grid td.cell.off { background: repeating-linear-gradient(45deg, #fafafa, #fafafa 6px, #f3f3f3 6px, #f3f3f3 12px); }
+  .pl-grid tr.dept th { background: #f4f6f8; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; color: #6b7784; padding: 2px 6px; }
+  .chip { display: block; border-radius: 6px; padding: 2px 5px; margin: 1px 0; font-size: .74rem; line-height: 1.15; cursor: grab; border: 1px solid rgba(0,0,0,.08); color: #1d2b3a; user-select: none; }
+  .chip.abs { background: #e6e8eb !important; color: #55606b; border-style: dashed; }
+  .chip.task { background: #fff !important; border: 1px dashed #8a949e; color: #55606b; }
+  .chip.unassigned { background: #fff !important; border: 2px dashed #dc3545; color: #dc3545; }
+  .chip.draft { opacity: .78; }
+  .chip .t { font-weight: 700; }
+  .chip .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip.dragging { opacity: .4; }
+  .cell .add { display: none; font-size: .7rem; color: #8a949e; text-decoration: none; }
+  .cell:hover .add { display: inline-block; }
+  .tot { font-size: .74rem; text-align: right; white-space: nowrap; }
+  .tot.over { color: #b02a37; font-weight: 600; } .tot.under { color: #8a6d00; } .tot.ok { color: #198754; }
+  .cov { font-size: .7rem; } .cov .miss { color: #b02a37; font-weight: 600; }
+  .name { font-weight: 600; } .sub { font-size: .68rem; color: #8a949e; }
+  .legend .chip { display: inline-block; cursor: default; margin-right: 4px; }
+</style>
+<nav aria-label="breadcrumb"><ol class="breadcrumb small mb-1">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item active">Planning</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <div class="btn-group btn-group-sm">
+    <a class="btn btn-outline-secondary" href="?site={{ site }}&view={{ view }}" onclick="location.href='/c/{{ company.code }}/planning/semaine/{{ prev }}?site={{ site }}&view={{ view }}';return false;"><i class="bi bi-chevron-left"></i></a>
+    <a class="btn btn-outline-secondary" href="/c/{{ company.code }}/planning/semaine/{{ today }}?site={{ site }}&view={{ view }}">Aujourd'hui</a>
+    <a class="btn btn-outline-secondary" href="/c/{{ company.code }}/planning/semaine/{{ next }}?site={{ site }}&view={{ view }}"><i class="bi bi-chevron-right"></i></a>
+  </div>
+  <h1 class="h5 mb-0">Semaine {{ monday.isocalendar()[1] }} <span class="text-muted fw-normal">du {{ monday.strftime('%d/%m') }} au {{ wd.days[6].strftime('%d/%m/%Y') }}</span></h1>
+  <input type="date" class="form-control form-control-sm" style="width:auto" value="{{ monday.isoformat() }}" onchange="location.href='/c/{{ company.code }}/planning/semaine/'+this.value+'?site={{ site }}&view={{ view }}'">
+  <select class="form-select form-select-sm" style="width:auto" onchange="location.href='/c/{{ company.code }}/planning/semaine/{{ monday.isoformat() }}?site='+this.value+'&view={{ view }}'">{% for k, v in sites.items() %}<option value="{{ k }}" {% if k == site %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+  <div class="btn-group btn-group-sm" role="group">
+    <a class="btn {{ 'btn-dark' if view == 'emp' else 'btn-outline-dark' }}" href="?site={{ site }}&view=emp"><i class="bi bi-people"></i> Par salarié</a>
+    <a class="btn {{ 'btn-dark' if view == 'post' else 'btn-outline-dark' }}" href="?site={{ site }}&view=post"><i class="bi bi-grid-3x3"></i> Par poste</a>
+  </div>
+  <span class="badge {{ 'text-bg-success' if wd.published else 'text-bg-secondary' }}" id="pubbadge">{{ 'publiée' if wd.published else 'brouillon' }}</span>
+  <div class="ms-auto d-flex flex-wrap gap-1">
+    <button class="btn btn-sm btn-outline-secondary" id="btnundo" disabled title="Ctrl+Z"><i class="bi bi-arrow-counterclockwise"></i> Annuler</button>
+    <div class="btn-group btn-group-sm"><button class="btn btn-outline-dark dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-files"></i> Copier</button>
+      <ul class="dropdown-menu"><li><a class="dropdown-item" href="#" data-act="copy-prev">Copier la semaine précédente ici</a></li><li><a class="dropdown-item" href="#" data-act="copy-next">Dupliquer cette semaine vers la suivante</a></li></ul></div>
+    <div class="btn-group btn-group-sm"><button class="btn btn-outline-dark dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-magic"></i> Générer</button>
+      <ul class="dropdown-menu"><li><a class="dropdown-item" href="#" data-act="gen-week">Cette semaine (remplace les plages auto en brouillon)</a></li><li><a class="dropdown-item" href="#" data-act="gen-month">Le mois de {{ monday.strftime('%B %Y') }}</a></li><li><a class="dropdown-item" href="#" data-act="gen-4w">Les 4 prochaines semaines</a></li></ul></div>
+    <button class="btn btn-sm btn-outline-danger position-relative" id="btnalerts" data-bs-toggle="offcanvas" data-bs-target="#alerts"><i class="bi bi-exclamation-triangle"></i> Alertes <span class="badge text-bg-danger" id="nalerts">{{ wd.alerts|length }}</span></button>
+    <button class="btn btn-sm {{ 'btn-outline-secondary' if wd.published else 'btn-success' }}" id="btnpub">{{ 'Dépublier' if wd.published else 'Publier la semaine' }}</button>
+    <a class="btn btn-sm btn-warning position-relative" href="/c/{{ company.code }}/planning/incidents?site={{ site }}"><i class="bi bi-life-preserver"></i> Remplacements{% if n_inc %} <span class="badge text-bg-dark">{{ n_inc }}</span>{% endif %}</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/salaries?site={{ site }}"><i class="bi bi-person-lines-fill"></i></a>
+    <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/config?site={{ site }}"><i class="bi bi-gear"></i></a>
+  </div>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<div id="flash"></div>
+<div class="card shadow-sm"><div class="pl-wrap"><table class="pl-grid" id="grid"><thead></thead><tbody></tbody><tfoot></tfoot></table></div></div>
+<div class="small text-muted mt-2 legend"><span id="legend"></span> · glisser une plage pour la déplacer · <kbd>Alt</kbd> + glisser pour la dupliquer · cliquer une plage pour la modifier · <b>+</b> dans une case pour ajouter</div>
+
+<div class="offcanvas offcanvas-end" tabindex="-1" id="alerts"><div class="offcanvas-header"><h5 class="offcanvas-title">Alertes de la semaine</h5><button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button></div><div class="offcanvas-body small" id="alertlist"></div></div>
+
+<div class="modal fade" id="shm" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title" id="shm-title">Plage</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body small">
+    <input type="hidden" id="shm-id"><input type="hidden" id="shm-date">
+    <div class="row g-2">
+      <div class="col-6"><label class="form-label mb-0">Salarié</label><select class="form-select form-select-sm" id="shm-emp"></select></div>
+      <div class="col-6"><label class="form-label mb-0">Type</label><select class="form-select form-select-sm" id="shm-kind"><option value="work">Travail</option><option value="absence">Absence</option><option value="task">Tâche / événement</option></select></div>
+      <div class="col-12" id="shm-postwrap"><label class="form-label mb-0">Poste</label><select class="form-select form-select-sm" id="shm-post"></select></div>
+      <div class="col-12 d-none" id="shm-abswrap"><label class="form-label mb-0">Type d'absence</label><select class="form-select form-select-sm" id="shm-abs"></select></div>
+      <div class="col-12 d-none" id="shm-taskwrap"><label class="form-label mb-0">Libellé</label><input class="form-control form-control-sm" id="shm-task" placeholder="Livraison, formation, visite médicale…"></div>
+      <div class="col-4" id="shm-t1"><label class="form-label mb-0">Début</label><input type="time" class="form-control form-control-sm" id="shm-start"></div>
+      <div class="col-4" id="shm-t2"><label class="form-label mb-0">Fin</label><input type="time" class="form-control form-control-sm" id="shm-end"></div>
+      <div class="col-4" id="shm-t3"><label class="form-label mb-0">Pause (h)</label><input type="number" step="0.25" min="0" class="form-control form-control-sm" id="shm-pause"></div>
+      <div class="col-4 d-none" id="shm-hwrap"><label class="form-label mb-0">Heures valorisées</label><input type="number" step="0.25" class="form-control form-control-sm" id="shm-hours" value="7"></div>
+      <div class="col-12"><label class="form-label mb-0">Note</label><input class="form-control form-control-sm" id="shm-note"></div>
+    </div>
+  </div>
+  <div class="modal-footer justify-content-between">
+    <div><button class="btn btn-sm btn-outline-danger" id="shm-del">Supprimer</button> <button class="btn btn-sm btn-outline-secondary" id="shm-dup" title="Copie la plage au jour suivant">Dupliquer → J+1</button></div>
+    <button class="btn btn-sm btn-dark" id="shm-save">Enregistrer</button>
+  </div>
+</div></div></div>
+
+<div class="modal fade" id="addm" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content"><div class="modal-header py-2"><h6 class="modal-title" id="addm-title">Ajouter</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body small" id="addm-body"></div></div></div></div>
+
+<script>
+const CODE = {{ company.code|tojson }}, SITE = {{ site|tojson }}, MONDAY = {{ monday.isoformat()|tojson }}, VIEW = {{ view|tojson }};
+const API = `/c/${CODE}/planning/api`;
+const DAYS = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"];
+let D = null, undo = [];
+const $ = (s, r = document) => r.querySelector(s);
+const flash = (t, cls = "success") => { const f = $("#flash"); f.innerHTML = `<div class="alert alert-${cls} py-1 small mb-2">${t}</div>`; setTimeout(() => f.innerHTML = "", 3500); };
+const api = async (path, method = "GET", body) => { const r = await fetch(API + path + (path.includes("?") ? "&" : "?") + "site=" + SITE, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined }); if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || r.status); } return r.json(); };
+const load = async () => { D = await api(`/week/${MONDAY}`); render(); };
+const post = k => D.posts.find(p => p.key === k);
+const emp = id => D.employees.find(e => e.id === id);
+const short = e => e ? `${e.first} ${e.last.slice(0, 1)}.` : "—";
+const fmtH = h => (Math.round(h * 4) / 4).toFixed(2).replace(/\.?0+$/, "").replace(".", ",") + " h";
+const label = k => { const p = post(k); return p ? p.label : (k || "").replace(/_/g, " "); };
+
+function chipHtml(s, mode) {
+  const p = post(s.post_key); const e = emp(s.employee_id);
+  let cls = "chip", style = "";
+  if (s.kind === "absence") cls += " abs"; else if (s.kind === "task") cls += " task"; else if (!s.employee_id) cls += " unassigned"; else style = `background:${p ? p.color : "#ddd"}`;
+  if (s.status === "draft") cls += " draft";
+  const title = s.kind === "work" ? `${label(s.post_key)} ${s.start}-${s.end} · ${fmtH(s.hours)}${s.note ? " · " + s.note : ""}` : `${s.post_key || ""}${s.note ? " · " + s.note : ""}`;
+  const t = s.kind === "absence" ? `<span class="t">${s.post_key || "Absence"}</span> <span class="sub">(${fmtH(s.hours)})</span>` : `<span class="t">${s.start}–${s.end}</span>`;
+  const l = mode === "emp" ? (s.kind === "absence" ? "" : `<span class="l">${s.kind === "task" ? s.post_key : label(s.post_key)}</span>`) : `<span class="l">${s.employee_id ? short(e) : "non assigné"}</span>`;
+  return `<div class="${cls}" style="${style}" draggable="true" data-id="${s.id}" title="${title.replace(/"/g, "'")}">${t}${l}</div>`;
+}
+
+function render() {
+  const thead = $("#grid thead"), tbody = $("#grid tbody"), tfoot = $("#grid tfoot");
+  const today = new Date().toISOString().slice(0, 10);
+  thead.innerHTML = `<tr><th class="first">${VIEW === "emp" ? "Salarié" : "Poste"}</th>${D.days.map((d, i) => `<th class="${d === today ? "text-primary" : ""}">${DAYS[i]} <span class="text-muted">${d.slice(8, 10)}/${d.slice(5, 7)}</span></th>`).join("")}<th style="width:86px">${VIEW === "emp" ? "Semaine" : ""}</th></tr>`;
+  const byCell = {};
+  D.shifts.forEach(s => { const k = VIEW === "emp" ? `${s.employee_id || 0}|${s.date}` : `${s.kind === "work" ? s.post_key : "_" + s.kind}|${s.date}`; (byCell[k] = byCell[k] || []).push(s); });
+  let rows = "";
+  if (VIEW === "emp") {
+    const groups = {}; const order = ["admin", "vente", "traiteur", "patisserie", "boulangerie", "autre"];
+    D.employees.forEach(e => { const p = post(e.primary); const g = p ? p.department : "autre"; (groups[g] = groups[g] || []).push(e); });
+    const un = D.shifts.filter(s => s.kind === "work" && !s.employee_id);
+    if (un.length) rows += `<tr class="dept"><th class="first" colspan="9"><span class="text-danger">Non assigné (${un.length})</span></th></tr>` + rowHtml({ id: 0, name: "Non assigné" }, byCell, true);
+    order.forEach(g => { if (!groups[g]) return; rows += `<tr class="dept"><th class="first" colspan="9">${g}</th></tr>`; groups[g].forEach(e => rows += rowHtml(e, byCell, false)); });
+  } else {
+    const used = new Set(D.shifts.filter(s => s.kind === "work").map(s => s.post_key));
+    D.posts.filter(p => p.active || used.has(p.key)).forEach(p => {
+      rows += `<tr><td class="first"><span class="badge" style="background:${p.color};color:#222">${p.label}</span><div class="sub">${p.start}–${p.end}</div></td>`;
+      D.days.forEach((d, i) => {
+        const need = (D.need[d] || {})[p.key] || 0, have = (D.have[d] || {})[p.key] || 0;
+        const chips = (byCell[`${p.key}|${d}`] || []).map(s => chipHtml(s, "post")).join("");
+        const miss = need > have ? `<span class="cov"><span class="miss">${have}/${need}</span></span>` : (need ? `<span class="cov text-success">${have}/${need}</span>` : "");
+        rows += `<td class="cell ${d === today ? "today" : ""}" data-date="${d}" data-post="${p.key}">${chips}<div class="d-flex justify-content-between">${miss}<a href="#" class="add" data-date="${d}" data-post="${p.key}">+ ajouter</a></div></td>`;
+      });
+      rows += `<td></td></tr>`;
+    });
+    const absRows = [["_absence", "Absences"], ["_task", "Tâches"]];
+    absRows.forEach(([k, lbl]) => { const any = D.days.some(d => byCell[`${k}|${d}`]); if (!any) return;
+      rows += `<tr><td class="first text-muted">${lbl}</td>${D.days.map(d => `<td class="cell" data-date="${d}">${(byCell[`${k}|${d}`] || []).map(s => chipHtml(s, "post")).join("")}</td>`).join("")}<td></td></tr>`; });
+  }
+  tbody.innerHTML = rows;
+  // pied : couverture par jour
+  tfoot.innerHTML = `<tr><td class="first text-muted small">Couverture</td>${D.days.map(d => { const need = D.need[d] || {}; const missing = Object.entries(need).filter(([k, n]) => ((D.have[d] || {})[k] || 0) < n); return `<td class="cov">${Object.keys(need).length === 0 ? '<span class="text-muted">fermé</span>' : (missing.length ? missing.map(([k, n]) => `<span class="miss">${label(k)} ${(D.have[d] || {})[k] || 0}/${n}</span>`).join("<br>") : '<span class="text-success"><i class="bi bi-check2"></i> complète</span>')}</td>`; }).join("")}<td></td></tr>`;
+  $("#legend").innerHTML = D.posts.filter(p => p.active).map(p => `<span class="chip" style="background:${p.color}">${p.label}</span>`).join("");
+  $("#nalerts").textContent = D.alerts.length;
+  $("#alertlist").innerHTML = D.alerts.length ? D.alerts.map(a => `<div class="mb-1"><span class="badge text-bg-${a.level}">&nbsp;</span> ${a.text}</div>`).join("") : '<div class="text-success">Aucune alerte : la semaine respecte les règles configurées.</div>';
+  $("#pubbadge").className = "badge " + (D.published ? "text-bg-success" : "text-bg-secondary"); $("#pubbadge").textContent = D.published ? "publiée" : "brouillon";
+  $("#btnpub").textContent = D.published ? "Dépublier" : "Publier la semaine"; $("#btnpub").className = "btn btn-sm " + (D.published ? "btn-outline-secondary" : "btn-success");
+  bind();
+}
+function rowHtml(e, byCell, unassigned) {
+  const t = D.totals[String(e.id)] || {};
+  let cls = "ok"; if (t.contract) { if (t.work > t.contract + (D.rules.overtime_tolerance || 3)) cls = "over"; else if (t.work < t.contract - 4) cls = "under"; }
+  const tot = unassigned ? "" : `<div class="tot ${cls}">${fmtH(t.work || 0)} / ${Math.round(t.contract || 0)} h<br><span class="sub">${t.days || 0} j${t.absence ? " · abs " + fmtH(t.absence) : ""}</span></div>`;
+  const sub = unassigned ? "" : `<div class="sub">${e.type} · ${Math.round(e.contract)} h${e.site !== SITE ? " · " + e.site : ""}</div>`;
+  return `<tr><td class="first"><span class="name">${unassigned ? '<span class="text-danger">Non assigné</span>' : e.name}</span>${sub}</td>` +
+    D.days.map((d, i) => { const off = !unassigned && ((e.days_off || []).includes(i) || (e.cfa || []).includes(i) || (i === 6 && e.sunday === "non"));
+      return `<td class="cell ${off ? "off" : ""} ${d === new Date().toISOString().slice(0, 10) ? "today" : ""}" data-date="${d}" data-emp="${e.id}">${(byCell[`${e.id}|${d}`] || []).map(s => chipHtml(s, "emp")).join("")}<a href="#" class="add" data-date="${d}" data-emp="${e.id}">+</a></td>`; }).join("") + `<td>${tot}</td></tr>`;
+}
+
+// ---------- interactions
+let dragId = null;
+function bind() {
+  document.querySelectorAll(".chip[draggable]").forEach(c => {
+    c.addEventListener("dragstart", ev => { dragId = +c.dataset.id; c.classList.add("dragging"); ev.dataTransfer.effectAllowed = "copyMove"; });
+    c.addEventListener("dragend", () => { c.classList.remove("dragging"); document.querySelectorAll(".cell.over").forEach(x => x.classList.remove("over")); });
+    c.addEventListener("click", ev => { ev.preventDefault(); openShift(D.shifts.find(s => s.id === +c.dataset.id)); });
+  });
+  document.querySelectorAll("td.cell").forEach(td => {
+    td.addEventListener("dragover", ev => { ev.preventDefault(); td.classList.add("over"); ev.dataTransfer.dropEffect = ev.altKey ? "copy" : "move"; });
+    td.addEventListener("dragleave", () => td.classList.remove("over"));
+    td.addEventListener("drop", async ev => { ev.preventDefault(); td.classList.remove("over"); if (!dragId) return;
+      const s = D.shifts.find(x => x.id === dragId); const body = { date: td.dataset.date, copy: !!ev.altKey };
+      if (VIEW === "emp") { if (td.dataset.emp !== undefined) body.employee_id = +td.dataset.emp || null; } else { if (td.dataset.post) body.post_key = td.dataset.post; }
+      if (!body.copy && body.date === s.date && (body.employee_id === undefined || body.employee_id === s.employee_id) && (!body.post_key || body.post_key === s.post_key)) return;
+      const before = { ...s };
+      const res = await api(`/shift/${dragId}/move`, "POST", body);
+      if (body.copy) undo.push({ label: "duplication", run: () => api(`/shift/${res.id}`, "DELETE") });
+      else undo.push({ label: "déplacement", run: () => api(`/shift/${dragId}/move`, "POST", { date: before.date, employee_id: before.employee_id, post_key: before.post_key }) });
+      $("#btnundo").disabled = false; dragId = null; await load(); });
+  });
+  document.querySelectorAll("a.add").forEach(a => a.addEventListener("click", ev => { ev.preventDefault(); quickAdd(a.dataset); }));
+}
+function quickAdd(ds) {
+  const body = $("#addm-body"); const m = new bootstrap.Modal($("#addm"));
+  $("#addm-title").textContent = `${DAYS[new Date(ds.date).getDay() === 0 ? 6 : new Date(ds.date).getDay() - 1]} ${ds.date.slice(8, 10)}/${ds.date.slice(5, 7)}`;
+  if (VIEW === "emp") {
+    const e = emp(+ds.emp); const mine = e ? e.posts : {};
+    const sorted = D.posts.filter(p => p.active).sort((a, b) => ((mine[b.key] || 0) - (mine[a.key] || 0)) || (a.sort - b.sort));
+    body.innerHTML = `<div class="mb-1 text-muted">${e ? e.name : "Non assigné"} — choisir un gabarit :</div>` + sorted.map(p => `<button class="btn btn-sm w-100 text-start mb-1" style="background:${p.color};opacity:${mine[p.key] ? 1 : .55}" data-post="${p.key}"><b>${p.label}</b> <span class="small">${p.start}–${p.end}${mine[p.key] ? " · niveau " + mine[p.key] : ""}</span></button>`).join("") +
+      `<hr class="my-2"><button class="btn btn-sm btn-outline-secondary w-100 text-start" data-abs="1">Absence…</button> <button class="btn btn-sm btn-outline-secondary w-100 text-start mt-1" data-task="1">Tâche / événement…</button>`;
+    body.querySelectorAll("[data-post]").forEach(b => b.addEventListener("click", async () => { const p = post(b.dataset.post); await create({ date: ds.date, employee_id: +ds.emp || null, kind: "work", post_key: p.key, start: p.start, end: p.end, pause: p.pause }); m.hide(); }));
+    body.querySelector("[data-abs]").addEventListener("click", () => { m.hide(); openShift({ id: null, date: ds.date, employee_id: +ds.emp || null, kind: "absence", post_key: "Congé payé", hours: 7 }); });
+    body.querySelector("[data-task]").addEventListener("click", () => { m.hide(); openShift({ id: null, date: ds.date, employee_id: +ds.emp || null, kind: "task", post_key: "", start: "13:00", end: "13:30", pause: 0 }); });
+  } else {
+    const p = post(ds.post); const busy = new Set(D.shifts.filter(s => s.date === ds.date && s.employee_id).map(s => s.employee_id));
+    const cands = D.employees.filter(e => (e.posts[p.key] || 0) > 0).sort((a, b) => (busy.has(a.id) - busy.has(b.id)) || (b.posts[p.key] - a.posts[p.key]));
+    body.innerHTML = `<div class="mb-1 text-muted">${p.label} ${p.start}–${p.end} — qui ?</div>` + cands.map(e => `<button class="btn btn-sm w-100 text-start mb-1 ${busy.has(e.id) ? "btn-outline-secondary" : "btn-outline-dark"}" data-emp="${e.id}">${e.name} <span class="small text-muted">niveau ${e.posts[p.key]}${busy.has(e.id) ? " · déjà planifié ce jour" : ""}</span></button>`).join("") +
+      `<button class="btn btn-sm btn-outline-danger w-100 text-start" data-emp="0">Créer non assignée</button>`;
+    body.querySelectorAll("[data-emp]").forEach(b => b.addEventListener("click", async () => { await create({ date: ds.date, employee_id: +b.dataset.emp || null, kind: "work", post_key: p.key, start: p.start, end: p.end, pause: p.pause }); m.hide(); }));
+  }
+  m.show();
+}
+async function create(b) { const res = await api("/shift", "POST", b); undo.push({ label: "ajout", run: () => api(`/shift/${res.id}`, "DELETE") }); $("#btnundo").disabled = false; await load(); }
+let shModal;
+function openShift(s) {
+  shModal = shModal || new bootstrap.Modal($("#shm"));
+  $("#shm-title").textContent = (s.id ? "Modifier la plage" : "Nouvelle plage") + ` — ${DAYS[(new Date(s.date).getDay() + 6) % 7]} ${s.date.slice(8, 10)}/${s.date.slice(5, 7)}`;
+  $("#shm-id").value = s.id || ""; $("#shm-date").value = s.date;
+  $("#shm-emp").innerHTML = `<option value="">— non assigné —</option>` + D.employees.map(e => `<option value="${e.id}" ${e.id === s.employee_id ? "selected" : ""}>${e.name}</option>`).join("");
+  $("#shm-kind").value = s.kind;
+  $("#shm-post").innerHTML = D.posts.map(p => `<option value="${p.key}" ${p.key === s.post_key ? "selected" : ""}>${p.label}${p.active ? "" : " (inactif)"}</option>`).join("");
+  $("#shm-abs").innerHTML = D.absence_types.map(a => `<option ${a === s.post_key ? "selected" : ""}>${a}</option>`).join("");
+  $("#shm-task").value = s.kind === "task" ? (s.post_key || "") : "";
+  $("#shm-start").value = s.start || ""; $("#shm-end").value = s.end || ""; $("#shm-pause").value = s.pause ?? 0; $("#shm-hours").value = s.hours || 7; $("#shm-note").value = s.note || "";
+  $("#shm-del").style.display = s.id ? "" : "none"; $("#shm-dup").style.display = s.id ? "" : "none";
+  kindUi(); shModal.show();
+}
+function kindUi() { const k = $("#shm-kind").value; $("#shm-postwrap").classList.toggle("d-none", k !== "work"); $("#shm-abswrap").classList.toggle("d-none", k !== "absence"); $("#shm-taskwrap").classList.toggle("d-none", k !== "task");
+  ["#shm-t1", "#shm-t2", "#shm-t3"].forEach(i => $(i).classList.toggle("d-none", k === "absence")); $("#shm-hwrap").classList.toggle("d-none", k !== "absence"); }
+$("#shm-kind").addEventListener("change", kindUi);
+$("#shm-post").addEventListener("change", () => { const p = post($("#shm-post").value); if (p && !$("#shm-id").value) { $("#shm-start").value = p.start; $("#shm-end").value = p.end; $("#shm-pause").value = p.pause; } });
+$("#shm-save").addEventListener("click", async () => {
+  const k = $("#shm-kind").value; const id = +$("#shm-id").value || null; const before = id ? { ...D.shifts.find(s => s.id === id) } : null;
+  const b = { id, date: $("#shm-date").value, employee_id: +$("#shm-emp").value || null, kind: k, post_key: k === "work" ? $("#shm-post").value : (k === "absence" ? $("#shm-abs").value : $("#shm-task").value || "Tâche"),
+    start: $("#shm-start").value, end: $("#shm-end").value, pause: +$("#shm-pause").value || 0, hours: +$("#shm-hours").value || 7, note: $("#shm-note").value, status: before ? before.status : "draft" };
+  if (k !== "absence" && (!b.start || !b.end)) { flash("Début et fin sont obligatoires.", "danger"); return; }
+  const res = await api("/shift", "POST", b);
+  undo.push(before ? { label: "modification", run: () => api("/shift", "POST", before) } : { label: "ajout", run: () => api(`/shift/${res.id}`, "DELETE") }); $("#btnundo").disabled = false;
+  shModal.hide(); await load();
+});
+$("#shm-del").addEventListener("click", async () => { const id = +$("#shm-id").value; const before = { ...D.shifts.find(s => s.id === id) }; delete before.id; await api(`/shift/${id}`, "DELETE"); undo.push({ label: "suppression", run: () => api("/shift", "POST", before) }); $("#btnundo").disabled = false; shModal.hide(); await load(); });
+$("#shm-dup").addEventListener("click", async () => { const id = +$("#shm-id").value; const s = D.shifts.find(x => x.id === id); const d = new Date(s.date); d.setDate(d.getDate() + 1); const res = await api(`/shift/${id}/move`, "POST", { date: d.toISOString().slice(0, 10), copy: true }); undo.push({ label: "duplication", run: () => api(`/shift/${res.id}`, "DELETE") }); $("#btnundo").disabled = false; shModal.hide(); await load(); });
+$("#btnundo").addEventListener("click", async () => { const u = undo.pop(); if (!u) return; await u.run(); flash(`Annulé : ${u.label}.`); $("#btnundo").disabled = !undo.length; await load(); });
+document.addEventListener("keydown", ev => { if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z" && !ev.target.matches("input,textarea,select")) { ev.preventDefault(); $("#btnundo").click(); } });
+document.querySelectorAll("[data-act]").forEach(a => a.addEventListener("click", async ev => { ev.preventDefault(); const act = a.dataset.act; const m = new Date(MONDAY);
+  const iso = d => d.toISOString().slice(0, 10); const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  try {
+    if (act === "copy-prev") { if (!confirm("Remplacer les plages de cette semaine par une copie de la semaine précédente ?")) return; const r = await api(`/week/${MONDAY}/copy`, "POST", { from: iso(addDays(m, -7)) }); flash(`${r.copied} plages copiées.`); }
+    if (act === "copy-next") { if (!confirm("Dupliquer cette semaine vers la semaine suivante (remplace ses plages) ?")) return; const r = await api(`/week/${iso(addDays(m, 7))}/copy`, "POST", { from: MONDAY }); flash(`${r.copied} plages dupliquées vers la semaine suivante.`); }
+    if (act.startsWith("gen")) { let from = m, to = addDays(m, 6); if (act === "gen-month") { from = new Date(m.getFullYear(), m.getMonth(), 1); to = new Date(m.getFullYear(), m.getMonth() + 1, 0); } if (act === "gen-4w") to = addDays(m, 27);
+      if (!confirm(`Générer du ${iso(from)} au ${iso(to)} ? Les plages générées automatiquement encore en brouillon sont remplacées ; vos plages manuelles et publiées sont conservées.`)) return;
+      const r = await api("/generate", "POST", { from: iso(from), to: iso(to) }); flash(`${r.created} plages générées, ${r.assigned} assignées${r.unassigned.length ? ", " + r.unassigned.length + " sans personne disponible" : ""}.`); }
+    await load();
+  } catch (e) { flash("Erreur : " + e.message, "danger"); } }));
+$("#btnpub").addEventListener("click", async () => { const r = await api(`/week/${MONDAY}/publish`, "POST", { unpublish: D.published }); flash(D.published ? "Semaine repassée en brouillon." : `Semaine publiée (${r.updated} plages).`); await load(); });
+load();
+</script>
+{% endblock %}

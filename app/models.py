@@ -5,6 +5,7 @@ est rattachée à un ImportBatch (réversibilité / traçabilité). Le métier d
 packs s'appuiera sur ces tables + ses propres tables au besoin.
 """
 from datetime import datetime, date
+import datetime as _dt
 from typing import Optional
 from sqlalchemy import BigInteger, LargeBinary, Column
 from sqlmodel import SQLModel, Field
@@ -388,3 +389,89 @@ class VdsMessage(SQLModel, table=True):
     status: str = "sent"                                   # sent / error / skipped
     error: Optional[str] = None
     sent_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# =============================== Planning des équipes (boulangeries) ===============================
+class PlEmployee(SQLModel, table=True):
+    """Salarié planifiable. `posts` = {clé de poste: niveau 1-3} (3 = poste principal), `days_off` = jours fixes
+    non travaillés (0=lundi), `cfa_days` = jours de CFA (apprentis), `pattern` = présence observée par jour (%)."""
+    __tablename__ = "pl_employees"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    site: str = Field(index=True)                          # SL / LP / SM
+    first_name: str
+    last_name: str
+    contract_type: str = "CDI"                             # CDI / CDD / Apprenti / Stage
+    weekly_hours: float = 35.0
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    active: bool = True
+    posts: str = "{}"                                      # JSON {post_key: level}
+    days_off: str = "[]"                                   # JSON [weekday]
+    cfa_days: str = "[]"                                   # JSON [weekday]
+    pattern: str = "{}"                                    # JSON {weekday: % présence observée}
+    sunday: str = "oui"                                    # oui / non
+    max_days: int = 5                                      # jours travaillés max par semaine
+    mobility: str = "[]"                                   # JSON [site] où la personne accepte d'aller
+    flexibility: int = 2                                   # 1 peu · 2 normal · 3 très flexible
+    priority: int = 5                                      # ordre d'appel pour un remplacement (1 = en premier)
+    phone: Optional[str] = None
+    telegram: Optional[str] = None
+    note: Optional[str] = None
+    source: str = "manual"                                 # manual / skello
+    external_key: Optional[str] = Field(default=None, index=True)   # « Prénom NOM » Skello
+
+
+class PlPost(SQLModel, table=True):
+    """Poste de travail (gabarit de plage) : horaires par défaut, pause, couleur."""
+    __tablename__ = "pl_posts"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    site: str = Field(index=True)
+    key: str = Field(index=True)
+    label: str
+    department: str = "vente"                              # vente / boulangerie / patisserie / traiteur / admin / autre
+    color: str = "#ffd23f"
+    start: str = "05:15"
+    end: str = "14:00"
+    pause: float = 0.5
+    active: bool = True                                    # proposé dans les gabarits / la génération
+    sort: int = 100
+
+
+class PlShift(SQLModel, table=True):
+    """Plage planifiée (travail), absence ou tâche. employee_id vide = plage non assignée."""
+    __tablename__ = "pl_shifts"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    site: str = Field(index=True)
+    employee_id: Optional[int] = Field(default=None, foreign_key="pl_employees.id", index=True)
+    date: _dt.date = Field(index=True)                     # (annotation via le module : le nom du champ masque le type)
+    kind: str = "work"                                     # work / absence / task
+    post_key: Optional[str] = None                         # travail : poste ; absence : type d'absence ; tâche : libellé
+    start: Optional[str] = None                            # "05:15" (travail / tâche)
+    end: Optional[str] = None
+    pause: float = 0.0
+    hours: float = 0.0                                     # heures valorisées (travail effectif, ou valeur de l'absence)
+    note: Optional[str] = None
+    status: str = "draft"                                  # draft / published
+    source: str = "manual"                                 # manual / auto / import / replacement
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PlIncident(SQLModel, table=True):
+    """Absence imprévue → recherche de remplaçant guidée (plans A, B, C…)."""
+    __tablename__ = "pl_incidents"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    site: str = Field(index=True)
+    employee_id: int = Field(foreign_key="pl_employees.id", index=True)
+    date_from: date
+    date_to: date
+    reason: str = "maladie"
+    status: str = "open"                                   # open / resolved / closed
+    plan: str = "{}"                                       # JSON : plages touchées, candidats par plan, réponses
+    created_by: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
