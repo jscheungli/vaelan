@@ -62,7 +62,7 @@ def _wizard_ctx(request, company, cfg, step):
     from datetime import date as _date
     hol = {y: pcfg.holiday_dates(y) for y in (_date.today().year, _date.today().year + 1)}
     return _ctx(request, company=company, cfg=cfg, step=step, steps=pcfg.WIZARD_STEPS, sites=pcfg.SITES, site=site, holiday_types=pcfg.HOLIDAY_TYPES,
-                holiday_dates=hol, level_labels=pcfg.LEVEL_LABELS,
+                holiday_dates=hol, level_max=pcfg.LEVEL_MAX, coverage=service.site_coverage(cfg, site),
                 days=pcfg.DAYS, days_short=pcfg.DAYS_SHORT, posts=service.posts(code_or(company), site), seasons=pcfg.SEASONS,
                 employees=service.employees(code_or(company), site, active_only=False), e_posts=service.e_posts, e_list=service.e_list,
                 full_name=service.full_name, post_keys=[p.key for p in service.posts(code_or(company), site)], json=json)
@@ -98,18 +98,13 @@ async def planning_config_save(request: Request, code: str, step: int):
     f = lambda k, d=0.0: float(str(g(k, d)).replace(",", "."))
     upd = {}
     if step == 1:
-        upd["opening"] = {str(wd): [g(f"open_{wd}", "05:15"), g(f"close_{wd}", "20:30")] for wd in range(7)}
-        upd["closed_sunday_afternoon"] = bool(g("closed_sunday_afternoon"))
-        upd["other_sites"] = [s for s in pcfg.SITES if g(f"other_{s}")]
-        upd["site"] = site
-    elif step == 2:
         for p in service.posts(code, site):
             service.save_post(p.id, code, site, label=g(f"label_{p.id}", p.label), start=g(f"start_{p.id}", p.start), end=g(f"end_{p.id}", p.end),
                               pause=f(f"pause_{p.id}", p.pause), color=g(f"color_{p.id}", p.color), active=bool(g(f"active_{p.id}")))
         if g("new_label"):
             service.save_post(None, code, site, label=g("new_label"), department=g("new_department", "autre"), start=g("new_start", "08:00"),
                               end=g("new_end", "16:00"), pause=f("new_pause", 0.5), color=g("new_color", "#cccccc"), active=True, sort=90)
-    elif step == 3:
+    elif step == 2:
         cov = {}
         for season in pcfg.SEASONS:
             cov[season] = {}
@@ -117,45 +112,25 @@ async def planning_config_save(request: Request, code: str, step: int):
                 vals = [int(g(f"cov_{season}_{p.key}_{wd}", 0) or 0) for wd in range(7)]
                 if any(vals) or season == "default":
                     cov[season][p.key] = vals
-        cfg["coverage"] = cov
-        upd["coverage"] = cov
-    elif step == 4:
-        upd["rules"] = {"day_max_hours": f("day_max_hours", 10), "day_max_span": f("day_max_span", 13), "week_max_hours": f("week_max_hours", 48),
-                        "avg12_max_hours": f("avg12_max_hours", 44), "modulation_min": f("modulation_min", 24), "modulation_max": f("modulation_max", 46),
-                        "rest_min_hours": f("rest_min_hours", 11), "rest_days_per_week": int(f("rest_days_per_week", 2)), "consecutive_max_days": int(f("consecutive_max_days", 6)),
-                        "default_pause": f("default_pause", 0.5), "split_days_allowed": bool(g("split_days_allowed")), "overtime_tolerance": f("overtime_tolerance", 3)}
-    elif step == 5:
-        upd["sunday"] = {"max_share": f("sunday_max_share", 0.5), "consecutive_max": int(f("sunday_consecutive_max", 2)), "premium_pct": f("sunday_premium", 0)}
+        if site == cfg.get("site"):
+            upd["coverage"] = cov
+        else:
+            cbs = dict(cfg.get("coverage_by_site") or {})
+            cbs[site] = cov
+            upd["coverage_by_site"] = cbs
+    elif step == 3:
+        upd["rules"] = {"day_max_hours": f("day_max_hours", 10), "week_max_hours": f("week_max_hours", 48), "avg12_max_hours": f("avg12_max_hours", 44),
+                        "rest_min_hours": f("rest_min_hours", 11), "consecutive_max_days": int(f("consecutive_max_days", 6)), "overtime_tolerance": f("overtime_tolerance", 3)}
+        upd["sunday"] = {"max_share": f("sunday_max_share", 0.5), "consecutive_max": int(f("sunday_consecutive_max", 2)), "premium_pct": f("sunday_premium", 20)}
         upd["night"] = {"start": g("night_start", "20:00"), "end": g("night_end", "06:00"), "premium_pct": f("night_premium", 25)}
-        types = [k for k, _, _, _ in pcfg.HOLIDAY_TYPES if g(f"hol_{k}")]
-        closed = [k for k, _, _, _ in pcfg.HOLIDAY_TYPES if g(f"holclosed_{k}")]
-        upd["holidays"] = {"types": types, "closed_types": closed, "premium_pct": f("holiday_premium", 100), "compensation": bool(g("holiday_compensation")),
-                           "confirm_days": int(f("holiday_confirm_days", 21))}
-    elif step == 6:
-        upd["supervision"] = {"manager_posts": [p.key for p in service.posts(code, site) if g(f"mgr_{p.key}")], "manager_required": bool(g("manager_required")),
-                              "manager_at_opening": bool(g("manager_at_opening")), "apprentice_never_alone": bool(g("apprentice_never_alone"))}
+        upd["holidays"] = {"types": [k for k, _, _, _ in pcfg.HOLIDAY_TYPES if g(f"hol_{k}")], "closed_types": [k for k, _, _, _ in pcfg.HOLIDAY_TYPES if g(f"holclosed_{k}")],
+                           "premium_pct": f("holiday_premium", 100), "compensation": bool(g("holiday_compensation")), "confirm_days": int(f("holiday_confirm_days", 21))}
+        upd["supervision"] = {"manager_posts": [p.key for p in service.posts(code, site) if g(f"mgr_{p.key}")], "manager_required": bool(g("manager_required"))}
+        upd["publication"] = {"horizon_weeks": int(f("horizon_weeks", 2))}
+    elif step == 4:
         for e in service.employees(code, site, active_only=False):
-            if e.contract_type in ("Apprenti", "Stage"):
-                cfa = [wd for wd in range(7) if g(f"cfa_{e.id}_{wd}")]
-                service.save_employee(e.id, code, cfa_days=json.dumps(cfa))
-    elif step == 7:
-        for e in service.employees(code, site, active_only=False):
-            posts = {}
-            for p in service.posts(code, site):
-                lvl = int(g(f"lvl_{e.id}_{p.key}", 0) or 0)
-                if lvl:
-                    posts[p.key] = lvl
-            service.save_employee(e.id, code, posts=json.dumps(posts), sunday=g(f"sunday_{e.id}", "oui"), max_days=int(f(f"maxdays_{e.id}", e.max_days)),
-                                  days_off=json.dumps([wd for wd in range(7) if g(f"off_{e.id}_{wd}")]),
-                                  mobility=json.dumps([s for s in pcfg.SITES if s != site and g(f"mob_{e.id}_{s}")]),
-                                  flexibility=int(f(f"flex_{e.id}", e.flexibility)), priority=int(f(f"prio_{e.id}", e.priority)),
-                                  phone=g(f"phone_{e.id}"), telegram=g(f"tg_{e.id}"), active=bool(g(f"active_{e.id}")),
-                                  weekly_hours=f(f"hours_{e.id}", e.weekly_hours))
-    elif step == 8:
-        upd["replacement"] = {"immediate_if_days": int(f("immediate_if_days", 1)), "delay_hours": f("delay_hours", 24), "parallel": int(f("parallel", 3)), "answer_minutes": int(f("answer_minutes", 30))}
-        upd["publication"] = {"notice_days": int(f("notice_days", 7)), "horizon_weeks": int(f("horizon_weeks", 2))}
-        upd["counters"] = {"period": g("counter_period", "annuelle"), "alert_hours": f("counter_alert", 20)}
-    elif step == 9:
+            _save_employee_form(code, site, e, form)
+    elif step == 5:
         upd["validated_at"] = datetime.utcnow().isoformat()
         service.save_config(upd, code)
         return RedirectResponse(f"/c/{code}/planning/semaine/{service.week_monday(date.today()).isoformat()}?site={site}&msg=Configuration validée : mode automatique actif.", status_code=303)
@@ -163,8 +138,31 @@ async def planning_config_save(request: Request, code: str, step: int):
     upd["wizard_step"] = max(int(cfg.get("wizard_step") or 1), nxt)
     service.save_config(upd, code)
     if form.get("action") == "stay":
-        return RedirectResponse(f"/c/{code}/planning/config?step={step}&msg=Enregistré.", status_code=303)
-    return RedirectResponse(f"/c/{code}/planning/config?step={nxt}", status_code=303)
+        return RedirectResponse(f"/c/{code}/planning/config?step={step}&site={site}&msg=Enregistré.", status_code=303)
+    return RedirectResponse(f"/c/{code}/planning/config?step={nxt}&site={site}", status_code=303)
+
+
+def _save_employee_form(code: str, site: str, e, form, prefix: str = None) -> None:
+    """Champs d'une fiche salarié (questionnaire : préfixe `<id>_` ; fiche individuelle : sans préfixe)."""
+    pre = f"{e.id}_" if prefix is None else prefix
+    g = lambda k, d=None: (form.get(pre + k) if form.get(pre + k) not in (None, "") else d)
+    posts = {}
+    for p in service.posts(code, site):
+        try:
+            lvl = int(g(f"lvl_{p.key}", 0) or 0)
+        except ValueError:
+            lvl = 0
+        if 1 <= lvl <= pcfg.LEVEL_MAX:
+            posts[p.key] = lvl
+    fields = dict(posts=json.dumps(posts), sunday=g("sunday", "oui"), max_days=int(g("max_days", e.max_days)),
+                  days_off=json.dumps([wd for wd in range(7) if g(f"off_{wd}")]), cfa_days=json.dumps([wd for wd in range(7) if g(f"cfa_{wd}")]),
+                  mobility=json.dumps([st for st in pcfg.SITES if st != e.site and g(f"mob_{st}")]),
+                  flexibility=int(g("flexibility", e.flexibility)), priority=int(g("priority", e.priority)), phone=g("phone"), telegram=g("telegram"),
+                  active=bool(g("active")), weekly_hours=float(str(g("weekly_hours", e.weekly_hours)).replace(",", ".")))
+    if g("first_name"):
+        fields.update(first_name=g("first_name"), last_name=g("last_name", e.last_name), contract_type=g("contract_type", e.contract_type), note=g("note"),
+                      start_date=_d(g("start_date")) if g("start_date") else None, end_date=_d(g("end_date")) if g("end_date") else None, site=g("site", e.site))
+    service.save_employee(e.id, code, **fields)
 
 
 @router.post("/c/{code}/planning/config/reopen")
@@ -374,11 +372,12 @@ def planning_employees(request: Request, code: str, msg: str = ""):
         return redir
     cfg = service.get_config(code)
     site = _site(request, cfg)
-    emps = service.employees(code, site, active_only=False)
+    emps = service.employees(code, None, active_only=False)
+    emps.sort(key=lambda e: (e.site != site, e.site, not e.active, e.last_name.upper()))
     return templates.TemplateResponse(request, "planning_employees.html",
                                       _ctx(request, company=company, site=site, sites=pcfg.SITES, employees=emps, posts=service.post_map(code, site),
                                            e_posts=service.e_posts, e_list=service.e_list, full_name=service.full_name, days_short=pcfg.DAYS_SHORT, msg=msg,
-                                           level_labels=pcfg.LEVEL_LABELS))
+                                           level_max=pcfg.LEVEL_MAX))
 
 
 @router.post("/c/{code}/planning/salaries/{eid}")
@@ -389,18 +388,11 @@ async def planning_employee_save(request: Request, code: str, eid: int):
     cfg = service.get_config(code)
     site = _site(request, cfg)
     form = await request.form()
-    g = lambda k, d=None: (form.get(k) if form.get(k) not in (None, "") else d)
-    posts = {p.key: int(g(f"lvl_{p.key}", 0) or 0) for p in service.posts(code, site)}
-    posts = {k: v for k, v in posts.items() if v}
     e = service.get_employee(eid) if eid else None
-    fields = dict(site=site, first_name=g("first_name", ""), last_name=g("last_name", ""), contract_type=g("contract_type", "CDI"),
-                  weekly_hours=float(str(g("weekly_hours", 35)).replace(",", ".")), posts=json.dumps(posts), sunday=g("sunday", "oui"),
-                  max_days=int(g("max_days", 5)), days_off=json.dumps([wd for wd in range(7) if g(f"off_{wd}")]), cfa_days=json.dumps([wd for wd in range(7) if g(f"cfa_{wd}")]),
-                  mobility=json.dumps([s for s in pcfg.SITES if s != site and g(f"mob_{s}")]), flexibility=int(g("flexibility", 2)), priority=int(g("priority", 5)),
-                  phone=g("phone"), telegram=g("telegram"), note=g("note"), active=bool(g("active")),
-                  start_date=_d(g("start_date")) if g("start_date") else None, end_date=_d(g("end_date")) if g("end_date") else None)
-    service.save_employee(eid or None, code, **fields)
-    return RedirectResponse(f"/c/{code}/planning/salaries?msg=Fiche enregistrée.", status_code=303)
+    if not e:
+        e = service.save_employee(None, code, site=form.get("site") or site, first_name=form.get("first_name") or "?", last_name=form.get("last_name") or "?")
+    _save_employee_form(code, e.site, e, form, prefix="")
+    return RedirectResponse(f"/c/{code}/planning/salaries?site={site}&msg=Fiche enregistrée.", status_code=303)
 
 
 # ============================== remplacements guidés ==============================
@@ -441,22 +433,21 @@ def planning_incident(request: Request, code: str, iid: int, msg: str = ""):
     if not inc:
         return RedirectResponse(f"/c/{code}/planning/incidents", status_code=303)
     plan = json.loads(inc.plan or "{}")
-    steps = {x["shift_id"]: replace.current_step(plan, x) for x in plan.get("shifts", [])}
     pmap = service.post_map(code, inc.site)
     return templates.TemplateResponse(request, "planning_incident.html",
-                                      _ctx(request, company=company, site=inc.site, sites=pcfg.SITES, inc=inc, plan=plan, steps=steps, posts=pmap,
+                                      _ctx(request, company=company, site=inc.site, sites=pcfg.SITES, inc=inc, plan=plan, posts=pmap,
                                            days_short=pcfg.DAYS_SHORT, msg=msg, date=date))
 
 
 @router.post("/c/{code}/planning/incidents/{iid}/answer")
-def planning_incident_answer(request: Request, code: str, iid: int, shift_id: int = Form(...), employee_id: int = Form(0), outcome: str = Form(...)):
+def planning_incident_answer(request: Request, code: str, iid: int, shift_id: int = Form(...), option_id: str = Form(""), outcome: str = Form(...)):
     company, redir = _guard(request, code)
     if redir:
         return redir
     inc = service.get_incident(iid)
     if not inc:
         return RedirectResponse(f"/c/{code}/planning/incidents", status_code=303)
-    replace.record_answer(inc, shift_id, employee_id, outcome, by=_who(request))
+    replace.record_answer(inc, shift_id, option_id, outcome, by=_who(request))
     return RedirectResponse(f"/c/{code}/planning/incidents/{iid}", status_code=303)
 
 

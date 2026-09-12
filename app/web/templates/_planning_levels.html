@@ -1,0 +1,24 @@
+{# Composant niveaux : un bouton par poste, − / valeur / +. 0 = grisé (n'intervient pas), 1 = préféré … jusqu'à level_max. #}
+{% macro levels(prefix, ep, posts, level_max) %}
+<div class="d-flex flex-wrap gap-1 lv-wrap">
+  {% for p in posts %}{% set lvl = ep.get(p.key, 0) %}
+  <div class="lv btn-group btn-group-sm" role="group" data-color="{{ p.color }}" data-max="{{ level_max }}">
+    <button type="button" class="btn btn-outline-secondary py-0 px-1 lv-minus" tabindex="-1">−</button>
+    <span class="btn py-0 lv-label {{ 'btn-light text-muted' if not lvl else '' }}" style="{% if lvl %}background:{{ p.color }};border-color:{{ p.color }};color:#222;{% endif %}min-width:150px;text-align:left">{{ p.label }} <b class="lv-val">{{ lvl if lvl else '—' }}</b></span>
+    <button type="button" class="btn btn-outline-secondary py-0 px-1 lv-plus" tabindex="-1">+</button>
+    <input type="hidden" name="{{ prefix }}lvl_{{ p.key }}" value="{{ lvl }}">
+  </div>
+  {% endfor %}
+</div>
+{% endmacro %}
+{% macro levels_js() %}
+<script>
+(function(){ if (window._lvBound) return; window._lvBound = true;
+  document.addEventListener('click', ev => { const b = ev.target.closest('.lv-minus, .lv-plus'); if (!b) return; const g = b.closest('.lv'); const inp = g.querySelector('input'); const max = +g.dataset.max || 10;
+    let v = +inp.value + (b.classList.contains('lv-plus') ? 1 : -1); v = Math.max(0, Math.min(max, v)); inp.value = v;
+    const lab = g.querySelector('.lv-label'); lab.querySelector('.lv-val').textContent = v ? v : '—';
+    if (v) { lab.className = 'btn py-0 lv-label'; lab.style.cssText = `background:${g.dataset.color};border-color:${g.dataset.color};color:#222;min-width:150px;text-align:left`; }
+    else { lab.className = 'btn py-0 lv-label btn-light text-muted'; lab.style.cssText = 'min-width:150px;text-align:left'; } });
+})();
+</script>
+{% endmacro %}

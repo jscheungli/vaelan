@@ -198,7 +198,7 @@ function quickAdd(ds) {
   $("#addm-title").textContent = `${DAYS[new Date(ds.date).getDay() === 0 ? 6 : new Date(ds.date).getDay() - 1]} ${ds.date.slice(8, 10)}/${ds.date.slice(5, 7)}`;
   if (VIEW === "emp") {
     const e = emp(+ds.emp); const mine = e ? e.posts : {};
-    const w = l => ({1: 3, 2: 2, 3: 1}[l] || 0); const sorted = D.posts.filter(p => p.active).sort((a, b) => (w(mine[b.key]) - w(mine[a.key])) || (a.sort - b.sort));
+    const w = l => (l >= 1 && l <= 10) ? 11 - l : 0; const sorted = D.posts.filter(p => p.active).sort((a, b) => (w(mine[b.key]) - w(mine[a.key])) || (a.sort - b.sort));
     body.innerHTML = `<div class="mb-1 text-muted">${e ? e.name : "Non assigné"} — choisir un gabarit :</div>` + sorted.map(p => `<button class="btn btn-sm w-100 text-start mb-1" style="background:${p.color};opacity:${mine[p.key] ? 1 : .55}" data-post="${p.key}"><b>${p.label}</b> <span class="small">${p.start}–${p.end}${mine[p.key] ? " · niveau " + mine[p.key] : ""}</span></button>`).join("") +
       `<hr class="my-2"><button class="btn btn-sm btn-outline-secondary w-100 text-start" data-abs="1">Absence…</button> <button class="btn btn-sm btn-outline-secondary w-100 text-start mt-1" data-task="1">Tâche / événement…</button>`;
     body.querySelectorAll("[data-post]").forEach(b => b.addEventListener("click", async () => { const p = post(b.dataset.post); await create({ date: ds.date, employee_id: +ds.emp || null, kind: "work", post_key: p.key, start: p.start, end: p.end, pause: p.pause }); m.hide(); }));

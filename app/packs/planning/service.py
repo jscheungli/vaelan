@@ -126,8 +126,8 @@ def primary_post(e: PlEmployee) -> Optional[str]:
     return min(ps, key=lambda k: ps[k]) if ps else None          # niveau 1 = préféré
 
 
-def level_weight(lvl: int) -> int:
-    return config.LEVEL_WEIGHT.get(int(lvl or 0), 0)
+def level_weight(lvl) -> int:
+    return config.level_weight(lvl)
 
 
 def e_posts(e: PlEmployee) -> Dict[str, int]:
@@ -223,9 +223,16 @@ def is_closed(cfg: dict, d: date) -> bool:
     return bool(h and h[2])
 
 
-def coverage_for(cfg: dict, d: date) -> Dict[str, int]:
+def site_coverage(cfg: dict, site: str = None) -> dict:
+    """Grille de couverture de l'établissement : coverage_by_site[site], sinon la grille principale (site par défaut)."""
+    if site and site != cfg.get("site") and (cfg.get("coverage_by_site") or {}).get(site):
+        return cfg["coverage_by_site"][site]
+    return cfg.get("coverage", {})
+
+
+def coverage_for(cfg: dict, d: date, site: str = None) -> Dict[str, int]:
     """Personnes attendues par poste pour une date (saison + jour de semaine + fériés)."""
-    cov = cfg.get("coverage", {})
+    cov = site_coverage(cfg, site)
     base = dict(cov.get("default", {}))
     base.update(cov.get(season_of(d), {}))
     if is_closed(cfg, d):
@@ -318,7 +325,7 @@ def week_data(company_code: str, site: str, monday: date) -> dict:
     emps = emps + [e for e in extra if e]
     pmap = post_map(company_code, site)
     days = [monday + timedelta(days=i) for i in range(7)]
-    need = {d.isoformat(): coverage_for(cfg, d) for d in days}
+    need = {d.isoformat(): coverage_for(cfg, d, site) for d in days}
     have = {d.isoformat(): {} for d in days}
     for x in rows:
         if x.kind == "work" and x.post_key and x.employee_id:
@@ -347,7 +354,7 @@ def check_rules(company_code: str, site: str, monday: date, cfg: dict = None, ro
     days = [monday + timedelta(days=i) for i in range(7)]
     # couverture
     for d in days:
-        need = coverage_for(cfg, d)
+        need = coverage_for(cfg, d, site)
         have = {}
         for x in rows:
             if x.date == d and x.kind == "work" and x.post_key and x.employee_id:
@@ -392,9 +399,6 @@ def check_rules(company_code: str, site: str, monday: date, cfg: dict = None, ro
             h = sum(x.hours for x in xs)
             if h > R["day_max_hours"]:
                 alerts.append({"rule": "day_max", "level": "danger", "date": d.isoformat(), "post": None, "employee_id": e.id, "text": f"{full_name(e)} · {d:%d/%m} : {h:.1f} h dans la journée (max {R['day_max_hours']:.0f} h)"})
-            span = max(hm_to_h(x.end) + (24 if hm_to_h(x.end) < hm_to_h(x.start) else 0) for x in xs) - min(hm_to_h(x.start) for x in xs)
-            if span > R["day_max_span"]:
-                alerts.append({"rule": "day_span", "level": "warning", "date": d.isoformat(), "post": None, "employee_id": e.id, "text": f"{full_name(e)} · {d:%d/%m} : amplitude {span:.1f} h (max {R['day_max_span']:.0f} h)"})
             if d.weekday() in e_list(e, "days_off"):
                 alerts.append({"rule": "days_off", "level": "warning", "date": d.isoformat(), "post": None, "employee_id": e.id, "text": f"{full_name(e)} · {d:%d/%m} : jour habituellement non travaillé"})
             if d.weekday() in e_list(e, "cfa_days"):
@@ -428,9 +432,9 @@ def check_rules(company_code: str, site: str, monday: date, cfg: dict = None, ro
     # encadrement
     sup = cfg.get("supervision", {})
     if sup.get("manager_required"):
-        mgr_ids = {e.id for e in emps if e_posts(e).get("VENTE_RESP") or (primary_post(e) in sup.get("manager_posts", []) and e_posts(e).get(primary_post(e), 9) == 1 and e.contract_type == "CDI")}
+        mgr_ids = {e.id for e in emps if e_posts(e).get("VENTE_RESP") or (primary_post(e) in sup.get("manager_posts", []) and e_posts(e).get(primary_post(e), 99) == 1 and e.contract_type == "CDI")}
         for d in days:
-            if not coverage_for(cfg, d):
+            if not coverage_for(cfg, d, site):
                 continue
             if not any(x.date == d and x.kind == "work" and x.employee_id in mgr_ids for x in rows):
                 alerts.append({"rule": "manager", "level": "warning", "date": d.isoformat(), "post": None, "employee_id": None, "text": f"{config.DAYS_SHORT[d.weekday()]} {d:%d/%m} : aucun responsable de vente planifié"})

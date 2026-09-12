@@ -94,37 +94,47 @@ ABSENCE_TYPES = ["Repos hebdomadaire", "Congé payé", "Arrêt maladie", "École
 
 DEFAULT_CONFIG = {
     "site": "SL",
-    "opening": {  # amplitude de présence vente par jour (première prise → dernière fin)
-        "0": ["05:15", "20:30"], "1": ["05:15", "20:30"], "2": ["05:15", "20:30"], "3": ["05:15", "20:30"],
-        "4": ["05:15", "20:30"], "5": ["05:15", "20:30"], "6": ["05:00", "14:30"]},
-    "closed_sunday_afternoon": True,
-    "other_sites": ["LP", "SM"],
-    "coverage": COVERAGE,
-    "rules": {
-        "day_max_hours": 10.0, "day_max_span": 13.0, "week_max_hours": 48.0, "avg12_max_hours": 44.0,
-        "modulation_min": 24.0, "modulation_max": 46.0, "rest_min_hours": 11.0, "rest_days_per_week": 2,
-        "consecutive_max_days": 6, "default_pause": 0.5, "split_days_allowed": True, "overtime_tolerance": 3.0,
-    },
+    "coverage": COVERAGE,                       # Saint-Leu (déduit) ; les autres établissements dans coverage_by_site
+    "coverage_by_site": {},                     # {site: {saison: {poste: [7]}}} — déduit de l'historique à l'import, modifiable
+    "rules": {"day_max_hours": 10.0, "week_max_hours": 48.0, "avg12_max_hours": 44.0, "rest_min_hours": 11.0,
+              "consecutive_max_days": 6, "overtime_tolerance": 3.0},
     "sunday": {"max_share": 0.5, "consecutive_max": 2, "premium_pct": 20},      # CCN 843 art. 28 : +20 % minimum (Skello : 0 % → à corriger)
-    "night": {"start": "20:00", "end": "06:00", "premium_pct": 25},              # CCN 843 : 20h-6h +25 % (travailleur de nuit : ≥ 3 h entre 21h et 6h)
-    "overtime": {"t1_from": 36, "t1_pct": 25, "t2_from": 44, "t2_pct": 50, "annual_quota": 220},   # CCN 843 : 36e-43e h +25 %, 44e+ +50 %, contingent 220 h
-    "holidays": {"types": [k for k, _, _, _ in HOLIDAY_TYPES], "closed_types": ["noel", "jour_an"], "premium_pct": 100, "compensation": True,
-                 "confirm_days": 21},   # rappel par email N jours avant chaque férié (ouvert ou fermé selon la configuration)
-    "supervision": {"manager_posts": ["VENTE_RESP", "VENTE_MATIN"], "manager_required": True, "manager_at_opening": False,
-                    "apprentice_never_alone": True},
-    "replacement": {"immediate_if_days": 1, "delay_hours": 24, "parallel": 3, "answer_minutes": 30},
-    "publication": {"notice_days": 7, "horizon_weeks": 2},
-    "counters": {"period": "annuelle", "alert_hours": 20},
+    "night": {"start": "20:00", "end": "06:00", "premium_pct": 25},              # CCN 843 : 20h-6h +25 %
+    "overtime": {"t1_from": 36, "t1_pct": 25, "t2_from": 44, "t2_pct": 50, "annual_quota": 220},   # CCN 843 (information)
+    "holidays": {"types": [k for k, _, _, _ in HOLIDAY_TYPES], "closed_types": ["noel", "jour_an"], "premium_pct": 100, "compensation": True, "confirm_days": 21},
+    "supervision": {"manager_posts": ["VENTE_RESP", "VENTE_MATIN"], "manager_required": True},
+    "publication": {"horizon_weeks": 2},
     "alerts": {"enabled": True, "emails": "jscheungli@gmail.com", "daily": True, "weekly": True, "horizon_days": 14,
-               "rules": {k: True for k in ["day_max", "day_span", "rest", "week_max", "avg12", "consecutive", "days_week", "sunday_consecutive",
+               "rules": {k: True for k in ["day_max", "rest", "week_max", "avg12", "consecutive", "days_week", "sunday_consecutive",
                                            "sunday_share", "cfa", "days_off", "sunday_off", "overtime", "coverage", "unassigned", "manager"]}},
     "validated_at": None, "wizard_step": 1,
 }
 
+# Niveau sur un poste : 0 = n'intervient pas ; 1 = préféré ; 2, 3… = de moins en moins prioritaire (jusqu'à 10).
+LEVEL_MAX = 10
+
+
+def level_weight(lvl) -> int:
+    """Poids dans les scores : 10 pour le niveau 1, 9 pour le 2 … 1 pour le 10, 0 si absent."""
+    try:
+        l = int(lvl or 0)
+    except Exception:
+        return 0
+    return max(0, LEVEL_MAX + 1 - l) if 1 <= l <= LEVEL_MAX else 0
+
+
+# Questionnaire de configuration : étapes
+WIZARD_STEPS = [
+    (1, "Postes", "Gabarits de plages : horaires, pause, couleur"),
+    (2, "Couverture", "Personnes attendues par poste et par jour, selon la saison"),
+    (3, "Règles", "Temps de travail, dimanches, nuit, jours fériés, encadrement"),
+    (4, "Salariés", "Postes tenus (1 = préféré), habitudes, mobilité, ordre d'appel"),
+    (5, "Récapitulatif", "Validation et passage en mode automatique"),
+]
+
 # Règles contrôlées : clé -> (libellé, référence, niveau)
 RULES_CATALOG = [
     ("day_max", "Durée quotidienne maximale (10 h de travail effectif)", "Code du travail L3121-18 · CCN 843", "danger"),
-    ("day_span", "Amplitude maximale d'une journée (13 h)", "Code du travail (repos quotidien 11 h)", "warning"),
     ("rest", "Repos quotidien de 11 h entre deux journées", "Code du travail L3131-1 · CCN 843", "danger"),
     ("week_max", "Durée hebdomadaire maximale (48 h)", "Code du travail L3121-20 · CCN 843", "danger"),
     ("avg12", "Moyenne maximale sur 12 semaines (44 h)", "CCN 843 (avenant n° 57)", "danger"),
@@ -141,19 +151,3 @@ RULES_CATALOG = [
     ("manager", "Aucun responsable de vente un jour d'ouverture", "règle interne (encadrement)", "warning"),
 ]
 
-# Niveau sur un poste : 1 = préféré (poste principal), 2 = tient le poste, 3 = peut dépanner ; 0 = non.
-LEVEL_LABELS = {1: "1 · préféré", 2: "2 · tient le poste", 3: "3 · dépanne"}
-LEVEL_WEIGHT = {1: 3, 2: 2, 3: 1}       # poids dans les scores (plus le niveau est petit, plus le poids est fort)
-
-# Questionnaire de configuration : étapes
-WIZARD_STEPS = [
-    (1, "Établissement", "Horaires d'ouverture, dimanche, autres établissements"),
-    (2, "Postes", "Gabarits de plages : horaires, pause, couleur"),
-    (3, "Couverture", "Personnes attendues par poste et par jour, selon la saison"),
-    (4, "Temps de travail", "Durées maximales, repos, modulation, pauses"),
-    (5, "Dimanches, nuit, fériés", "Rotation des dimanches, majorations, jours fériés"),
-    (6, "Encadrement et apprentis", "Responsable présent, apprentis, jours de CFA"),
-    (7, "Salariés", "Postes tenus, mobilité, flexibilité, ordre d'appel"),
-    (8, "Remplacements et publication", "Délais, sollicitations, prévenance, compteurs"),
-    (9, "Récapitulatif", "Validation et passage en mode automatique"),
-]

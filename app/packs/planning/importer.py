@@ -63,6 +63,13 @@ def absence_type_of(label: str) -> str:
     return str(label or "Absence")[:40]
 
 
+def _f(v, default=0.0) -> float:
+    try:
+        return float(str(v).replace(",", ".")) if v not in (None, "", "-", "None") else default
+    except (TypeError, ValueError):
+        return default
+
+
 def read_details(paths: List[str]) -> List[dict]:
     rows = []
     for p in paths:
@@ -82,12 +89,12 @@ def read_details(paths: List[str]) -> List[dict]:
                 continue
             rows.append({
                 "first": str(d.get("Prénom") or "").strip(), "last": str(d.get("Nom") or "").strip(),
-                "contract": str(d.get("Type de contrat") or "CDI"), "hours": float(d.get("Temps contractuel") or 35),
+                "contract": str(d.get("Type de contrat") or "CDI"), "hours": _f(d.get("Temps contractuel"), 35.0) if str(d.get("Heures / jours") or "heures").startswith("heure") else 35.0,
                 "site": str(d.get("Etablissement principal") or ""), "shift_site": str(d.get(C["site"]) or ""),
                 "date": dd.date() if isinstance(dd, dt.datetime) else dd, "kind": str(d.get("Travail / Absence") or ""),
                 "label": str(d.get(C["post"]) or ""), "start": d.get("Début"), "end": d.get("Fin"),
-                "pause": float(d.get("Pause (h)") or 0), "ht": float(d.get(C["ht"]) or 0) if d.get(C["ht"]) not in (None, "-", "") else 0.0,
-                "abs_h": float(d.get(C["abs_in"]) or 0) + float(d.get(C["abs_out"]) or 0) if d.get(C["abs_in"]) not in (None, "-", "") else 0.0,
+                "pause": _f(d.get("Pause (h)")), "ht": _f(d.get(C["ht"])),
+                "abs_h": _f(d.get(C["abs_in"])) + _f(d.get(C["abs_out"])),
                 "note": str(d.get("Note") or "")[:200],
             })
     return rows
@@ -110,7 +117,7 @@ def read_contracts(paths: List[str]) -> Dict[str, dict]:
                     if x and re.match(r"\d{2}/\d{2}/\d{2}$", str(x)):
                         return dt.datetime.strptime(str(x), "%d/%m/%y").date()
                     return None
-                out[key] = {"hours": float(r[2] or 35), "contract": str(r[3] or "CDI"), "title": str(r[4] or ""), "start": pd(r[5]), "end": pd(r[6])}
+                out[key] = {"hours": _f(r[2], 35.0), "contract": str(r[3] or "CDI"), "title": str(r[4] or ""), "start": pd(r[5]), "end": pd(r[6])}
             except Exception:
                 continue
     return out
@@ -127,18 +134,50 @@ def site_code(name: str) -> str:
     return "SL"
 
 
-def import_skello(paths: List[str], company_code: str = config.COMPANY_CODE, site: str = "SL",
+def deduce_coverage(rows: List[dict], site: str) -> dict:
+    """Médiane du nombre de personnes par poste et jour de semaine, par saison, sur les plages réalisées du site."""
+    import statistics
+    W = [r for r in rows if r["kind"] == "travail" and site_code(r["shift_site"]) == site and 0.5 < r["ht"] <= 12]
+    seasons = {"default": None, "dec_jan": (12, 1), "jul_aug": (7, 8), "mar_mai": (3, 4, 5)}
+    out = {}
+    for sk, months in seasons.items():
+        rs = [r for r in W if months is None or r["date"].month in months]
+        wk = sorted({r["date"].isocalendar()[:2] for r in rs})
+        if len(wk) < 4:
+            continue
+        cov = {}
+        for pk in {post_key_of(r["label"]) for r in rs}:
+            if pk == "FORMATION":
+                continue
+            med = []
+            for wd in range(7):
+                med.append(int(statistics.median([sum(1 for r in rs if post_key_of(r["label"]) == pk and r["date"].isocalendar()[:2] == w and r["date"].weekday() == wd) for w in wk])))
+            if any(med):
+                cov[pk] = med
+        out[sk] = cov
+    return out
+
+
+def import_skello(paths: List[str], company_code: str = config.COMPANY_CODE, site: str = None,
                   shifts_from: dt.date = None, shifts_to: dt.date = None, active_since: dt.date = None) -> dict:
-    """Crée/actualise les salariés (compétences, habitudes) et importe les plages réalisées d'une période."""
+    """Crée/actualise les salariés de TOUS les établissements présents dans les exports (pool société : établissement
+    principal = celui où la personne a le plus de plages), déduit compétences et habitudes, importe les plages réalisées
+    d'une période sur tous les sites, et déduit la couverture des sites qui n'en ont pas encore."""
     rows = read_details(paths)
     contracts = read_contracts(paths)
-    service.ensure_posts(company_code, site)
     dates = [r["date"] for r in rows]
     last = max(dates)
     active_since = active_since or (last - dt.timedelta(days=60))
     byemp = collections.defaultdict(list)
+    seen = set()
     for r in rows:
+        k = (r["first"].upper(), r["last"].upper(), r["date"], r["kind"], r["label"], str(r["start"]), str(r["end"]), site_code(r["shift_site"]))
+        if k in seen:
+            continue                     # même ligne présente dans deux exports (salarié multi-sites)
+        seen.add(k)
         byemp[f"{r['first']} {r['last']}".upper()].append(r)
+    for st in {site_code(r["shift_site"]) for r in rows if r["kind"] == "travail"}:
+        service.ensure_posts(company_code, st)
     created = updated = 0
     with Session(engine) as s:
         existing = {e.external_key: e for e in s.exec(select(PlEmployee).where(PlEmployee.company_code == company_code)).all() if e.external_key}
@@ -172,8 +211,9 @@ def import_skello(paths: List[str], company_code: str = config.COMPANY_CODE, sit
             sunday = "oui" if pres[6] >= 8 else "non"
             hours = ct.get("hours") or rs[-1]["hours"]
             max_days = 5 if hours >= 30 else (4 if hours >= 25 else (3 if hours >= 20 else 2))
-            other = sorted({site_code(r["shift_site"]) for r in work if site_code(r["shift_site"]) != site})
-            fields = dict(site=site, first_name=first, last_name=lastn, contract_type=ct.get("contract") or rs[-1]["contract"], weekly_hours=hours,
+            main_site = collections.Counter(site_code(r["shift_site"]) for r in work).most_common(1)[0][0]
+            other = sorted({site_code(r["shift_site"]) for r in work if site_code(r["shift_site"]) != main_site})
+            fields = dict(site=main_site, first_name=first, last_name=lastn, contract_type=ct.get("contract") or rs[-1]["contract"], weekly_hours=hours,
                           start_date=ct.get("start"), end_date=ct.get("end"), active=active, posts=json.dumps(posts), days_off=json.dumps(days_off),
                           cfa_days=json.dumps(cfa_days), pattern=json.dumps(pres), sunday=sunday, max_days=max_days, mobility=json.dumps(other),
                           source="skello", external_key=key)
@@ -188,13 +228,13 @@ def import_skello(paths: List[str], company_code: str = config.COMPANY_CODE, sit
             s.add(e)
         s.commit()
         emap = {e.external_key: e.id for e in s.exec(select(PlEmployee).where(PlEmployee.company_code == company_code)).all() if e.external_key}
-        # plages réalisées
+        # plages réalisées (tous sites)
         n_sh = 0
         if shifts_from and shifts_to:
-            for x in s.exec(select(PlShift).where(PlShift.company_code == company_code, PlShift.site == site, PlShift.source == "import",
+            for x in s.exec(select(PlShift).where(PlShift.company_code == company_code, PlShift.source == "import",
                                                    PlShift.date >= shifts_from, PlShift.date <= shifts_to)).all():
                 s.delete(x)
-            for r in rows:
+            for r in [x for v in byemp.values() for x in v]:
                 if not (shifts_from <= r["date"] <= shifts_to):
                     continue
                 eid = emap.get(f"{r['first']} {r['last']}".upper())
@@ -203,19 +243,30 @@ def import_skello(paths: List[str], company_code: str = config.COMPANY_CODE, sit
                 if r["kind"] == "travail":
                     if not isinstance(r["start"], dt.datetime) or not isinstance(r["end"], dt.datetime) or r["ht"] <= 0.02:
                         continue
-                    if site_code(r["shift_site"]) != site:
-                        continue
                     st, en = r["start"].strftime("%H:%M"), r["end"].strftime("%H:%M")
                     key = post_key_of(r["label"])
                     kind = "task" if key == "FORMATION" or "LIVRAISON" in _norm(r["label"]) else "work"
-                    s.add(PlShift(company_code=company_code, site=site, employee_id=eid, date=r["date"], kind=kind, post_key=key if kind == "work" else r["label"][:40],
+                    s.add(PlShift(company_code=company_code, site=site_code(r["shift_site"]), employee_id=eid, date=r["date"], kind=kind, post_key=key if kind == "work" else r["label"][:40],
                                   start=st, end=en, pause=r["pause"], hours=round(r["ht"], 2), note=r["note"] or None, status="published", source="import"))
                 else:
                     typ = absence_type_of(r["label"])
                     if typ == "Repos hebdomadaire":
                         continue                     # le repos est l'absence de plage
-                    s.add(PlShift(company_code=company_code, site=site, employee_id=eid, date=r["date"], kind="absence", post_key=typ,
+                    s.add(PlShift(company_code=company_code, site=site_code(r["site"]), employee_id=eid, date=r["date"], kind="absence", post_key=typ,
                                   hours=round(r["abs_h"], 2), status="published", source="import"))
                 n_sh += 1
             s.commit()
-    return {"employees_created": created, "employees_updated": updated, "shifts": n_sh, "period": (min(dates), last)}
+    # couverture déduite pour les sites qui n'en ont pas encore (le site principal garde la grille du questionnaire)
+    cfg = service.get_config(company_code)
+    cbs = dict(cfg.get("coverage_by_site") or {})
+    added = []
+    main_sites = {e.site for e in service.employees(company_code, None, active_only=False)}
+    for st in {site_code(r["shift_site"]) for r in rows if r["kind"] == "travail"}:
+        if st != cfg.get("site") and st not in cbs and st in main_sites:   # pas de grille déduite pour un site sans effectif propre
+            cov = deduce_coverage([x for v in byemp.values() for x in v], st)
+            if cov.get("default"):
+                cbs[st] = cov
+                added.append(st)
+    if added:
+        service.save_config({"coverage_by_site": cbs}, company_code)
+    return {"employees_created": created, "employees_updated": updated, "shifts": n_sh, "period": (min(dates), last), "coverage_added": added}

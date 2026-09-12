@@ -76,7 +76,7 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
     created, unassigned, log = [], [], []
     d = d_from
     while d <= d_to:
-        need = service.coverage_for(cfg, d)
+        need = service.coverage_for(cfg, d, site)
         # déjà couvert par des plages existantes (manuelles / importées / publiées)
         have = {}
         for x in existing:
@@ -110,7 +110,7 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
                 wh = week_hours(e.id, d)
                 if wh + dur > R["week_max_hours"]:
                     continue
-                score = {"niveau": service.level_weight(lvl) * 12}
+                score = {"niveau": service.level_weight(lvl) * 4}
                 remaining = e.weekly_hours - wh
                 score["heures"] = min(remaining, dur) * 3 if remaining > 0 else -(dur - remaining) * 6
                 if wh + dur > e.weekly_hours + R.get("overtime_tolerance", 2):
@@ -166,7 +166,7 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
                         if consecutive(e.id, day) + 1 > R["consecutive_max_days"]:
                             continue
                         nxt = works(e.id, day + timedelta(days=1))
-                        need = service.coverage_for(cfg, day)
+                        need = service.coverage_for(cfg, day, site)
                         if service.is_closed(cfg, day):
                             continue
                         for pk, lvl in sorted(c["posts"].items(), key=lambda kv: kv[1]):
@@ -182,7 +182,7 @@ def generate(company_code: str, site: str, d_from: date, d_to: date, replace_aut
                                 continue
                             have = sum(1 for x in existing if x.date == day and x.kind == "work" and x.employee_id and x.post_key == pk)
                             ratio = have / max(1, need.get(pk, 1))
-                            score = service.level_weight(lvl) * 10 - ratio * 8 + c["pattern"].get(dd, 50) / 10 + (6 if need.get(pk) else 0)
+                            score = service.level_weight(lvl) * 3 - ratio * 8 + c["pattern"].get(dd, 50) / 10 + (6 if need.get(pk) else 0)
                             if best is None or score > best[0]:
                                 best = (score, day, p, dur, lvl)
                     if not best:

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_planning_levels.html" import levels, levels_js %}
 {% block title %}Configuration planning · {{ company.name }}{% endblock %}
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb small">
@@ -8,176 +9,133 @@
 </ol></nav>
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
   <h1 class="h4 mb-0">Configuration du planning</h1>
-  <span class="badge text-bg-light border">{{ sites[site] }}</span>
-  {% if cfg.validated_at %}<span class="badge text-bg-success">validée · mode automatique</span>{% else %}<span class="badge text-bg-warning">questionnaire en cours</span>{% endif %}
+  {% if cfg.validated_at %}<span class="badge text-bg-success">validée · mode automatique</span>{% else %}<span class="badge text-bg-warning">à valider</span>{% endif %}
   <div class="ms-auto d-flex gap-2">
     <form method="get" action="/c/{{ company.code }}/planning/config"><input type="hidden" name="step" value="{{ step }}">
       <select name="site" class="form-select form-select-sm" onchange="this.form.submit()">{% for k, v in sites.items() %}<option value="{{ k }}" {% if k == site %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></form>
-    <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/semaine/{{ (cfg.get('_today') or '') }}{% if not cfg.get('_today') %}{{ '' }}{% endif %}" onclick="this.href='/c/{{ company.code }}/planning/semaine/'+new Date().toISOString().slice(0,10)+'?site={{ site }}'"><i class="bi bi-calendar-week"></i> Grille</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/planning/semaine/{{ (steps and '') }}" onclick="location.href='/c/{{ company.code }}/planning/semaine/'+new Date().toISOString().slice(0,10)+'?site={{ site }}';return false;"><i class="bi bi-calendar-week"></i> Grille</a>
   </div>
 </div>
 {% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
-<p class="small text-muted mb-3">Tout est pré-rempli avec ce que j'ai déduit de douze mois de plannings. Vérifiez chaque étape, corrigez si besoin, puis validez : le mode automatique (génération, alertes, remplacements) s'appuie sur ces valeurs. Vous pourrez revenir ici à tout moment.</p>
 <div class="d-flex flex-wrap gap-1 mb-3">
   {% for n, title, sub in steps %}
-    <a href="/c/{{ company.code }}/planning/config?step={{ n }}" class="btn btn-sm {{ 'btn-dark' if n == step else ('btn-outline-success' if n < (cfg.wizard_step or 1) else 'btn-outline-secondary') }}" title="{{ sub }}">{{ n }}. {{ title }}{% if n < (cfg.wizard_step or 1) and n != step %} <i class="bi bi-check"></i>{% endif %}</a>
+    <a href="/c/{{ company.code }}/planning/config?step={{ n }}&site={{ site }}" class="btn btn-sm {{ 'btn-dark' if n == step else ('btn-outline-success' if n < (cfg.wizard_step or 1) else 'btn-outline-secondary') }}" title="{{ sub }}">{{ n }}. {{ title }}{% if n < (cfg.wizard_step or 1) and n != step %} <i class="bi bi-check"></i>{% endif %}</a>
   {% endfor %}
 </div>
 {% set title = steps[step-1][1] %}{% set sub = steps[step-1][2] %}
 <div class="card shadow-sm"><div class="card-body">
-<h2 class="h5">{{ step }}. {{ title }} <small class="text-muted fw-normal">— {{ sub }}</small></h2>
+<h2 class="h5">{{ step }}. {{ title }} <small class="text-muted fw-normal">— {{ sub }} · {{ sites[site] }}</small></h2>
 <form method="post" action="/c/{{ company.code }}/planning/config/{{ step }}?site={{ site }}" id="cfgform">
 
 {% if step == 1 %}
-  <p class="small text-muted">Amplitude de présence de l'équipe de vente par jour (première prise de poste → dernière fin), observée sur l'année. Elle sert de garde-fou aux horaires des plages.</p>
-  <div class="table-responsive"><table class="table table-sm w-auto align-middle"><thead><tr class="small text-muted"><th>Jour</th><th>Première prise</th><th>Dernière fin</th></tr></thead><tbody>
-  {% for wd in range(7) %}{% set o = cfg.opening.get(wd|string, ['05:15','20:30']) %}
-    <tr><td class="fw-semibold">{{ days[wd]|capitalize }}</td><td><input type="time" class="form-control form-control-sm" name="open_{{ wd }}" value="{{ o[0] }}"></td><td><input type="time" class="form-control form-control-sm" name="close_{{ wd }}" value="{{ o[1] }}"></td></tr>
-  {% endfor %}</tbody></table></div>
-  <div class="form-check"><input class="form-check-input" type="checkbox" name="closed_sunday_afternoon" id="csa" value="1" {% if cfg.closed_sunday_afternoon %}checked{% endif %}><label class="form-check-label" for="csa">Fermé le dimanche après-midi <span class="text-muted small">(aucune plage « Vente après-midi » le dimanche sur 53 semaines)</span></label></div>
-  <div class="mt-3 fw-semibold small">Autres établissements où les salariés de {{ sites[site] }} peuvent être planifiés ou appelés en renfort</div>
-  {% for k, v in sites.items() %}{% if k != site %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="other_{{ k }}" id="other_{{ k }}" value="1" {% if k in cfg.other_sites %}checked{% endif %}><label class="form-check-label" for="other_{{ k }}">{{ v }}</label></div>{% endif %}{% endfor %}
-
-{% elif step == 2 %}
-  <p class="small text-muted">Un poste = un gabarit de plage (horaires et pause par défaut, couleur dans la grille). Les postes inactifs restent disponibles pour une plage exceptionnelle mais ne sont ni proposés en gabarit ni générés automatiquement. Horaires = médiane observée, arrondie au quart d'heure.</p>
-  <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr class="small text-muted"><th>Actif</th><th>Poste</th><th>Département</th><th>Début</th><th>Fin</th><th>Pause (h)</th><th>Couleur</th></tr></thead><tbody>
+  <p class="small text-muted">Un poste = un gabarit de plage : horaires et pause par défaut, couleur. Les postes inactifs ne sont ni proposés ni générés. Horaires = médiane observée sur l'année, au quart d'heure.</p>
+  <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr class="small text-muted"><th>Actif</th><th>Poste</th><th>Début</th><th>Fin</th><th>Pause (h)</th><th>Couleur</th></tr></thead><tbody>
   {% for p in posts %}
     <tr><td><input class="form-check-input" type="checkbox" name="active_{{ p.id }}" value="1" {% if p.active %}checked{% endif %}></td>
-      <td><input class="form-control form-control-sm" name="label_{{ p.id }}" value="{{ p.label }}"></td><td class="small text-muted">{{ p.department }}</td>
+      <td><input class="form-control form-control-sm" name="label_{{ p.id }}" value="{{ p.label }}"></td>
       <td><input type="time" class="form-control form-control-sm" name="start_{{ p.id }}" value="{{ p.start }}"></td>
       <td><input type="time" class="form-control form-control-sm" name="end_{{ p.id }}" value="{{ p.end }}"></td>
       <td><input type="number" step="0.25" min="0" class="form-control form-control-sm" style="width:80px" name="pause_{{ p.id }}" value="{{ p.pause }}"></td>
       <td><input type="color" class="form-control form-control-color form-control-sm" name="color_{{ p.id }}" value="{{ p.color }}"></td></tr>
   {% endfor %}
   <tr class="table-light"><td><i class="bi bi-plus-lg"></i></td><td><input class="form-control form-control-sm" name="new_label" placeholder="Nouveau poste"></td>
-    <td><select name="new_department" class="form-select form-select-sm">{% for d in ['vente','boulangerie','patisserie','traiteur','admin','autre'] %}<option>{{ d }}</option>{% endfor %}</select></td>
     <td><input type="time" class="form-control form-control-sm" name="new_start" value="08:00"></td><td><input type="time" class="form-control form-control-sm" name="new_end" value="16:00"></td>
     <td><input type="number" step="0.25" class="form-control form-control-sm" style="width:80px" name="new_pause" value="0.5"></td><td><input type="color" class="form-control form-control-color form-control-sm" name="new_color" value="#cccccc"></td></tr>
   </tbody></table></div>
 
-{% elif step == 3 %}
-  <p class="small text-muted">Personnes attendues par poste et par jour. C'est le besoin minimal que la génération remplit en premier ; elle complète ensuite chaque contrat. Valeurs = médiane observée par saison. 0 = pas de besoin ce jour-là.</p>
+{% elif step == 2 %}
+  <p class="small text-muted">Personnes attendues par poste et par jour : le besoin minimal que la génération remplit en premier avant de compléter chaque contrat. Valeurs = médiane observée par saison. 0 = pas de besoin.</p>
   <ul class="nav nav-pills nav-sm mb-2 small" role="tablist">{% for sk, sl in seasons.items() %}<li class="nav-item"><button type="button" class="nav-link py-1 {{ 'active' if loop.first }}" data-bs-toggle="pill" data-bs-target="#cov_{{ sk }}">{{ sl }}</button></li>{% endfor %}</ul>
   <div class="tab-content">
   {% for sk, sl in seasons.items() %}
     <div class="tab-pane fade {{ 'show active' if loop.first }}" id="cov_{{ sk }}">
     <div class="table-responsive"><table class="table table-sm align-middle w-auto"><thead><tr class="small text-muted"><th>Poste</th>{% for d in days_short %}<th class="text-center">{{ d }}</th>{% endfor %}</tr></thead><tbody>
-    {% for p in posts if p.active %}{% set row = cfg.coverage.get(sk, {}).get(p.key) or ([0,0,0,0,0,0,0] if sk != 'default' else cfg.coverage.get('default', {}).get(p.key, [0,0,0,0,0,0,0])) %}
+    {% for p in posts if p.active %}{% set row = coverage.get(sk, {}).get(p.key) or ([0,0,0,0,0,0,0] if sk != 'default' else coverage.get('default', {}).get(p.key, [0,0,0,0,0,0,0])) %}
       <tr><td><span class="badge" style="background:{{ p.color }};color:#222">{{ p.label }}</span></td>
       {% for wd in range(7) %}<td><input type="number" min="0" max="9" class="form-control form-control-sm text-center" style="width:58px" name="cov_{{ sk }}_{{ p.key }}_{{ wd }}" value="{{ row[wd] }}"></td>{% endfor %}</tr>
     {% endfor %}</tbody></table></div>
-    {% if sk != 'default' %}<div class="small text-muted">Laissez une ligne à 0 pour reprendre la valeur « reste de l'année ».</div>{% endif %}
+    {% if sk != 'default' %}<div class="small text-muted">Une ligne à 0 reprend la valeur « reste de l'année ».</div>{% endif %}
     </div>
   {% endfor %}
   </div>
 
-{% elif step == 4 %}{% set R = cfg.rules %}
+{% elif step == 3 %}{% set R = cfg.rules %}
+  <h3 class="h6 text-uppercase text-muted mt-1">Temps de travail <span class="fw-normal">— loi et convention boulangerie-pâtisserie (IDCC 843)</span></h3>
   <div class="row g-3">
-    {% for k, lbl, hint, stp in [('day_max_hours','Heures de travail max par jour','légal 10 h ; observé : 500 journées au-delà dans l\'année',0.5),('day_max_span','Amplitude max d\'une journée (h)','légal 13 h',0.5),('week_max_hours','Heures max par semaine','légal 48 h ; observé p90 51 h sur les 39 h',1),('avg12_max_hours','Moyenne max sur 12 semaines','convention : 44 h',1),('modulation_min','Modulation : plancher hebdo','convention : 24 h',1),('modulation_max','Modulation : plafond hebdo','convention : 46 h',1),('rest_min_hours','Repos minimal entre deux journées (h)','légal 11 h ; 94 cas en dessous dans l\'année',0.5),('rest_days_per_week','Jours de repos par semaine','2 dans 80 % des semaines',1),('consecutive_max_days','Jours consécutifs max','légal 6 ; observé max 8',1),('default_pause','Pause par défaut (h)','0,5 h observé',0.25),('overtime_tolerance','Tolérance au-delà du contrat (h/semaine)','au-delà : alerte « dépassement » ; 39 h réels ≈ 41,5 h',0.5)] %}
-    <div class="col-md-4"><label class="form-label small mb-0 fw-semibold">{{ lbl }}</label><input type="number" step="{{ stp }}" class="form-control form-control-sm" name="{{ k }}" value="{{ R[k] }}"><div class="form-text">{{ hint }}</div></div>
+    {% for k, lbl, hint, stp in [('day_max_hours','Heures max par jour','légal 10 h',0.5),('week_max_hours','Heures max par semaine','légal 48 h',1),('avg12_max_hours','Moyenne max sur 12 semaines','convention : 44 h',1),('rest_min_hours','Repos entre deux journées (h)','légal 11 h',0.5),('consecutive_max_days','Jours consécutifs max','légal 6',1),('overtime_tolerance','Tolérance au-delà du contrat (h/sem)','au-delà : alerte heures sup ; un 39 h réel fait ≈ 41,5 h',0.5)] %}
+    <div class="col-md-4 col-6"><label class="form-label small mb-0 fw-semibold">{{ lbl }}</label><input type="number" step="{{ stp }}" class="form-control form-control-sm" name="{{ k }}" value="{{ R[k] }}"><div class="form-text">{{ hint }}</div></div>
     {% endfor %}
-    <div class="col-md-4 d-flex align-items-center"><div class="form-check"><input class="form-check-input" type="checkbox" name="split_days_allowed" id="sda" value="1" {% if R.split_days_allowed %}checked{% endif %}><label class="form-check-label" for="sda">Journées en coupure autorisées <span class="text-muted small">(386 dans l'année)</span></label></div></div>
   </div>
+  <h3 class="h6 text-uppercase text-muted mt-3">Dimanches et nuit</h3>
+  <div class="row g-3">
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Part max de dimanches (0,5 = 1 sur 2)</label><input type="number" step="0.05" min="0" max="1" class="form-control form-control-sm" name="sunday_max_share" value="{{ cfg.sunday.max_share }}"></div>
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Dimanches consécutifs max</label><input type="number" class="form-control form-control-sm" name="sunday_consecutive_max" value="{{ cfg.sunday.consecutive_max }}"></div>
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Majoration dimanche (%)</label><input type="number" class="form-control form-control-sm" name="sunday_premium" value="{{ cfg.sunday.premium_pct }}"><div class="form-text">convention art. 28 : 20 % minimum</div></div>
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Majoration nuit (%)</label><input type="number" class="form-control form-control-sm" name="night_premium" value="{{ cfg.night.premium_pct }}"><div class="form-text">convention : 25 %</div></div>
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Nuit : début</label><input type="time" class="form-control form-control-sm" name="night_start" value="{{ cfg.night.start }}"><div class="form-text">convention : 20:00</div></div>
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Nuit : fin</label><input type="time" class="form-control form-control-sm" name="night_end" value="{{ cfg.night.end }}"></div>
+  </div>
+  <h3 class="h6 text-uppercase text-muted mt-3">Jours fériés <span class="fw-normal">— par type ; la date est calculée chaque année</span></h3>
+  <div class="table-responsive"><table class="table table-sm w-auto align-middle"><thead><tr class="small text-muted"><th>Férié</th><th>Férié chez nous</th><th>Magasin fermé</th>{% for y, _ in holiday_dates.items() %}<th>{{ y }}</th>{% endfor %}</tr></thead><tbody>
+  {% for k, lbl, kind, spec in holiday_types %}
+    <tr><td>{{ lbl }}</td>
+      <td class="text-center"><input class="form-check-input" type="checkbox" name="hol_{{ k }}" value="1" {% if k in cfg.holidays.types %}checked{% endif %}></td>
+      <td class="text-center"><input class="form-check-input" type="checkbox" name="holclosed_{{ k }}" value="1" {% if k in cfg.holidays.closed_types %}checked{% endif %}></td>
+      {% for y, dd in holiday_dates.items() %}<td class="small text-muted">{{ dd[k].strftime('%a %d/%m') }}</td>{% endfor %}</tr>
+  {% endfor %}</tbody></table></div>
+  <div class="row g-3">
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Majoration férié travaillé (%)</label><input type="number" class="form-control form-control-sm" name="holiday_premium" value="{{ cfg.holidays.premium_pct }}"></div>
+    <div class="col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Rappel avant chaque férié (jours)</label><input type="number" class="form-control form-control-sm" name="holiday_confirm_days" value="{{ cfg.holidays.confirm_days }}"></div>
+    <div class="col-md-6 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="holiday_compensation" id="hc" value="1" {% if cfg.holidays.compensation %}checked{% endif %}><label class="form-check-label" for="hc">Férié travaillé → jour de récupération</label></div></div>
+  </div>
+  <h3 class="h6 text-uppercase text-muted mt-3">Encadrement et publication</h3>
+  <div class="small">Postes « responsable » (un CDI dont c'est le poste préféré) :
+  {% for p in posts if p.active %}<label class="me-2"><input class="form-check-input" type="checkbox" name="mgr_{{ p.key }}" value="1" {% if p.key in cfg.supervision.manager_posts %}checked{% endif %}> {{ p.label }}</label>{% endfor %}</div>
+  <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="manager_required" id="mr" value="1" {% if cfg.supervision.manager_required %}checked{% endif %}><label class="form-check-label" for="mr">Alerter si aucun responsable n'est planifié un jour d'ouverture</label></div>
+  <div class="mt-2 col-md-3 col-6"><label class="form-label small mb-0 fw-semibold">Semaines à garder publiées d'avance</label><input type="number" min="1" max="8" class="form-control form-control-sm" name="horizon_weeks" value="{{ cfg.publication.horizon_weeks }}"><div class="form-text">le bilan du lundi signale les semaines manquantes</div></div>
+
+{% elif step == 4 %}
+  <p class="small text-muted">Une carte par salarié de {{ sites[site] }}. Postes : − et + règlent le niveau, — = n'intervient pas, 1 = poste préféré, puis 2, 3… par ordre de préférence décroissant (jusqu'à {{ level_max }}). Les niveaux et habitudes viennent de l'historique ; mobilité, flexibilité, priorité d'appel, téléphone et Telegram sont à renseigner par vous. Le pool de remplacement est la société entière : l'établissement d'origine passe en premier.</p>
+  {% set active_posts = posts|selectattr('active')|list %}
+  {% for e in employees %}{% set ep = e_posts(e) %}{% set off = e_list(e, 'days_off') %}{% set cfa = e_list(e, 'cfa_days') %}{% set mob = e_list(e, 'mobility') %}
+  <div class="border rounded p-2 mb-2 {{ '' if e.active else 'bg-light' }}">
+    <div class="d-flex flex-wrap align-items-center gap-2 small">
+      <div class="form-check mb-0"><input class="form-check-input" type="checkbox" name="{{ e.id }}_active" id="act_{{ e.id }}" value="1" {% if e.active %}checked{% endif %}><label class="form-check-label fw-semibold fs-6" for="act_{{ e.id }}">{{ full_name(e) }}</label></div>
+      <span class="badge text-bg-light border">{{ e.contract_type }}</span>
+      <span>contrat <input type="number" step="0.5" class="form-control form-control-sm d-inline-block" style="width:70px" name="{{ e.id }}_weekly_hours" value="{{ e.weekly_hours }}"> h</span>
+      <span>max <input type="number" min="1" max="6" class="form-control form-control-sm d-inline-block" style="width:58px" name="{{ e.id }}_max_days" value="{{ e.max_days }}"> j/sem</span>
+      <span>dimanche <select name="{{ e.id }}_sunday" class="form-select form-select-sm d-inline-block" style="width:auto"><option value="oui" {% if e.sunday == 'oui' %}selected{% endif %}>oui</option><option value="non" {% if e.sunday == 'non' %}selected{% endif %}>non</option></select></span>
+      <span>non travaillé {% for wd in range(7) %}<label class="me-1"><input type="checkbox" class="form-check-input" name="{{ e.id }}_off_{{ wd }}" value="1" {% if wd in off %}checked{% endif %}> {{ days_short[wd] }}</label>{% endfor %}</span>
+      {% if e.contract_type in ('Apprenti', 'Stage') %}<span>CFA {% for wd in range(7) %}<label class="me-1"><input type="checkbox" class="form-check-input" name="{{ e.id }}_cfa_{{ wd }}" value="1" {% if wd in cfa %}checked{% endif %}> {{ days_short[wd] }}</label>{% endfor %}</span>{% endif %}
+    </div>
+    <div class="mt-2">{{ levels(e.id ~ '_', ep, active_posts, level_max) }}</div>
+    <div class="d-flex flex-wrap align-items-center gap-2 mt-2 small">
+      <span>mobile vers {% for k, v in sites.items() if k != e.site %}<label class="me-1"><input type="checkbox" class="form-check-input" name="{{ e.id }}_mob_{{ k }}" value="1" {% if k in mob %}checked{% endif %}> {{ v|replace("O'Copain ", "") }}</label>{% endfor %}</span>
+      <span>flexibilité <select name="{{ e.id }}_flexibility" class="form-select form-select-sm d-inline-block" style="width:auto">{% for v, l in [(1,'1 · peu'),(2,'2 · normale'),(3,'3 · très')] %}<option value="{{ v }}" {% if e.flexibility == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></span>
+      <span>priorité d'appel <input type="number" min="1" max="9" class="form-control form-control-sm d-inline-block" style="width:58px" name="{{ e.id }}_priority" value="{{ e.priority }}"></span>
+      <span>tél. <input class="form-control form-control-sm d-inline-block" style="width:150px" name="{{ e.id }}_phone" value="{{ e.phone or '' }}" placeholder="+262 6…"></span>
+      <span>Telegram <input class="form-control form-control-sm d-inline-block" style="width:130px" name="{{ e.id }}_telegram" value="{{ e.telegram or '' }}" placeholder="@…"></span>
+    </div>
+  </div>
+  {% endfor %}
+  {{ levels_js() }}
 
 {% elif step == 5 %}
-  <div class="row g-3">
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Part max de dimanches (0,5 = 1 sur 2)</label><input type="number" step="0.05" min="0" max="1" class="form-control form-control-sm" name="sunday_max_share" value="{{ cfg.sunday.max_share }}"><div class="form-text">observé : médiane 47 %, max 58 %</div></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Dimanches consécutifs max</label><input type="number" class="form-control form-control-sm" name="sunday_consecutive_max" value="{{ cfg.sunday.consecutive_max }}"><div class="form-text">75 paires consécutives observées</div></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Majoration dimanche (%)</label><input type="number" class="form-control form-control-sm" name="sunday_premium" value="{{ cfg.sunday.premium_pct }}"><div class="form-text">Skello : 0 % — à confirmer</div></div>
-    <div class="col-md-3"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Nuit : début</label><input type="time" class="form-control form-control-sm" name="night_start" value="{{ cfg.night.start }}"><div class="form-text">Skello 20:00 ; convention 21:00</div></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Nuit : fin</label><input type="time" class="form-control form-control-sm" name="night_end" value="{{ cfg.night.end }}"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Majoration nuit (%)</label><input type="number" class="form-control form-control-sm" name="night_premium" value="{{ cfg.night.premium_pct }}"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Majoration férié travaillé (%)</label><input type="number" class="form-control form-control-sm" name="holiday_premium" value="{{ cfg.holidays.premium_pct }}"></div>
-    <div class="col-12"><div class="fw-semibold small">Jours fériés : cochez les types, Vaelan calcule la date chaque année (Pâques, Ascension, Pentecôte sont mobiles). « Fermé » = aucune plage ce jour-là.</div>
-      <div class="table-responsive"><table class="table table-sm w-auto align-middle"><thead><tr class="small text-muted"><th>Férié</th><th>Férié chez nous</th><th>Magasin fermé</th>{% for y, _ in holiday_dates.items() %}<th>{{ y }}</th>{% endfor %}</tr></thead><tbody>
-      {% for k, lbl, kind, spec in holiday_types %}
-        <tr><td>{{ lbl }} <span class="text-muted small">{{ 'mobile' if kind == 'mobile' else '' }}</span></td>
-          <td class="text-center"><input class="form-check-input" type="checkbox" name="hol_{{ k }}" value="1" {% if k in cfg.holidays.types %}checked{% endif %}></td>
-          <td class="text-center"><input class="form-check-input" type="checkbox" name="holclosed_{{ k }}" value="1" {% if k in cfg.holidays.closed_types %}checked{% endif %}></td>
-          {% for y, dd in holiday_dates.items() %}<td class="small text-muted">{{ dd[k].strftime('%a %d/%m') }}</td>{% endfor %}</tr>
-      {% endfor %}</tbody></table></div>
-      <div class="form-text">observé : fermé le 25 décembre et le 1er janvier, ouvert en équipe réduite les autres, 1er mai compris.</div></div>
-    <div class="col-md-4"><label class="form-label small mb-0 fw-semibold">Rappel par email avant chaque férié (jours)</label><input type="number" class="form-control form-control-sm" name="holiday_confirm_days" value="{{ cfg.holidays.confirm_days }}"><div class="form-text">pour reconfirmer ouvert / fermé et l'équipe prévue</div></div>
-    <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" name="holiday_compensation" id="hc" value="1" {% if cfg.holidays.compensation %}checked{% endif %}><label class="form-check-label" for="hc">Férié travaillé → jour de récupération <span class="text-muted small">(69 récupérations posées dans l'année)</span></label></div></div>
-  </div>
-
-{% elif step == 6 %}{% set S = cfg.supervision %}
-  <div class="fw-semibold small mb-1">Postes qui comptent comme « responsable » (au moins un présent chaque jour d'ouverture)</div>
-  {% for p in posts if p.active %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="mgr_{{ p.key }}" id="mgr_{{ p.key }}" value="1" {% if p.key in S.manager_posts %}checked{% endif %}><label class="form-check-label small" for="mgr_{{ p.key }}">{{ p.label }}</label></div>{% endfor %}
-  <div class="form-text mb-2">Un responsable = un CDI dont c'est le poste principal. Observé : 47 jours sans responsable de vente dans l'année, dont 13 dimanches.</div>
-  <div class="form-check"><input class="form-check-input" type="checkbox" name="manager_required" id="mr" value="1" {% if S.manager_required %}checked{% endif %}><label class="form-check-label" for="mr">Alerter si aucun responsable n'est planifié un jour d'ouverture</label></div>
-  <div class="form-check"><input class="form-check-input" type="checkbox" name="manager_at_opening" id="mo" value="1" {% if S.manager_at_opening %}checked{% endif %}><label class="form-check-label" for="mo">Exiger un responsable dès l'ouverture (avant 7 h) <span class="text-muted small">(97 matins sans responsable observés)</span></label></div>
-  <div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="apprentice_never_alone" id="ana" value="1" {% if S.apprentice_never_alone %}checked{% endif %}><label class="form-check-label" for="ana">Un apprenti ou stagiaire n'est jamais seul sur son poste</label></div>
-  <div class="fw-semibold small mb-1">Jours de CFA des apprentis et stagiaires</div>
-  <div class="table-responsive"><table class="table table-sm w-auto align-middle"><thead><tr class="small text-muted"><th>Salarié</th>{% for d in days_short %}<th class="text-center">{{ d }}</th>{% endfor %}</tr></thead><tbody>
-  {% for e in employees if e.contract_type in ('Apprenti','Stage') and e.active %}{% set cfa = e_list(e, 'cfa_days') %}
-    <tr><td>{{ full_name(e) }} <span class="text-muted small">{{ e.contract_type }}</span></td>{% for wd in range(7) %}<td class="text-center"><input class="form-check-input" type="checkbox" name="cfa_{{ e.id }}_{{ wd }}" value="1" {% if wd in cfa %}checked{% endif %}></td>{% endfor %}</tr>
-  {% endfor %}</tbody></table></div>
-  <div class="form-text">Déduit des absences « École - CFA » : surtout le mardi ; certains apprentis alternent par semaines entières (à gérer en absences).</div>
-
-{% elif step == 7 %}
-  <p class="small text-muted">Une carte par salarié. Niveau sur un poste : cliquez pour passer de — à 1 (préféré, poste principal), 2 (tient le poste), 3 (peut dépanner). Les niveaux et habitudes viennent de l'historique ; mobilité, flexibilité, priorité d'appel et Telegram sont à renseigner par vous.</p>
-  {% set active_posts = posts|selectattr('active')|list %}
-  {% for e in employees %}{% set ep = e_posts(e) %}{% set off = e_list(e, 'days_off') %}{% set mob = e_list(e, 'mobility') %}
-  <div class="border rounded p-2 mb-2 {{ '' if e.active else 'bg-light' }}">
-    <div class="d-flex flex-wrap align-items-center gap-2">
-      <div class="form-check mb-0"><input class="form-check-input" type="checkbox" name="active_{{ e.id }}" id="act_{{ e.id }}" value="1" {% if e.active %}checked{% endif %}><label class="form-check-label fw-semibold" for="act_{{ e.id }}">{{ full_name(e) }}</label></div>
-      <span class="badge text-bg-light border">{{ e.contract_type }}</span>
-      <span class="small">contrat <input type="number" step="0.5" class="form-control form-control-sm d-inline-block" style="width:70px" name="hours_{{ e.id }}" value="{{ e.weekly_hours }}"> h</span>
-      <span class="small">max <input type="number" min="1" max="6" class="form-control form-control-sm d-inline-block" style="width:58px" name="maxdays_{{ e.id }}" value="{{ e.max_days }}"> j/sem</span>
-      <span class="small">dimanche <select name="sunday_{{ e.id }}" class="form-select form-select-sm d-inline-block" style="width:auto"><option value="oui" {% if e.sunday == 'oui' %}selected{% endif %}>oui</option><option value="non" {% if e.sunday == 'non' %}selected{% endif %}>non</option></select></span>
-      <span class="small">jours non travaillés {% for wd in range(7) %}<label class="me-1"><input type="checkbox" class="form-check-input" name="off_{{ e.id }}_{{ wd }}" value="1" {% if wd in off %}checked{% endif %}> {{ days_short[wd] }}</label>{% endfor %}</span>
-    </div>
-    <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
-      <span class="small text-muted me-1">Postes :</span>
-      {% for p in active_posts %}{% set lvl = ep.get(p.key, 0) %}
-        <button type="button" class="btn btn-sm py-0 lvl-btn {{ 'btn-outline-secondary' if not lvl else '' }}" data-lvl="{{ lvl }}" data-color="{{ p.color }}" style="{% if lvl %}background:{{ p.color }};border-color:{{ p.color }};color:#222;opacity:{{ 1.05 - lvl*0.15 }}{% endif %}">{{ p.label }}{% if lvl %} · {{ lvl }}{% endif %}</button>
-        <input type="hidden" name="lvl_{{ e.id }}_{{ p.key }}" value="{{ lvl }}">
-      {% endfor %}
-    </div>
-    <div class="d-flex flex-wrap align-items-center gap-2 mt-2 small">
-      <span>mobile vers {% for k, v in sites.items() if k != site %}<label class="me-1"><input type="checkbox" class="form-check-input" name="mob_{{ e.id }}_{{ k }}" value="1" {% if k in mob %}checked{% endif %}> {{ v|replace("O'Copain ", "") }}</label>{% endfor %}</span>
-      <span>flexibilité <select name="flex_{{ e.id }}" class="form-select form-select-sm d-inline-block" style="width:auto">{% for v, l in [(1,'1 · peu'),(2,'2 · normale'),(3,'3 · très flexible')] %}<option value="{{ v }}" {% if e.flexibility == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></span>
-      <span>priorité d'appel <input type="number" min="1" max="9" class="form-control form-control-sm d-inline-block" style="width:58px" name="prio_{{ e.id }}" value="{{ e.priority }}"> <span class="text-muted">(1 = en premier)</span></span>
-      <span>tél. <input class="form-control form-control-sm d-inline-block" style="width:150px" name="phone_{{ e.id }}" value="{{ e.phone or '' }}" placeholder="+262 6…"></span>
-      <span>Telegram <input class="form-control form-control-sm d-inline-block" style="width:130px" name="tg_{{ e.id }}" value="{{ e.telegram or '' }}" placeholder="@…"></span>
-    </div>
-  </div>
-  {% endfor %}
-  <script>document.querySelectorAll('.lvl-btn').forEach(b => b.addEventListener('click', () => { const inp = b.nextElementSibling; let l = (parseInt(inp.value) + 1) % 4; inp.value = l;
-    b.textContent = b.textContent.split(' · ')[0] + (l ? ' · ' + l : ''); if (l) { b.className = 'btn btn-sm py-0 lvl-btn'; b.style.cssText = `background:${b.dataset.color};border-color:${b.dataset.color};color:#222;opacity:${1.05 - l*0.15}`; } else { b.className = 'btn btn-sm py-0 lvl-btn btn-outline-secondary'; b.style.cssText = ''; } }));</script>
-
-{% elif step == 8 %}{% set Rp = cfg.replacement %}{% set Pu = cfg.publication %}{% set Co = cfg.counters %}
-  <div class="row g-3">
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Recherche immédiate si l'absence est à J+… (jours)</label><input type="number" class="form-control form-control-sm" name="immediate_if_days" value="{{ Rp.immediate_if_days }}"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Sinon, lancer la recherche sous (h)</label><input type="number" class="form-control form-control-sm" name="delay_hours" value="{{ Rp.delay_hours }}"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Personnes sollicitées en parallèle (plan A, B, C…)</label><input type="number" min="1" max="6" class="form-control form-control-sm" name="parallel" value="{{ Rp.parallel }}"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Délai de réponse avant plan suivant (min)</label><input type="number" class="form-control form-control-sm" name="answer_minutes" value="{{ Rp.answer_minutes }}"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Délai de prévenance (jours)</label><input type="number" class="form-control form-control-sm" name="notice_days" value="{{ Pu.notice_days }}"><div class="form-text">légal 7 jours ouvrés sauf accord</div></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Horizon publié (semaines)</label><input type="number" class="form-control form-control-sm" name="horizon_weeks" value="{{ Pu.horizon_weeks }}"></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Période des compteurs</label><select name="counter_period" class="form-select form-select-sm">{% for v in ['annuelle','trimestrielle','mensuelle'] %}<option {% if Co.period == v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
-    <div class="col-md-3"><label class="form-label small mb-0 fw-semibold">Alerte si compteur au-delà de ± (h)</label><input type="number" class="form-control form-control-sm" name="counter_alert" value="{{ Co.alert_hours }}"></div>
-  </div>
-
-{% elif step == 9 %}
   <div class="row g-3 small">
-    <div class="col-md-6"><div class="fw-semibold">Établissement</div>{{ sites[site] }} · ouvert {{ cfg.opening['0'][0] }} → {{ cfg.opening['0'][1] }} en semaine, {{ cfg.opening['6'][0] }} → {{ cfg.opening['6'][1] }} le dimanche · renforts : {{ cfg.other_sites|join(', ') or 'aucun' }}</div>
     <div class="col-md-6"><div class="fw-semibold">Postes actifs</div>{{ posts|selectattr('active')|map(attribute='label')|join(' · ') }}</div>
-    <div class="col-md-6"><div class="fw-semibold">Temps de travail</div>{{ cfg.rules.day_max_hours }} h/jour · {{ cfg.rules.week_max_hours }} h/semaine · repos {{ cfg.rules.rest_min_hours }} h · {{ cfg.rules.consecutive_max_days }} jours consécutifs max · tolérance {{ cfg.rules.overtime_tolerance }} h</div>
+    <div class="col-md-6"><div class="fw-semibold">Règles</div>{{ cfg.rules.day_max_hours }} h/jour · {{ cfg.rules.week_max_hours }} h/semaine · {{ cfg.rules.avg12_max_hours }} h en moyenne sur 12 semaines · repos {{ cfg.rules.rest_min_hours }} h · {{ cfg.rules.consecutive_max_days }} jours consécutifs · tolérance {{ cfg.rules.overtime_tolerance }} h</div>
     <div class="col-md-6"><div class="fw-semibold">Dimanches, nuit, fériés</div>dimanche {{ (cfg.sunday.max_share*100)|round|int }} % max, {{ cfg.sunday.consecutive_max }} consécutifs, +{{ cfg.sunday.premium_pct }} % · nuit {{ cfg.night.start }}–{{ cfg.night.end }} +{{ cfg.night.premium_pct }} % · {{ cfg.holidays.types|length }} fériés, fermé : {{ cfg.holidays.closed_types|join(', ') }}</div>
-    <div class="col-md-6"><div class="fw-semibold">Salariés actifs</div>{{ employees|selectattr('active')|list|length }} ({{ employees|selectattr('active')|selectattr('contract_type','equalto','CDI')|list|length }} CDI)</div>
-    <div class="col-md-6"><div class="fw-semibold">Remplacements</div>{{ cfg.replacement.parallel }} sollicitations en parallèle · réponse sous {{ cfg.replacement.answer_minutes }} min · prévenance {{ cfg.publication.notice_days }} j</div>
+    <div class="col-md-6"><div class="fw-semibold">Salariés actifs ({{ sites[site] }})</div>{{ employees|selectattr('active')|list|length }} · sans poste : {{ employees|selectattr('active')|rejectattr('posts', 'ne', '{}')|list|length }}</div>
   </div>
-  <div class="alert alert-light border mt-3 small">En validant, le module passe en mode automatique : génération des plannings à la demande, alertes sur la grille, remplacements guidés. Vous pourrez toujours revenir corriger une étape.</div>
+  <div class="alert alert-light border mt-3 small">En validant, le module passe en mode automatique : génération à la demande, alertes sur la grille, contrôles quotidiens, remplacements guidés. Vous pourrez toujours revenir corriger une étape.</div>
 {% endif %}
 
 <div class="d-flex gap-2 mt-3">
-  {% if step < 9 %}<button class="btn btn-dark">Enregistrer et continuer <i class="bi bi-arrow-right"></i></button><button class="btn btn-outline-secondary" name="action" value="stay">Enregistrer</button>
+  {% if step < 5 %}<button class="btn btn-dark">Enregistrer et continuer <i class="bi bi-arrow-right"></i></button><button class="btn btn-outline-secondary" name="action" value="stay">Enregistrer</button>
   {% else %}<button class="btn btn-success"><i class="bi bi-check2-circle"></i> Valider la configuration — passer en mode automatique</button>{% endif %}
-  {% if step > 1 %}<a class="btn btn-link" href="/c/{{ company.code }}/planning/config?step={{ step - 1 }}">Retour</a>{% endif %}
+  {% if step > 1 %}<a class="btn btn-link" href="/c/{{ company.code }}/planning/config?step={{ step - 1 }}&site={{ site }}">Retour</a>{% endif %}
 </div>
 </form>
-{% if cfg.validated_at and step == 9 %}<form method="post" action="/c/{{ company.code }}/planning/config/reopen" class="mt-2"><button class="btn btn-sm btn-link text-muted">Rouvrir le questionnaire depuis le début</button></form>{% endif %}
+{% if cfg.validated_at and step == 5 %}<form method="post" action="/c/{{ company.code }}/planning/config/reopen" class="mt-2"><button class="btn btn-sm btn-link text-muted">Rouvrir le questionnaire depuis le début</button></form>{% endif %}
 </div></div>
 {% endblock %}
