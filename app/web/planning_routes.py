@@ -440,14 +440,14 @@ def planning_incident(request: Request, code: str, iid: int, msg: str = ""):
 
 
 @router.post("/c/{code}/planning/incidents/{iid}/answer")
-def planning_incident_answer(request: Request, code: str, iid: int, shift_id: int = Form(...), option_id: str = Form(""), outcome: str = Form(...)):
+def planning_incident_answer(request: Request, code: str, iid: int, shift_id: int = Form(...), option_id: str = Form(""), outcome: str = Form(...), employee_id: int = Form(0)):
     company, redir = _guard(request, code)
     if redir:
         return redir
     inc = service.get_incident(iid)
     if not inc:
         return RedirectResponse(f"/c/{code}/planning/incidents", status_code=303)
-    replace.record_answer(inc, shift_id, option_id, outcome, by=_who(request))
+    replace.record_answer(inc, shift_id, option_id, outcome, by=_who(request), employee_id=employee_id or None)
     return RedirectResponse(f"/c/{code}/planning/incidents/{iid}", status_code=303)
 
 

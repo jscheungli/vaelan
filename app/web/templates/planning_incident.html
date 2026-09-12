@@ -29,15 +29,30 @@
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="badge text-bg-dark fs-6">{{ o.letter }}</span>
         <span class="fw-semibold">{{ o.name }}</span>
-        <span class="badge text-bg-light border">{{ {'call': 'à appeler', 'move': 'déjà sur place · sans appel', 'swap': 'échange de jour'}[o.kind] }}</span>
+        <span class="badge text-bg-light border">{{ {'call': 'à appeler', 'move': 'déjà sur place · sans appel', 'swap': 'échange de jour', 'chain': 'en chaîne · ' ~ (o.steps|length) ~ ' personnes'}[o.kind] }}</span>
         {% if o.site != inc.site %}<span class="badge text-bg-info">{{ sites.get(o.site, o.site) }}</span>{% endif %}
-        <span class="small text-muted">{{ o.phone or 'tél. inconnu' }}{% if o.telegram %} · {{ o.telegram }}{% endif %} · {{ o.week_hours }} h / {{ o.contract|int }} h cette semaine</span>
-        {% if o.status != 'à contacter' %}<span class="badge text-bg-{{ 'secondary' if o.status == 'pas disponible' else 'warning' }}">{{ o.status }}</span>{% endif %}
+        {% if o.kind != 'chain' %}<span class="small text-muted">{{ o.phone or 'tél. inconnu' }}{% if o.telegram %} · {{ o.telegram }}{% endif %} · {{ o.week_hours }} h / {{ o.contract|int }} h cette semaine</span>{% endif %}
+        {% if o.status not in ('à contacter',) %}<span class="badge text-bg-{{ 'success' if o.status == 'tous confirmés' else ('secondary' if o.status in ('pas disponible', 'refusée') else 'warning') }}">{{ o.status }}</span>{% endif %}
         <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="ms-auto d-inline"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="option_id" value="{{ o.id }}">
-          <button name="outcome" value="oui" class="btn btn-sm btn-success py-0">Retenir</button>
-          {% if o.status == 'à contacter' %} <button name="outcome" value="non" class="btn btn-sm btn-outline-secondary py-0">Pas dispo</button> <button name="outcome" value="pas_de_reponse" class="btn btn-sm btn-outline-warning py-0">Pas de réponse</button>{% endif %}
+          {% set all_ok = o.participants|selectattr('status', 'equalto', 'confirmé')|list|length == o.participants|length %}
+          {% if o.participants|length == 1 %}<button name="outcome" value="oui" class="btn btn-sm btn-success py-0" {% if o.status in ('pas disponible', 'refusée') %}disabled{% endif %}>Retenir</button>
+          {% elif all_ok %}<button name="outcome" value="oui" class="btn btn-sm btn-success py-0">Appliquer (tous ont confirmé)</button>
+          {% else %}<span class="small text-muted">à appliquer une fois les {{ o.participants|length }} confirmations obtenues</span>{% endif %}
+          {% if o.status == 'à contacter' and o.participants|length == 1 %} <button name="outcome" value="non" class="btn btn-sm btn-outline-secondary py-0">Pas dispo</button> <button name="outcome" value="pas_de_reponse" class="btn btn-sm btn-outline-warning py-0">Pas de réponse</button>{% endif %}
         </form>
       </div>
+      {% if o.kind == 'chain' %}
+      <div class="small mt-1"><span class="text-muted">Étapes :</span> {% for st in o.steps %}<span class="badge text-bg-light border me-1">{{ loop.index }}</span>{{ st.text }}{% if not loop.last %} → {% endif %}{% endfor %}</div>
+      <div class="small mt-1 d-flex flex-wrap align-items-center gap-2"><span class="text-muted">À faire valider par :</span>
+        {% for pt in o.participants %}
+          <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="d-inline-flex align-items-center gap-1 border rounded px-2 py-1"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="option_id" value="{{ o.id }}"><input type="hidden" name="employee_id" value="{{ pt.employee_id }}">
+            <span class="fw-semibold">{{ pt.name }}</span>{% if pt.phone %}<span class="text-muted">{{ pt.phone }}</span>{% endif %}
+            <span class="badge text-bg-{{ 'success' if pt.status == 'confirmé' else ('secondary' if pt.status == 'refusé' else 'light border') }}">{{ pt.status }}</span>
+            {% if pt.status == 'à confirmer' and o.status not in ('refusée', 'retenue') %}<button name="outcome" value="confirm" class="btn btn-sm btn-outline-success py-0">a confirmé</button><button name="outcome" value="refuse" class="btn btn-sm btn-outline-secondary py-0">refuse</button>{% endif %}
+          </form>
+        {% endfor %}
+      </div>
+      {% endif %}
       <div class="row small mt-1">
         <div class="col-md-6"><span class="text-muted">Pourquoi :</span> {{ o.why|join(' · ') }}</div>
         <div class="col-md-6"><span class="text-muted">Conséquences :</span> {% if o.cons %}<span class="{{ 'text-warning-emphasis' if o.cons else '' }}">{{ o.cons|join(' · ') }}</span>{% else %}aucune : dans les règles, sans heure supplémentaire{% endif %}</div>
