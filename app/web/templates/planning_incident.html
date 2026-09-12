@@ -25,15 +25,15 @@
   {% if not sh.resolution %}
   {% for step in st.steps %}
     <div class="mb-2"><div class="fw-semibold small text-uppercase text-muted">{{ step.title }}</div>
-    {% if step.kind == 'move' %}
+    {% if step.kind in ('move', 'swap') %}
       {% for m in step['items'] %}<div class="d-flex flex-wrap align-items-center gap-2 border rounded p-2 mb-1"><span class="small">{{ m.text }}</span>
         <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="ms-auto d-inline"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="employee_id" value="{{ m.employee_id }}">
-          <button name="outcome" value="oui" class="btn btn-sm btn-success py-0">Il/elle est d'accord → basculer</button> <button name="outcome" value="refuse" class="btn btn-sm btn-outline-secondary py-0">Non</button></form></div>{% endfor %}
+          <button name="outcome" value="oui" class="btn btn-sm btn-success py-0">D'accord → appliquer</button> <button name="outcome" value="refuse" class="btn btn-sm btn-outline-secondary py-0">Non</button>{% if step.kind == 'swap' %} <button name="outcome" value="pas_de_reponse" class="btn btn-sm btn-outline-warning py-0">Pas de réponse</button>{% endif %}</form></div>{% endfor %}
     {% elif step.kind in ('call', 'reinforcement') %}
       <div class="small text-muted mb-1">{{ step.hint or '' }}</div>
       {% for c in step['items'] %}<div class="d-flex flex-wrap align-items-center gap-2 border rounded p-2 mb-1 {{ 'bg-light' if c.status not in ('à contacter',) }}">
         <span class="fw-semibold">{{ c.name }}</span>{% if c.site != inc.site %}<span class="badge text-bg-light border">{{ c.site }}</span>{% endif %}
-        <span class="small text-muted">{{ c.phone or 'tél. inconnu' }}{% if c.telegram %} · {{ c.telegram }}{% endif %} · niveau {{ c.level }} · {{ c.week_hours }} h / {{ c.contract|int }} h cette semaine · flex {{ c.flex }} · priorité {{ c.priority }}</span>
+        <span class="small text-muted">{{ c.phone or 'tél. inconnu' }}{% if c.telegram %} · {{ c.telegram }}{% endif %} · niveau {{ c.level }}{% if c.note %} · <span class="text-warning">{{ c.note }}</span>{% endif %} · {{ c.week_hours }} h / {{ c.contract|int }} h cette semaine · flex {{ c.flex }} · priorité {{ c.priority }}</span>
         <span class="badge text-bg-{{ 'success' if c.status == 'disponible' else ('secondary' if c.status in ('pas disponible','refusé') else ('warning' if c.status == 'pas de réponse' else 'light border')) }}">{{ c.status }}</span>
         {% if c.status in ('à contacter', 'pas de réponse') %}
         <form method="post" action="/c/{{ company.code }}/planning/incidents/{{ inc.id }}/answer" class="ms-auto d-inline"><input type="hidden" name="shift_id" value="{{ sh.shift_id }}"><input type="hidden" name="employee_id" value="{{ c.employee_id }}">
