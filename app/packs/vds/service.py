@@ -510,7 +510,7 @@ def save_response(res: VdsReservation, form: dict, uploads: list, ip: str, ua: s
     data = {
         "rules": rules, "confirms": confirms,
         "full_name": _clean(form.get("full_name"), 120), "birth_date": "", "birth_place": "",   # plus demandés (pièce d'identité jointe)
-        "nationality": _clean(form.get("nationality"), 60),
+        "nationality": "",                                          # plus demandée
         "street": _clean(form.get("street")), "postal_code": _clean(form.get("postal_code"), 12),
         "city": _clean(form.get("city"), 80), "country": _clean(form.get("country"), 60), "address": address,
         "email": _clean(form.get("email"), 120).lower(), "phone": _clean(form.get("phone"), 30),
@@ -630,8 +630,9 @@ def build_recap_pdf(res: VdsReservation, resp: VdsResponse, signature_png: Optio
     for k in ("birth_date", "birth_place"):                    # anciennes réponses seulement (plus demandés)
         if d.get(k):
             ident.append((t(lang, k), fmt_date(d.get(k), lang) if k == "birth_date" else d.get(k)))
-    ident += [(t(lang, "nationality"), d.get("nationality")),
-              ("Adresse" if lang == "fr" else "Address", d.get("address")), (t(lang, "email"), d.get("email") or res.guest_email),
+    if d.get("nationality"):                                   # anciennes réponses seulement
+        ident.append((t(lang, "nationality"), d.get("nationality")))
+    ident += [("Adresse" if lang == "fr" else "Address", d.get("address")), (t(lang, "email"), d.get("email") or res.guest_email),
               ("Téléphone" if lang == "fr" else "Phone", d.get("phone")), (t(lang, "arrival_time"), d.get("arrival_time")),
               ("Occupants", str(d.get("occupants") or res.guests or "") + ((" — " + d.get("occupants_list")) if d.get("occupants_list") else ""))]
     ident_rows = "".join(f"<tr><td class='q'>{esc(k)}</td><td class='a'>{esc(v)}</td></tr>" for k, v in ident)
