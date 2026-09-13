@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Configuration CIOP · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/ciop">CIOP</a></li><li class="breadcrumb-item active">Configuration</li></ol></nav>
+<h1 class="h4">Configuration CIOP — {{ company.name }}</h1>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<form method="post" class="small">
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h6 text-uppercase text-muted">Propriétaire de l'investissement (cadre I-A)</h2>
+    <div class="row g-2">
+      <div class="col-md-4"><label class="form-label mb-0">Dénomination</label><input class="form-control form-control-sm" name="id_name" value="{{ cfg.identity.name }}"></div>
+      <div class="col-md-4"><label class="form-label mb-0">Siège social (retour à la ligne accepté)</label><textarea class="form-control form-control-sm" name="id_address" rows="2">{{ cfg.identity.address }}</textarea></div>
+      <div class="col-md-2"><label class="form-label mb-0">SIREN</label><input class="form-control form-control-sm" name="id_siren" value="{{ cfg.identity.siren }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Forme</label><input class="form-control form-control-sm" name="id_legal_form" value="{{ cfg.identity.legal_form }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">APE</label><input class="form-control form-control-sm" name="id_ape" value="{{ cfg.identity.ape }}"></div>
+    </div>
+    <h2 class="h6 text-uppercase text-muted mt-3">Associés (cadre I-B)</h2>
+    <table class="table table-sm"><thead><tr class="text-muted"><th>Nom / dénomination</th><th>Adresse</th><th>SIREN</th><th>Quote-part %</th></tr></thead><tbody>
+    {% for i in range(4) %}{% set p = cfg.partners[i] if i < cfg.partners|length else {} %}
+      <tr><td><input class="form-control form-control-sm" name="pa{{ i }}_name" value="{{ p.get('name', '') }}"></td><td><input class="form-control form-control-sm" name="pa{{ i }}_address" value="{{ p.get('address', '') }}"></td>
+        <td><input class="form-control form-control-sm" name="pa{{ i }}_siren" value="{{ p.get('siren', '') }}"></td><td><input class="form-control form-control-sm" name="pa{{ i }}_share" value="{{ p.get('share', '') }}"></td></tr>
+    {% endfor %}</tbody></table>
+  </div></div>
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h6 text-uppercase text-muted">Établissements (lieu d'exploitation)</h2>
+    <p class="text-muted mb-1">Indices : mots cherchés dans le texte ou le nom de fichier de la facture pour proposer l'établissement (séparés par des virgules, sans accent). Le siège n'est pas un indice.</p>
+    <table class="table table-sm"><thead><tr class="text-muted"><th style="width:70px">Code</th><th>Nom</th><th>Adresse (telle qu'imprimée dans le tableau)</th><th>Indices</th></tr></thead><tbody>
+    {% for i in range(6) %}{% set s = cfg.sites[i] if i < cfg.sites|length else {} %}
+      <tr><td><input class="form-control form-control-sm" name="si{{ i }}_code" value="{{ s.get('code', '') }}"></td><td><input class="form-control form-control-sm" name="si{{ i }}_label" value="{{ s.get('label', '') }}"></td>
+        <td><input class="form-control form-control-sm" name="si{{ i }}_address" value="{{ s.get('address', '') }}"></td><td><input class="form-control form-control-sm" name="si{{ i }}_aliases" value="{{ s.get('aliases', [])|join(', ') }}"></td></tr>
+    {% endfor %}</tbody></table>
+  </div></div>
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h6 text-uppercase text-muted">Déclarant (page 5)</h2>
+    <div class="row g-2">
+      <div class="col-md-3"><label class="form-label mb-0">Nom</label><input class="form-control form-control-sm" name="dc_name" value="{{ cfg.declarant.name }}"></div>
+      <div class="col-md-3"><label class="form-label mb-0">Qualité</label><input class="form-control form-control-sm" name="dc_quality" value="{{ cfg.declarant.quality }}"></div>
+      <div class="col-md-3"><label class="form-label mb-0">Adresse</label><input class="form-control form-control-sm" name="dc_address" value="{{ cfg.declarant.address }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Fait à</label><input class="form-control form-control-sm" name="dc_place" value="{{ cfg.declarant.place }}"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Le (vide = à la signature)</label><input class="form-control form-control-sm" name="dc_date" value="{{ cfg.declarant.date or '' }}"></div>
+      <div class="col-md-6"><label class="form-label mb-0">Mention dans la case signature</label><input class="form-control form-control-sm" name="dc_signature_note" value="{{ cfg.declarant.signature_note or '' }}"></div>
+    </div>
+  </div></div>
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h6 text-uppercase text-muted">Paramètres</h2>
+    <div class="row g-2">
+      <div class="col-md-2"><label class="form-label mb-0">Code investissement</label><input class="form-control form-control-sm" name="p_code_invest" value="{{ cfg.params.code_invest }}"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Article du CGI</label><input class="form-control form-control-sm" name="p_article" value="{{ cfg.params.article }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Taux %</label><input class="form-control form-control-sm" name="p_rate_pct" value="{{ cfg.params.rate_pct }}"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Clôture (mois / jour)</label><div class="input-group input-group-sm"><input class="form-control" name="p_fy_end_month" value="{{ cfg.params.fy_end_month }}"><input class="form-control" name="p_fy_end_day" value="{{ cfg.params.fy_end_day }}"></div></div>
+      <div class="col-md-2"><label class="form-label mb-0">Journaux d'achats</label><input class="form-control form-control-sm" name="p_purchase_journals" value="{{ cfg.params.purchase_journals|join(', ') }}"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Mot-clé des comptes</label><input class="form-control form-control-sm" name="p_account_keyword" value="{{ cfg.params.account_keyword }}"></div>
+    </div>
+  </div></div>
+  <button class="btn btn-dark btn-sm">Enregistrer</button>
+</form>
+{% endblock %}

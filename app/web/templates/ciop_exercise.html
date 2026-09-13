@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}CIOP {{ fy_label }} · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/ciop">CIOP</a></li><li class="breadcrumb-item active">Exercice {{ fy_label }}</li></ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">CIOP {{ fy_label }} — exercice clos le {{ fy.strftime('%d/%m/%Y') }}</h1>
+  <form method="post" action="/c/{{ company.code }}/ciop/{{ fy.isoformat() }}/collect" class="ms-auto d-inline"><button class="btn btn-sm btn-outline-dark" {% if running %}disabled{% endif %}><i class="bi bi-arrow-repeat"></i> {{ 'Relire' if ex.lines else 'Lire' }} Pennylane</button></form>
+  <form method="post" action="/c/{{ company.code }}/ciop/{{ fy.isoformat() }}/build" class="d-inline"><button class="btn btn-sm btn-dark" {% if running or not ex.lines %}disabled{% endif %}><i class="bi bi-file-earmark-zip"></i> Générer le dossier</button></form>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+{% if running %}<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm"></span> Tâche en cours : {{ running[0].label }} — {{ running[0].step }} (<a href="/jobs?c={{ company.code }}">suivre</a>, puis rechargez cette page).</div>{% endif %}
+{% if not ex.lines %}
+<div class="card shadow-sm"><div class="card-body small text-muted">Aucune donnée : cliquez sur « Lire Pennylane ». Comptes de classe 2 dont le libellé contient « {{ cfg.params.account_keyword }} », journaux {{ cfg.params.purchase_journals|join(', ') }}, du {{ fy.replace(year=fy.year-1).strftime('%d/%m/%Y') }} au {{ fy.strftime('%d/%m/%Y') }}.</div></div>
+{% else %}
+<div class="row g-2 mb-2 small">
+  <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="text-muted">Comptes CIOP, journaux d'achats</div><div class="fs-5 fw-semibold">{{ eur(totals.comptes_achats) }}</div>{% if totals.n_exclues %}<div class="text-muted">dont écartées : {{ eur(totals.exclues) }} ({{ totals.n_exclues }})</div>{% endif %}</div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="text-muted">Tableau ({{ totals.n_lignes }} lignes)</div><div class="fs-5 fw-semibold">{{ eur(totals.tableau) }}</div><div class="text-muted">réduction {{ cfg.params.rate_pct|int }} % : {{ eur(totals.reduction) }}</div></div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="text-muted">Factures archivées</div><div class="fs-5 fw-semibold">{{ eur(totals.factures) }}</div>{% if totals.sans_piece %}<div class="text-danger">{{ totals.sans_piece|length }} sans pièce</div>{% endif %}</div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm h-100 border-{{ 'success' if totals.ok else 'warning' }}"><div class="card-body py-2"><div class="text-muted">Cadrage</div><div class="fs-5 fw-semibold">{{ 'OK' if totals.ok else 'à compléter' }}</div>{% if totals.sans_site %}<div class="text-warning-emphasis">{{ totals.sans_site|length }} établissement(s) à préciser</div>{% endif %}{% if totals.n_autres %}<div class="text-muted">{{ totals.n_autres }} autre(s) mouvement(s) hors achats : {{ eur(totals.autres_mouvements) }}</div>{% endif %}</div></div></div>
+</div>
+<form method="post" action="/c/{{ company.code }}/ciop/{{ fy.isoformat() }}/lines">
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:.8rem">
+  <thead><tr class="text-muted"><th></th><th>Date</th><th>Fournisseur · n° facture</th><th>HT</th><th style="min-width:280px">Nature de l'investissement (libellé du tableau)</th><th>Établissement</th><th style="width:110px">Début d'exploitation</th><th>Pièce</th><th>Note</th></tr></thead><tbody>
+  {% for l in ex.lines %}
+  <tr class="{{ '' if l.include else 'table-secondary text-muted' }}">
+    <td><input type="checkbox" class="form-check-input" name="include_{{ l.key }}" value="1" {% if l.include %}checked{% endif %} title="retenir dans le tableau"></td>
+    <td class="text-nowrap">{{ fr(l.date) }}<div class="text-muted" style="font-size:.7rem">{{ l.account }} · {{ l.journal }}</div></td>
+    <td><strong>{{ l.supplier }}</strong> {{ l.invoice_number }}<div class="text-muted" style="font-size:.7rem">pièce {{ l.piece }}{% if l.descriptions %} · {{ l.descriptions|join(' / ')|truncate(110) }}{% endif %}</div></td>
+    <td class="text-end text-nowrap">{{ eur(l.amount) }}</td>
+    <td><input class="form-control form-control-sm" name="label_{{ l.key }}" value="{{ l.label }}" style="text-transform:uppercase">{% if l.label != l.label_proposed %}<div class="text-muted" style="font-size:.7rem">proposé : {{ l.label_proposed }}</div>{% endif %}</td>
+    <td><select class="form-select form-select-sm {{ '' if l.site else 'border-warning' }}" name="site_{{ l.key }}"><option value="">à préciser</option>{% for s in cfg.sites %}<option value="{{ s.code }}" {% if l.site == s.code %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select>{% if l.site_detected and l.site != l.site_detected %}<div class="text-muted" style="font-size:.7rem">lu sur la facture : {{ site_of(cfg, l.site_detected).label }}</div>{% endif %}</td>
+    <td><input class="form-control form-control-sm" name="start_{{ l.key }}" value="{{ l.start }}">{% if l.dates.delivery %}<div class="text-muted" style="font-size:.7rem">livraison {{ l.dates.delivery }}</div>{% endif %}{% if l.dates.install %}<div class="text-muted" style="font-size:.7rem">installation {{ l.dates.install }}</div>{% endif %}</td>
+    <td>{% if l.has_file %}<a href="{{ l.attachment_url }}" target="_blank" class="text-decoration-none" title="{{ l.attachment_name }}"><i class="bi bi-file-earmark-pdf"></i></a>{% if not l.text_len %} <span class="badge text-bg-light border" title="scan ou photo : pas de texte lisible">scan</span>{% endif %}{% else %}<span class="badge text-bg-danger">absente</span>{% endif %}</td>
+    <td><input class="form-control form-control-sm" name="note_{{ l.key }}" value="{{ l.note }}" placeholder="motif si écartée"></td>
+  </tr>{% endfor %}
+</tbody></table></div>
+<div class="card-body py-2 d-flex align-items-center gap-2"><button class="btn btn-sm btn-dark">Enregistrer les lignes</button><span class="small text-muted">Les libellés sont imprimés en majuscules ; une ligne décochée sort du tableau et apparaît dans le cadrage avec sa note.</span></div>
+</div>
+</form>
+{% if ex.other_moves %}{% set om = ex.other_moves|rejectattr('journal', 'equalto', 'AN')|list %}{% if om %}
+<details class="mt-3 small"><summary>Autres mouvements sur les comptes CIOP dans l'exercice (hors journaux d'achats, hors à-nouveaux) : {{ om|length }}</summary>
+<table class="table table-sm mt-2"><thead><tr class="text-muted"><th>Date</th><th>Journal</th><th>Compte</th><th>Montant</th><th>Libellé</th></tr></thead><tbody>
+{% for o in om %}<tr><td>{{ fr(o.date) }}</td><td>{{ o.journal }}</td><td>{{ o.account }}</td><td class="text-end">{{ eur(o.amount) }}</td><td>{{ o.label }}</td></tr>{% endfor %}</tbody></table></details>
+{% endif %}{% endif %}
+{% endif %}
+{% if runs %}
+<h2 class="h6 mt-3">Dernières tâches</h2>
+<table class="table table-sm small"><tbody>
+{% for r in runs %}<tr><td class="text-nowrap">{{ r.created_at.strftime('%d/%m %H:%M') }}</td><td>{{ r.label }}</td><td><span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('info' if r.status == 'running' else 'danger') }}">{{ r.status }}</span></td><td>{{ r.summary or r.step }}</td>
+  <td>{% if arts.get(r.id) %}<a class="btn btn-sm btn-outline-dark py-0" href="/jobs/{{ r.id }}/artifact/{{ arts[r.id].kind }}"><i class="bi bi-download"></i> {{ arts[r.id].name }}</a>{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+{% endif %}
+{% endblock %}

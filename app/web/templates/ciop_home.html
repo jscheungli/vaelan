@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}CIOP · {{ company.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item active">CIOP</li></ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0"><i class="bi bi-file-earmark-text"></i> CIOP — formulaire 2083-SD</h1>
+  <a class="btn btn-sm btn-outline-secondary ms-auto" href="/c/{{ company.code }}/ciop/config"><i class="bi bi-gear"></i> Configuration</a>
+</div>
+<p class="small text-muted">Crédit d'impôt pour investissements productifs outre-mer (art. {{ cfg.params.article }}, taux {{ cfg.params.rate_pct|int }} %). Pour un exercice : lecture des comptes « {{ cfg.params.account_keyword }} » de classe 2 sur les journaux {{ cfg.params.purchase_journals|join(', ') }}, factures récupérées dans Pennylane, libellé et établissement proposés puis validés par vous, dossier complet (factures renommées, tableau des investissements acquis, CERFA pré-rempli, cadrage).</p>
+<div class="card shadow-sm"><table class="table table-sm align-middle mb-0">
+  <thead><tr class="small text-muted"><th>Exercice</th><th>Clôture</th><th>Lecture Pennylane</th><th>Investissements</th><th>Dossier</th><th></th></tr></thead><tbody>
+  {% for it in items %}<tr class="small">
+    <td class="fw-semibold">{{ it.label }}</td><td>{{ it.fy.strftime('%d/%m/%Y') }}</td>
+    <td>{{ it.collected_at[:16].replace('T', ' ') if it.collected_at else '—' }}</td>
+    <td>{% if it.totals %}{{ it.totals.n_lignes }} ligne(s) · {{ '%.2f'|format(it.totals.tableau) }} € HT{% if not it.totals.ok %} <span class="badge text-bg-warning">à compléter</span>{% endif %}{% else %}—{% endif %}</td>
+    <td>{{ it.built_at[:16].replace('T', ' ') if it.built_at else '—' }}</td>
+    <td class="text-end"><a class="btn btn-sm btn-dark py-0" href="/c/{{ company.code }}/ciop/{{ it.fy.isoformat() }}">ouvrir</a></td>
+  </tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

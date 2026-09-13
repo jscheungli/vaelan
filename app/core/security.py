@@ -74,10 +74,11 @@ def role_for(user: User, company: Company) -> Optional[str]:
 # (et l'admin/superuser pour supervision).
 _CAISSE = {"suivi", "jobs", "clients", "paiements", "config"}   # modules Groupe FDF (TopOrder)
 _PLANNING = {"planning"}                                       # planning des équipes (boulangeries)
+_CIOP = {"ciop"}                                               # préparation du 2083-SD (crédit d'impôt outre-mer)
 _ODOO = {"odoo", "inqom", "jobs"}                               # modules Groupe ISFAHAAN (Odoo/Inqom × Pennylane)
 _FULL = _CAISSE                                                 # alias historique
 _VDS = {"checkin", "jobs"}                                     # SCI Les Sables du Lagon (villa, Lodgify)
-_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS | _PLANNING
+_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS | _PLANNING | _CIOP
 
 # ---- Registre SOCIÉTÉ -> MODULES ----
 # Chaque société n'expose QUE les modules de son groupe : rien n'est partagé par défaut.
@@ -86,8 +87,8 @@ _ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS | _PLANNING
 # société Odoo, pas de module Odoo sur une boulangerie, etc.).
 COMPANY_MODULES = {
     # Groupe FDF (boulangeries + labo — TopOrder)
-    "STERNA":    _CAISSE | {"salaires"} | _PLANNING,
-    "KOOKABURA": _CAISSE | {"salaires"},
+    "STERNA":    _CAISSE | {"salaires"} | _PLANNING | _CIOP,
+    "KOOKABURA": _CAISSE | {"salaires"} | _CIOP,
     "PP126.23":  {"salaires"},                 # paie seule
     # Groupe ISFAHAAN (Odoo × Pennylane — PAS de TopOrder)
     "LACORP":       set(_ODOO),
@@ -122,7 +123,7 @@ def features_for(role: Optional[str], is_superuser: bool = False) -> set:
     if role in ("comptable", "admin", "operator"):
         # le périmètre réel est ENSUITE intersecté avec les modules de la société :
         # un comptable ISFAHAAN ne voit que « odoo », un comptable FDF que la caisse.
-        return _CAISSE | _ODOO | {"treso", "interco"} | _VDS | _PLANNING
+        return _CAISSE | _ODOO | {"treso", "interco"} | _VDS | _PLANNING | _CIOP
     return set()
 
 
