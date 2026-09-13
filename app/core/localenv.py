@@ -17,6 +17,7 @@ Structure du fichier (groupée PAR CONNECTEUR ; ajouter une société = une entr
   "lodgify":   { "VDS": {"apiKey": "…"} },
   "shopify":   { "OWINE": {"shop": "2ac587-75.myshopify.com", "clientId": "…", "clientSecret": "…", "apiVersion": "2026-07"} }
                (ou "token": "shpat_…" à la place du couple clientId / clientSecret),
+  "chronopost": { "OWINE": {"account": "84048903 (n° de contrat)", "password": "…", "subAccount": ""} },
   "smtp":      { "host": "smtp.gmail.com", "port": 587, "user": "…", "password": "…", "from": "Nom <adresse>" }
 }
 
@@ -98,6 +99,11 @@ def load(path: str = None, db: bool = False) -> str:
         _set(f"SHOPIFY_{k}_CLIENT_ID", c.get("clientId"))
         _set(f"SHOPIFY_{k}_CLIENT_SECRET", c.get("clientSecret"))
         _set(f"SHOPIFY_{k}_APIVERSION", c.get("apiVersion"))
+    for code, c in (d.get("chronopost") or {}).items():
+        k = _env_key(code)
+        _set(f"CHRONOPOST_{k}_ACCOUNT", str(c.get("account") or c.get("contract") or "").split(" ")[0])
+        _set(f"CHRONOPOST_{k}_PASSWORD", c.get("password"))
+        _set(f"CHRONOPOST_{k}_SUBACCOUNT", c.get("subAccount"))
     tg = d.get("telegram") or {}
     _set("TELEGRAM_BOT_TOKEN", tg.get("botToken") or tg.get("token"))
     an = d.get("anthropic") or {}
