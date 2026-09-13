@@ -46,7 +46,7 @@
 {% if runs %}
 <h2 class="h6 mt-3">Dernières tâches</h2>
 <table class="table table-sm small"><tbody>
-{% for r in runs %}<tr><td class="text-nowrap">{{ r.created_at.strftime('%d/%m %H:%M') }}</td><td>{{ r.label }}</td><td><span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('info' if r.status == 'running' else 'danger') }}">{{ r.status }}</span></td><td>{{ r.summary or r.step }}</td>
+{% for r in runs %}<tr><td class="text-nowrap">{{ r.started_at.strftime('%d/%m %H:%M') }}</td><td>{{ r.label }}</td><td><span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('info' if r.status == 'running' else 'danger') }}">{{ r.status }}</span></td><td>{{ r.summary or r.step }}</td>
   <td>{% if arts.get(r.id) %}<a class="btn btn-sm btn-outline-dark py-0" href="/jobs/{{ r.id }}/artifact/{{ arts[r.id].kind }}"><i class="bi bi-download"></i> {{ arts[r.id].name }}</a>{% endif %}</td></tr>{% endfor %}
 </tbody></table>
 {% endif %}

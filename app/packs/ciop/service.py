@@ -119,11 +119,19 @@ def detect_site(cfg: dict, text: str, filename: str = "") -> Optional[str]:
 
 
 def propose_label(text: str, fallback: str = "") -> str:
+    """Règle dont le mot-clé apparaît le PLUS TÔT dans le texte (la première désignation est l'article principal) ;
+    à position égale, l'ordre des règles départage (les règles précises sont avant les génériques)."""
     t = norm(text)
-    for pat, lab in config.LABEL_RULES:
-        if re.search(pat, t):
-            return lab
-    return (norm(fallback).upper() + " PRODUCTION").strip() if fallback else "MATERIEL DE PRODUCTION"
+    best = None
+    for i, (pat, lab) in enumerate(config.LABEL_RULES):
+        m = re.search(pat, t)
+        if m and (best is None or (m.start(), i) < best[0]):
+            best = ((m.start(), i), lab)
+    if best:
+        return best[1]
+    fb = re.sub(r"^[\s\-–•*_:.]+|[\s\-–•*_:.]+$", "", norm(fallback or "")).upper()
+    fb = re.sub(r"\s*\(.*?\)\s*", " ", fb).strip()
+    return (fb + " PRODUCTION").strip() if len(fb) > 3 else "MATERIEL DE PRODUCTION"
 
 
 _DATE = r"(\d{2}/\d{2}/\d{4})"
@@ -289,7 +297,7 @@ def collect(company_code: str, fy_end: date, log=None) -> dict:
                 continue
             e = seen_entries.get(eid) or c.get(f"/ledger_entries/{eid}")
             seen_entries[eid] = e
-            m = re.match(r"Facture (.+?) - ", e.get("label") or "")
+            m = re.match(r"(?:Facture|Avoir|Note de crédit) (.+?) - ", e.get("label") or "")
             sup401 = next((x for x in e.get("ledger_entry_lines") or [] if str((x.get("ledger_account") or {}).get("number", "")).startswith("401")), {})
             supplier = (m.group(1) if m else "") or str((sup401.get("ledger_account") or {}).get("label") or "").split(" - ")[0]
             att = e.get("attachment") or {}
@@ -313,8 +321,9 @@ def collect(company_code: str, fy_end: date, log=None) -> dict:
             line["descriptions"] = descriptions(text, exclude=[line["supplier"], cfg["identity"].get("name", ""), line["invoice_number"]])
             line["dates"] = detect_dates(text)
             line["site_detected"] = detect_site(cfg, text, line["attachment_name"])
+            line["warning"] = next((msg for pat, msg in config.INELIGIBLE_HINTS if re.search(pat, norm(text) + " " + norm(line["line_label"]))), "")
             line["vision"] = None
-            if has_file and not text.strip():
+            if has_file and len(text.strip()) < 20:
                 v = read_scan(pdf)                       # scan / photo : lecture par l'assistant (si configuré)
                 if v:
                     line["vision"] = v
@@ -322,20 +331,31 @@ def collect(company_code: str, fy_end: date, log=None) -> dict:
                     line["dates"] = {k: v["dates"][k] for k in ("install", "delivery") if v.get("dates") and v["dates"].get(k)}
                     line["site_detected"] = detect_site(cfg, " ".join(line["descriptions"]) + " " + str(v.get("lieu") or ""), line["attachment_name"])
                     log(f"scan lu par l'assistant : {line['supplier']} {line['invoice_number']} → {line['descriptions'][:2]} / {v.get('lieu')}")
-            line["label_proposed"] = propose_label(" ".join(line["descriptions"]) + " " + line["line_label"] + " " + line["attachment_name"], fallback=(line["descriptions"] or [line["line_label"] or ""])[0])
+            line["label_proposed"] = propose_label(line["line_label"] + " " + " ".join(line["descriptions"]) + " " + line["attachment_name"], fallback=(line["line_label"] or (line["descriptions"] or [""])[0]))
             # choix utilisateur conservés : seulement ce qui a été MODIFIÉ à la main (différent de la proposition d'alors),
             # sinon la nouvelle proposition s'applique
             edited = lambda k, prop_k: old.get(k) and old.get(k) != old.get(prop_k)
             line["label"] = old["label"] if edited("label", "label_proposed") else line["label_proposed"]
+            if not line["site_detected"] and len(cfg.get("sites", [])) == 1:
+                line["site_detected"] = cfg["sites"][0]["code"]           # un seul établissement : pas d'ambiguïté
             line["site"] = old["site"] if edited("site", "site_detected") else (line["site_detected"] or "")
             start_default = line["dates"].get("install") or _fr(line["date"])
             line["start"] = old["start"] if edited("start", "start_default") else start_default
             line["start_default"] = start_default
-            line["include"] = old.get("include", True)
-            line["note"] = old.get("note", "")
+            line["include"] = old.get("include", not line["warning"]) if old else not line["warning"]
+            line["note"] = old.get("note", "") if old else (line["warning"] or "")
             lines.append(line)
             log(f"{line['date']} {line['supplier']} {line['invoice_number']} {amt:.2f} € → {line['label']} / {line['site'] or 'établissement ?'}{'' if has_file else ' (PAS DE PIÈCE)'}")
     lines.sort(key=lambda x: (x["date"], x["piece"]))
+    # avoir qui annule une facture du même fournisseur (montants opposés) : les deux sortent du tableau, avec la note
+    for l in lines:
+        if l["amount"] < 0 and l["key"] not in prev:
+            inv = next((x for x in lines if x["amount"] == -l["amount"] and x["supplier"] == l["supplier"] and x["key"] not in prev and x.get("include", True) and x["amount"] > 0), None)
+            if inv:
+                l["include"] = inv["include"] = False
+                l["note"] = f"avoir annulant la facture {inv['invoice_number']}"
+                inv["note"] = f"annulée par l'avoir {l['invoice_number']}"
+                l["label"] = inv["label"] = inv["label_proposed"]
     ex = {"lines": lines, "other_moves": sorted(other, key=lambda x: x["date"]), "accounts": [{"number": a["number"], "label": a["label"], "id": a["id"]} for a in accs],
           "collected_at": datetime.utcnow().isoformat(timespec="seconds"), "fy_start": d0.isoformat(), "fy_end": d1.isoformat()}
     ex["totals"] = totals(cfg, ex)
@@ -370,7 +390,7 @@ def totals(cfg: dict, ex: dict) -> dict:
             "exclues": round(sum(l["amount"] for l in exc), 2), "n_exclues": len(exc), "n_lignes": len(inc),
             "sans_piece": [l["key"] for l in inc if not l.get("has_file")], "sans_site": [l["key"] for l in inc if not l.get("site")],
             "autres_mouvements": round(sum(o["amount"] for o in other_non_an), 2), "n_autres": len(other_non_an),
-            "ok": (t_acc == t_tab + round(sum(l["amount"] for l in exc), 2)) and t_tab == t_fact and not [l for l in inc if not l.get("site")]}
+            "ok": abs(t_acc - (t_tab + sum(l["amount"] for l in exc))) < 0.005 and abs(t_tab - t_fact) < 0.005 and not [l for l in inc if not l.get("site")]}
 
 
 def update_lines(company_code: str, fy_end: date, form: dict) -> dict:
