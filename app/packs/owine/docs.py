@@ -33,6 +33,11 @@ def delivery_of(pickup: date) -> date:
     return n
 
 
+def lab(n: int) -> str:
+    """« l'étiquette d'envoi » / « les étiquettes d'envoi » selon le nombre de cartons."""
+    return "l'étiquette d'envoi" if n <= 1 else "les étiquettes d'envoi"
+
+
 def missing_vars(o, cs) -> List[str]:
     """Ce qu'il faut renseigner avant de générer les e-mails."""
     miss = []
@@ -259,9 +264,9 @@ def email_alix(o, cs) -> dict:
         subject = f"Commande OWINE #{o.name} (retrait client)"
     else:
         slot = f"Enlèvement n° {o.pickup_no or '…'} | {fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'} entre {o.pickup_slot or '14:00 et 17:00'} | 21200 BEAUNE"
-        body = (f"Bonjour,\n\nJe vous prie de trouver ci-joint le détail et les étiquettes d'envoi pour cette nouvelle commande à préparer ({desc}, {nb} bouteille{'s' if nb > 1 else ''}).\n\n"
-                "Rappel : Attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.\n\n"
-                f"L'enlèvement a été réservé sur le créneau suivant :\n\n{slot}\n\nEn vous remerciant pour votre confirmation une fois que ce sera prêt.\n\nA bientôt,")
+        rappel = "Rappel : Attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.\n\n" if len(cs) > 1 else ""
+        body = (f"Bonjour,\n\nJe vous prie de trouver ci-joint le détail et {lab(len(cs))} pour cette nouvelle commande à préparer ({desc}, {nb} bouteille{'s' if nb > 1 else ''}).\n\n"
+                + rappel + f"L'enlèvement a été réservé sur le créneau suivant :\n\n{slot}\n\nEn vous remerciant pour votre confirmation une fois que ce sera prêt.\n\nA bientôt,")
         subject = f"Commande OWINE #{o.name}"
     return {"to": [config.ALIX_EMAIL], "cc": config.ALIX_CC, "subject": subject, "body": body}
 
@@ -278,7 +283,7 @@ def email_client(o, cs) -> dict:
     else:
         deliv = delivery_of(o.pickup_date) if o.pickup_date else None
         body = (f"Bonjour {first},\n\nJ'ai le plaisir de vous confirmer que l'enlèvement de votre commande {o.name} par Chronopost est réservé pour le "
-                f"{fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'}. Vous trouverez ci-jointes la liste de colisage et les étiquettes d'envoi correspondantes.\n\n"
+                f"{fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'}. Vous trouverez ci-joint{'e' if len(cs) <= 1 else 'es'} la liste de colisage et {lab(len(cs))} correspondante{'' if len(cs) <= 1 else 's'}.\n\n"
                 f"La livraison est prévue le {fr_date(deliv) if deliv else '(à confirmer)'} avant 13 h, sauf aléa de transport.\n\n"
                 "⚠️ AVERTISSEMENT IMPORTANT\n\nAu moment de la livraison, nous vous recommandons vivement d'ouvrir le carton avant de signer afin de vérifier que :\n"
                 "- les bouteilles sont intactes ;\n- le nombre de bouteilles correspond bien à votre commande (cf. liste de colisage ci-jointe pour le détail du contenu de chaque carton).\n\n"
@@ -385,7 +390,7 @@ def email_client_html(o, cs, extra: str = "") -> str:
              f"La livraison est prévue le <strong>{_esc(fr_date(deliv)) if deliv else '(à confirmer)'} avant 13 h</strong>, sauf aléa de transport.</p>"
              + extra_html
              + _cartons_table(o, cs, with_tracking=True)
-             + "<p style=\"font-size:13px;color:#555;\">Vous trouverez ci-joints la liste de colisage détaillée et les étiquettes d'envoi (un numéro de suivi par carton, cliquable ci-dessus).</p>"
+             + f"<p style=\"font-size:13px;color:#555;\">Vous trouverez ci-joint{'e' if len(cs) <= 1 else 's'} la liste de colisage détaillée et {lab(len(cs))} ({'numéro de suivi cliquable ci-dessus' if len(cs) <= 1 else 'un numéro de suivi par carton, cliquable ci-dessus'}).</p>"
              + _delivery_box()
              + "<p>Nous restons bien entendu à votre disposition pour toute question et vous souhaitons une excellente réception.</p>"
              + "<p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
@@ -401,8 +406,9 @@ def email_alix_html(o, cs, extra: str = "") -> str:
                  + extra_html + _cartons_table(o, cs, with_tracking=False) + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
         return _shell(f"Commande OWINE #{o.name} — retrait client", inner)
     slot = f"Enlèvement n° {_esc(o.pickup_no or '…')} · {_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'} entre {_esc(o.pickup_slot or '14:00 et 17:00')} · 21200 BEAUNE"
-    inner = (f"<p>Bonjour,</p><p>Je vous prie de trouver ci-joint le détail et les étiquettes d'envoi pour cette nouvelle commande à préparer ({len(cs)} carton{'s' if len(cs) > 1 else ''}, {nb} bouteille{'s' if nb > 1 else ''}).</p>"
-             f"<p style=\"background:#fff3cd;border-radius:6px;padding:10px 14px;\"><strong>Rappel :</strong> attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.</p>"
+    rappel = f"<p style=\"background:#fff3cd;border-radius:6px;padding:10px 14px;color:#222;\"><strong>Rappel :</strong> attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.</p>" if len(cs) > 1 else ""
+    inner = (f"<p>Bonjour,</p><p>Je vous prie de trouver ci-joint le détail et {lab(len(cs))} pour cette nouvelle commande à préparer ({len(cs)} carton{'s' if len(cs) > 1 else ''}, {nb} bouteille{'s' if nb > 1 else ''}).</p>"
+             + rappel
              + _cartons_table(o, cs, with_tracking=True)
              + f"<p style=\"background:{CSS_LIGHT};border-radius:6px;padding:10px 14px;margin-top:14px;color:#222;\"><strong>L'enlèvement a été réservé sur le créneau suivant :</strong><br>{slot}</p>"
              + extra_html + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")

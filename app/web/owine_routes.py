@@ -307,6 +307,8 @@ def owine_order_doc(request: Request, code: str, name: str, what: str):
         return Response(docs.packing_list_pdf(o, cs), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename=\"Detail {o.name}.pdf\"; filename*=UTF-8''D%C3%A9tail%20{o.name}.pdf"})
     if what == "alix":
         return Response(docs.alix_xlsx(o, cs), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{o.name}.xlsx"'})
+    if what.startswith("etiquette"):
+        return Response("?", status_code=404)
     if what == "zip":
         return Response(docs.bundle_zip(o, cs, _labels(o)), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{o.name} - envoi.zip"'})
     return Response("?", status_code=404)
@@ -344,8 +346,18 @@ def owine_order_emails(request: Request, code: str, name: str, msg: str = ""):
         return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Avant les e-mails, renseignez : {', '.join(miss)}.", status_code=303)
     ed = _email_edits(o)
     em = _emails_of(o, cs, ed)
-    return templates.TemplateResponse(request, "owine_emails.html", _base(request, company, o=o, em=em, ed=ed, msg=msg, gmail_ok=gmail_imap.configured(CODE), labels=[n for n, _ in _labels(o)],
-                                                                         sent=o.status in ("envoye", "attente_reception", "cloturee")))
+    import base64
+    logo_uri = "data:image/png;base64," + base64.b64encode(open(docs.LOGO, "rb").read()).decode()
+    for k in ("alix", "client"):
+        em[k]["preview"] = em[k]["html"].replace("cid:logo", logo_uri)
+    labels = _labels(o)
+    def size(b): return f"{len(b) / 1024:.0f} Ko"
+    pl = docs.packing_list_pdf(o, cs); xl = docs.alix_xlsx(o, cs)
+    base = f"/c/{code}/owine/commandes/{name}/doc"
+    att_alix = [(f"Détail {o.name}.pdf", f"{base}/colisage", size(pl)), (f"{o.name}.xlsx", f"{base}/alix", size(xl))] + [(n, f"{base}/etiquette/{i}", size(d)) for i, (n, d) in enumerate(labels)]
+    att_client = [(f"Détail {o.name}.pdf", f"{base}/colisage", size(pl))] + [(n, f"{base}/etiquette/{i}", size(d)) for i, (n, d) in enumerate(labels)]
+    return templates.TemplateResponse(request, "owine_emails.html", _base(request, company, o=o, em=em, ed=ed, msg=msg, gmail_ok=gmail_imap.configured(CODE), labels=[n for n, _ in labels],
+                                                                         att_alix=att_alix, att_client=att_client, sent=o.status in ("envoye", "attente_reception", "cloturee")))
 
 
 @router.post("/c/{code}/owine/commandes/{name}/emails")
@@ -384,6 +396,18 @@ def _send_emails(request, code, o, ed):
         service.mark_sent(o, by=_who(request))
         return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}?msg=Les deux e-mails sont partis (Alix et client) : stock décompté, suivi de réception créé.", status_code=303)
     return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}/emails?msg=Envoi incomplet — Alix : {m1} · client : {m2}. Rien n'a été décompté.", status_code=303)
+
+
+@router.get("/c/{code}/owine/commandes/{name}/doc/etiquette/{idx}")
+def owine_order_label(request: Request, code: str, name: str, idx: int):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); labels = _labels(o)
+    if idx < 0 or idx >= len(labels):
+        return Response("Étiquette introuvable", status_code=404)
+    n, d = labels[idx]
+    return Response(d, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{n.encode("ascii", "ignore").decode()}"'})
 
 
 @router.post("/c/{code}/owine/commandes/{name}/brouillons")
