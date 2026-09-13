@@ -12,7 +12,7 @@ import httpx
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models import Setting
+from app.models import Setting, CiopForm
 from app.core.connectors.pennylane import for_company
 from . import config
 
@@ -442,3 +442,74 @@ def update_lines(company_code: str, fy_end: date, form: dict) -> dict:
     ex["totals"] = totals(cfg, ex)
     save_exercise(company_code, fy_end, ex)
     return ex
+
+
+# ----------------------------------------------------------------- CERFA vierges par millésime
+def form_millesime(fy_end: date) -> int:
+    """Millésime attendu = année de clôture (exercice clos le 30/06/2026 → CERFA 2083-SD (2026))."""
+    return fy_end.year
+
+
+def parse_form(pdf: bytes) -> dict:
+    """Lit le millésime et la version dans le PDF (« N° 2083-SD (2026) », « N° 13445*18 ») et vérifie le calage."""
+    import fitz
+    from . import build
+    d = fitz.open(stream=pdf, filetype="pdf")
+    t = d[0].get_text() if d.page_count else ""
+    m = re.search(r"2083-SD\s*\((\d{4})\)", t)
+    v = re.search(r"N°\s*(13445\*\d+)", t)
+    out = {"millesime": int(m.group(1)) if m else None, "version": v.group(1) if v else None, "is_2083": "2083-SD" in t}
+    try:
+        g = build.geometry(d)
+        out.update({"ok": True, "pages": g["form_pages"], "table_page": g["table_page"] + 1, "declarant_page": g["declarant_page"] + 1})
+    except Exception as e:
+        out.update({"ok": False, "error": str(e)[:200]})
+    return out
+
+
+def forms() -> List[CiopForm]:
+    with Session(engine) as s:
+        rows = s.exec(select(CiopForm).order_by(CiopForm.millesime.desc())).all()
+        for r in rows:
+            s.expunge(r)
+        return rows
+
+
+def form_for(fy_end: date) -> Optional[CiopForm]:
+    """Le CERFA vierge du millésime attendu, ou None (→ il faut le déposer)."""
+    ensure_builtin()
+    with Session(engine) as s:
+        r = s.exec(select(CiopForm).where(CiopForm.millesime == form_millesime(fy_end)).order_by(CiopForm.id.desc())).first()
+        if r:
+            s.expunge(r)
+        return r
+
+
+def save_form(pdf: bytes, filename: str, by: str = None) -> Tuple[Optional[CiopForm], dict]:
+    """Enregistre un CERFA vierge déposé ; refusé si ce n'est pas un 2083-SD ou si le calage échoue."""
+    info = parse_form(pdf)
+    if not info.get("is_2083") or not info.get("millesime"):
+        return None, {**info, "refused": "Ce PDF n'est pas un formulaire 2083-SD (millésime introuvable en page 1)."}
+    if not info.get("ok"):
+        return None, {**info, "refused": "Mise en page non reconnue : " + str(info.get("error"))}
+    with Session(engine) as s:
+        for old in s.exec(select(CiopForm).where(CiopForm.millesime == info["millesime"])).all():
+            s.delete(old)
+        f = CiopForm(millesime=info["millesime"], version=info.get("version"), filename=filename, data=pdf, pages=info.get("pages") or 0,
+                     check=json.dumps(info, ensure_ascii=False), by_user=by)
+        s.add(f)
+        s.commit()
+        s.refresh(f)
+        s.expunge(f)
+        return f, info
+
+
+def ensure_builtin() -> None:
+    """Le CERFA 2026 livré avec le module est enregistré une fois (millésime 2026)."""
+    import os
+    from . import build
+    with Session(engine) as s:
+        if s.exec(select(CiopForm).where(CiopForm.millesime == 2026)).first():
+            return
+    if os.path.exists(build.ASSET):
+        save_form(open(build.ASSET, "rb").read(), "2083-sd_2026 (modèle intégré).pdf", by="Vaelan")

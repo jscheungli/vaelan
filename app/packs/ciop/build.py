@@ -142,7 +142,101 @@ def table_xlsx(cfg: dict, ex: dict) -> bytes:
     bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
 
 
-# ----------------------------------------------------------------- CERFA pré-rempli
+# ----------------------------------------------------------------- CERFA : calage automatique sur le formulaire déposé
+def _segments(page):
+    """Segments horizontaux et verticaux des tracés (bords de cases)."""
+    H, V = [], []
+    for dr in page.get_drawings():
+        for it in dr["items"]:
+            if it[0] == "l":
+                a, b = it[1], it[2]
+                if abs(a.y - b.y) < 0.6 and abs(a.x - b.x) > 3:
+                    H.append((round(min(a.x, b.x), 1), round(max(a.x, b.x), 1), round(a.y, 1)))
+                elif abs(a.x - b.x) < 0.6 and abs(a.y - b.y) > 3:
+                    V.append((round(a.x, 1), round(min(a.y, b.y), 1), round(max(a.y, b.y), 1)))
+            elif it[0] == "re":
+                r = it[1]
+                if r.height < 1.2 and r.width > 3:
+                    H.append((round(r.x0, 1), round(r.x1, 1), round((r.y0 + r.y1) / 2, 1)))
+                elif r.width < 1.2 and r.height > 3:
+                    V.append((round((r.x0 + r.x1) / 2, 1), round(r.y0, 1), round(r.y1, 1)))
+    return H, V
+
+
+def _cell_at(H, V, x: float, y: float) -> fitz.Rect:
+    """Case entourant le point (x, y) : verticales les plus proches à gauche / droite qui croisent y,
+    horizontales les plus proches au-dessus / au-dessous qui croisent x."""
+    left = max([v[0] for v in V if v[0] <= x and v[1] - 1 <= y <= v[2] + 1], default=None)
+    right = min([v[0] for v in V if v[0] >= x and v[1] - 1 <= y <= v[2] + 1], default=None)
+    top = max([h[2] for h in H if h[2] <= y and h[0] - 1 <= x <= h[1] + 1], default=None)
+    bottom = min([h[2] for h in H if h[2] >= y and h[0] - 1 <= x <= h[1] + 1], default=None)
+    if None in (left, right, top, bottom):
+        raise ValueError(f"case introuvable autour de ({x:.0f},{y:.0f})")
+    return fitz.Rect(left, top, right, bottom)
+
+
+def _label(page, text: str, after_y: float = 0) -> fitz.Rect:
+    hits = [r for r in page.search_for(text) if r.y0 >= after_y]
+    if not hits:
+        raise ValueError(f"libellé « {text} » introuvable")
+    return hits[0]
+
+
+def _value_cell(page, H, V, text: str, after_y: float = 0) -> fitz.Rect:
+    """Case de saisie = case immédiatement à droite de la case qui contient le libellé."""
+    lab = _label(page, text, after_y)
+    cell = _cell_at(H, V, (lab.x0 + lab.x1) / 2, (lab.y0 + lab.y1) / 2)
+    return _cell_at(H, V, cell.x1 + 3, (lab.y0 + lab.y1) / 2)
+
+
+def geometry(doc) -> dict:
+    """Repère sur le formulaire déposé : pages du formulaire (avant la notice), page II (tableau), page du déclarant,
+    et les cases à remplir (exercice, identité, associés, déclarant). Lève ValueError si un repère manque."""
+    g = {}
+    texts = [p.get_text() for p in doc]
+    notice = next((i for i, t in enumerate(texts) if "Notice du formulaire" in t or "NOTICE" in t[:300]), doc.page_count)
+    g["form_pages"] = notice
+    g["table_page"] = next(i for i, t in enumerate(texts[:notice]) if "INVESTISSEMENTS ACQUIS" in t and i > 0)
+    g["declarant_page"] = next(i for i, t in enumerate(texts[:notice]) if "Identification du déclarant" in t)
+    p1 = doc[0]
+    H, V = _segments(p1)
+    ex = _label(p1, "Exercice du"); au = _label(p1, "au", after_y=ex.y0 - 2)
+    au = next((r for r in p1.search_for("au") if abs(r.y0 - ex.y0) < 3 and r.x0 > ex.x1), au)
+    band = [v for v in V if v[1] <= ex.y0 + 2 and v[2] >= ex.y1 - 2]
+    du_x = sorted({v[0] for v in band if ex.x1 < v[0] < au.x0})
+    au_x = sorted({v[0] for v in band if v[0] > au.x1})
+    if len(du_x) != 9 or len(au_x) != 9:
+        raise ValueError(f"cases de l'exercice : {len(du_x)} et {len(au_x)} séparateurs (9 attendus)")
+    g["du_x"], g["au_x"], g["ex_band"] = du_x, au_x, (min(v[1] for v in band), max(v[2] for v in band))
+    idy = _label(p1, "Identification du propriétaire").y1          # les mêmes mots existent dans le texte d'introduction
+    g["name"] = _value_cell(p1, H, V, "Dénomination de la personne morale", after_y=idy)
+    g["address"] = _value_cell(p1, H, V, "Siège social", after_y=idy)
+    g["siren"] = _value_cell(p1, H, V, "N° SIREN", after_y=idy)
+    g["legal_form"] = _value_cell(p1, H, V, "Forme juridique", after_y=idy)
+    g["ape"] = _value_cell(p1, H, V, "Code APE", after_y=idy)
+    # associés : lignes vides entre l'en-tête (« Quote-part ») et TOTAL, colonnes = verticales qui traversent ces lignes
+    head = _label(p1, "Quote-part", after_y=idy); total = _label(p1, "TOTAL", after_y=head.y1)
+    ys = sorted({h[2] for h in H if head.y1 < h[2] < total.y1 + 2 and h[1] - h[0] > 300})
+    rows = [(a, b) for a, b in zip(ys[:-1], ys[1:]) if 8 < b - a < 30 and b <= total.y0 + 2]
+    if len(rows) < 2:
+        raise ValueError("lignes des associés introuvables")
+    ym = (rows[0][0] + rows[0][1]) / 2
+    xs = sorted({v[0] for v in V if v[1] - 1 <= ym <= v[2] + 1})
+    if len(xs) < 5:
+        raise ValueError("colonnes des associés introuvables")
+    g["partner_rows"], g["partner_cols"] = rows, xs[:5]
+    p5 = doc[g["declarant_page"]]
+    H5, V5 = _segments(p5)
+    dy = _label(p5, "Identification du déclarant").y1
+    g["dc_name"] = _value_cell(p5, H5, V5, "Nom", after_y=dy)
+    g["dc_quality"] = _value_cell(p5, H5, V5, "Qualité", after_y=dy)
+    g["dc_address"] = _value_cell(p5, H5, V5, "Adresse", after_y=dy)
+    g["dc_place"] = _value_cell(p5, H5, V5, "Fait à", after_y=dy)
+    g["dc_date"] = _value_cell(p5, H5, V5, "Le", after_y=dy)
+    g["dc_signature"] = _value_cell(p5, H5, V5, "Signature", after_y=dy)
+    return g
+
+
 def _fit(page, rect: fitz.Rect, text: str, size: float = 9, font: str = FONT, align: str = "l", valign: str = "m"):
     """Texte dans une cellule (réduit la taille si trop long, gère les retours à la ligne)."""
     lines = (text or "").split("\n")
@@ -166,45 +260,47 @@ def _digits(page, xs: List[float], y0: float, y1: float, s: str):
     return
 
 
-def cerfa_pdf(cfg: dict, ex: dict, table_page: bytes, fy_start: date, fy_end: date) -> bytes:
-    """Pages du formulaire (1 à 5) : page 1 et page 5 complétées, page 2 remplacée par le tableau."""
-    src = fitz.open(ASSET)
+def cerfa_pdf(cfg: dict, ex: dict, table_page: bytes, fy_start: date, fy_end: date, form_pdf: bytes = None) -> bytes:
+    """Pages du formulaire (avant la notice) : page 1 et page du déclarant complétées d'après le calage automatique,
+    page II remplacée par le tableau. form_pdf = CERFA vierge du millésime (défaut : modèle 2026 intégré)."""
+    src = fitz.open(stream=form_pdf, filetype="pdf") if form_pdf else fitz.open(ASSET)
+    g = geometry(src)
     out = fitz.open()
     out.insert_pdf(src, from_page=0, to_page=0)
     p1 = out[0]
-    # exercice : cases (x des séparateurs relevés sur le formulaire 2026)
-    du = [311.9, 326.2, 340.1, 354.4, 368.3, 382.6, 397.0, 410.8, 425.2]
-    au = [453.4, 467.7, 481.6, 495.9, 510.3, 524.7, 538.5, 552.8, 566.7]
-    for xs, d in ((du, fy_start), (au, fy_end)):
+    y0, y1 = g["ex_band"]
+    for xs, d in ((g["du_x"], fy_start), (g["au_x"], fy_end)):
         for (a, b), ch in zip(zip(xs[:-1], xs[1:]), d.strftime("%d%m%Y")):
             tw = fitz.get_text_length(ch, fontname=FONT, fontsize=9)
-            p1.insert_text(((a + b) / 2 - tw / 2, 409.5), ch, fontname=FONT, fontsize=9)
+            p1.insert_text(((a + b) / 2 - tw / 2, (y0 + y1) / 2 + 3.5), ch, fontname=FONT, fontsize=9)
     idt = cfg["identity"]
-    _fit(p1, fitz.Rect(200.6, 477.2, 567.0, 525.6), idt.get("name", ""), size=10)
-    _fit(p1, fitz.Rect(200.6, 525.6, 395.6, 570.8), idt.get("address", ""), size=9)
-    _fit(p1, fitz.Rect(480.4, 525.6, 567.0, 570.8), idt.get("siren", ""), size=9)
-    _fit(p1, fitz.Rect(200.6, 570.8, 395.6, 616.0), idt.get("legal_form", ""), size=9)
-    _fit(p1, fitz.Rect(480.4, 570.8, 567.0, 616.0), idt.get("ape", ""), size=9)
-    ys = [713.1, 730.1, 747.2, 764.2, 781.3]
-    for (y0, y1), pr in zip(zip(ys[:-1], ys[1:]), cfg.get("partners", [])[:4]):
-        _fit(p1, fitz.Rect(28.4, y0, 211.7, y1), pr.get("name", ""), size=8)
-        _fit(p1, fitz.Rect(211.7, y0, 417.8, y1), pr.get("address", ""), size=7)
-        _fit(p1, fitz.Rect(417.8, y0, 502.6, y1), pr.get("siren", ""), size=8)
-        _fit(p1, fitz.Rect(502.6, y0, 567.0, y1), str(pr.get("share", "")), size=8)
-    # page II = tableau
-    out.insert_pdf(fitz.open(stream=table_page, filetype="pdf"))
-    # pages 3 à 5 du formulaire
-    out.insert_pdf(src, from_page=2, to_page=4)
-    p5 = out[len(out) - 1]
+    _fit(p1, g["name"], idt.get("name", ""), size=10)
+    _fit(p1, g["address"], idt.get("address", ""), size=9)
+    _fit(p1, g["siren"], idt.get("siren", ""), size=9)
+    _fit(p1, g["legal_form"], idt.get("legal_form", ""), size=9)
+    _fit(p1, g["ape"], idt.get("ape", ""), size=9)
+    xs = g["partner_cols"]
+    for (r0, r1), pr in zip(g["partner_rows"], cfg.get("partners", [])[:len(g["partner_rows"])]):
+        _fit(p1, fitz.Rect(xs[0], r0, xs[1], r1), pr.get("name", ""), size=8)
+        _fit(p1, fitz.Rect(xs[1], r0, xs[2], r1), pr.get("address", ""), size=7)
+        _fit(p1, fitz.Rect(xs[2], r0, xs[3], r1), pr.get("siren", ""), size=8)
+        _fit(p1, fitz.Rect(xs[3], r0, xs[4], r1), str(pr.get("share", "")), size=8)
+    # pages du formulaire : page II remplacée par le tableau, les autres copiées
+    for i in range(1, g["form_pages"]):
+        if i == g["table_page"]:
+            out.insert_pdf(fitz.open(stream=table_page, filetype="pdf"))
+        else:
+            out.insert_pdf(src, from_page=i, to_page=i)
+    p5 = out[g["declarant_page"]]
     dc = cfg.get("declarant", {})
-    _fit(p5, fitz.Rect(146.3, 565.6, 448.6, 581.5), dc.get("name", ""), size=8)
-    _fit(p5, fitz.Rect(146.3, 581.5, 448.6, 597.4), dc.get("quality", ""), size=7)
-    _fit(p5, fitz.Rect(522.0, 565.6, 848.0, 597.4), dc.get("address", ""), size=8)
-    _fit(p5, fitz.Rect(189.6, 597.4, 449.0, 613.4), dc.get("place", ""), size=8)
+    _fit(p5, g["dc_name"], dc.get("name", ""), size=8)
+    _fit(p5, g["dc_quality"], dc.get("quality", ""), size=7)
+    _fit(p5, g["dc_address"], dc.get("address", ""), size=8)
+    _fit(p5, g["dc_place"], dc.get("place", ""), size=8)
     if dc.get("date"):
-        _fit(p5, fitz.Rect(522.4, 597.4, 639.1, 613.4), dc["date"], size=8)
+        _fit(p5, g["dc_date"], dc["date"], size=8)
     if dc.get("signature_note"):
-        _fit(p5, fitz.Rect(724.7, 597.4, 849.2, 613.4), dc["signature_note"], size=5.5)
+        _fit(p5, g["dc_signature"], dc["signature_note"], size=5.5)
     return out.tobytes()
 
 
@@ -260,6 +356,10 @@ def build_zip(company_code: str, fy_end: date, log=None) -> Tuple[bytes, dict]:
     if not ex.get("lines"):
         raise RuntimeError("Aucune ligne collectée : relire Pennylane d'abord.")
     fy_start = date.fromisoformat(ex["fy_start"]); fy_end = date.fromisoformat(ex["fy_end"])
+    form = service.form_for(fy_end)
+    if not form:
+        raise RuntimeError(f"CERFA 2083-SD vierge millésime {service.form_millesime(fy_end)} manquant : déposez-le sur la page de l'exercice avant de générer le dossier.")
+    log(f"CERFA vierge : millésime {form.millesime} (version {form.version or '?'}, {form.filename})")
     name = cfg["identity"].get("name") or company_code
     stamp = datetime.now().strftime("%Y%m%d")
     lab = service.fy_label(fy_end)
@@ -286,7 +386,7 @@ def build_zip(company_code: str, fy_end: date, log=None) -> Tuple[bytes, dict]:
         tpdf = table_pdf(cfg, ex)
         z.writestr(f"{stamp} 01 {name} Investissements acquis CIOP {lab}.pdf", tpdf)
         z.writestr(f"{stamp} 01 {name} Investissements acquis CIOP {lab}.xlsx", table_xlsx(cfg, ex))
-        z.writestr(f"{stamp} 02 2083-SD {name} EX CLOS {fy_end:%d-%m-%Y} (pre-rempli).pdf", cerfa_pdf(cfg, ex, tpdf, fy_start, fy_end))
+        z.writestr(f"{stamp} 02 2083-SD {name} EX CLOS {fy_end:%d-%m-%Y} (pre-rempli, millesime {form.millesime}).pdf", cerfa_pdf(cfg, ex, tpdf, fy_start, fy_end, form_pdf=form.data))
         z.writestr(f"{stamp} 03 Cadrage CIOP {name} {lab}.xlsx", cadrage_xlsx(cfg, ex, files))
     ex["built_at"] = datetime.utcnow().isoformat(timespec="seconds")
     service.save_exercise(company_code, fy_end, ex)

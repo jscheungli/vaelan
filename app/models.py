@@ -497,3 +497,18 @@ class PlNotification(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     sent_at: Optional[datetime] = None
     by_user: Optional[str] = None
+
+
+class CiopForm(SQLModel, table=True):
+    """CERFA 2083-SD vierge d'un millésime (déposé par l'utilisateur, ou le modèle intégré), stocké en base.
+    Un exercice ne peut être généré qu'avec le formulaire du millésime attendu."""
+    __tablename__ = "ciop_forms"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    millesime: int = Field(index=True)               # « N° 2083-SD (2026) »
+    version: Optional[str] = None                    # « 13445*18 »
+    filename: str = ""
+    data: bytes = Field(sa_column=Column(LargeBinary))
+    pages: int = 0                                   # pages du formulaire (hors notice)
+    check: Optional[str] = None                      # résultat du calage automatique (JSON)
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    by_user: Optional[str] = None

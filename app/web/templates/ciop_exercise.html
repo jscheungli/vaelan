@@ -5,9 +5,19 @@
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
   <h1 class="h4 mb-0">CIOP {{ fy_label }} — exercice clos le {{ fy.strftime('%d/%m/%Y') }}</h1>
   <form method="post" action="/c/{{ company.code }}/ciop/{{ fy.isoformat() }}/collect" class="ms-auto d-inline"><button class="btn btn-sm btn-outline-dark" {% if running %}disabled{% endif %}><i class="bi bi-arrow-repeat"></i> {{ 'Relire' if ex.lines else 'Lire' }} Pennylane</button></form>
-  <form method="post" action="/c/{{ company.code }}/ciop/{{ fy.isoformat() }}/build" class="d-inline"><button class="btn btn-sm btn-dark" {% if running or not ex.lines %}disabled{% endif %}><i class="bi bi-file-earmark-zip"></i> Générer le dossier</button></form>
+  <form method="post" action="/c/{{ company.code }}/ciop/{{ fy.isoformat() }}/build" class="d-inline"><button class="btn btn-sm btn-dark" {% if running or not ex.lines or not form %}disabled{% endif %} title="{{ '' if form else 'Déposez d\'abord le CERFA vierge du millésime ' ~ millesime }}"><i class="bi bi-file-earmark-zip"></i> Générer le dossier</button></form>
 </div>
-{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+{% if msg %}<div class="alert alert-{{ 'danger' if msg.startswith('Formulaire refusé') else 'success' }} py-2 small">{{ msg }}</div>{% endif %}
+<div class="card shadow-sm mb-2 {{ '' if form else 'border-danger' }}"><div class="card-body py-2 small d-flex flex-wrap align-items-center gap-3">
+  <div><i class="bi bi-file-earmark-ruled"></i> <strong>CERFA 2083-SD vierge, millésime {{ millesime }}</strong> :
+    {% if form %}<span class="badge text-bg-success">présent</span> {{ form.filename }} (version {{ form.version or '?' }}, {{ form.pages }} pages de formulaire, déposé le {{ form.uploaded_at.strftime('%d/%m/%Y') }}{% if form.by_user %} par {{ form.by_user }}{% endif %})
+    {% else %}<span class="badge text-bg-danger">manquant</span> Chaque exercice est généré sur le formulaire de son millésime : téléchargez le 2083-SD {{ millesime }} sur <a href="https://www.impots.gouv.fr/formulaire/2083-sd/formulaire-des-investissements-realises-dans-un-departement-doutre-mer" target="_blank">impots.gouv.fr</a> et déposez-le ici. Le module lit le millésime dans le PDF et cale les cases automatiquement.{% endif %}
+    {% if forms %}<div class="text-muted">millésimes disponibles : {% for f in forms %}{{ f.millesime }}{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+  </div>
+  <form method="post" action="/c/{{ company.code }}/ciop/{{ fy.isoformat() }}/form" enctype="multipart/form-data" class="ms-auto d-flex align-items-center gap-1">
+    <input type="file" name="file" accept="application/pdf" class="form-control form-control-sm" style="max-width:280px" required><button class="btn btn-sm btn-outline-dark">{{ 'Remplacer' if form else 'Déposer' }} le CERFA vierge</button>
+  </form>
+</div></div>
 {% if running %}<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm"></span> Tâche en cours : {{ running[0].label }} — {{ running[0].step }} (<a href="/jobs?c={{ company.code }}">suivre</a>, puis rechargez cette page).</div>{% endif %}
 {% if not ex.lines %}
 <div class="card shadow-sm"><div class="card-body small text-muted">Aucune donnée : cliquez sur « Lire Pennylane ». Comptes de classe 2 dont le libellé contient « {{ cfg.params.account_keyword }} », journaux {{ cfg.params.purchase_journals|join(', ') }}, du {{ fy.replace(year=fy.year-1).strftime('%d/%m/%Y') }} au {{ fy.strftime('%d/%m/%Y') }}.</div></div>

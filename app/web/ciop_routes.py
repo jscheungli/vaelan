@@ -1,13 +1,18 @@
 """CIOP : exercices, lignes d'investissement (libellé, établissement, date), configuration, génération du dossier."""
 from datetime import date
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlmodel import Session, select
 
 from app.core.db import engine
 from app.core.jobs import start_job
 from app.core.security import current_user
+
+
+def _who(request: Request) -> str:
+    u = current_user(request)
+    return (u.name or u.email) if u else "?"
 from app.models import Run, JobArtifact
 from app.packs.ciop import service, jobs as cjobs
 from app.web.routes import templates, _ctx, _company_or_redirect
@@ -80,9 +85,26 @@ def ciop_exercise(request: Request, code: str, fy: str, msg: str = ""):
     ex = service.get_exercise(code, fy_end)
     runs, arts = _runs(company)
     running = [r for r in runs if r.status == "running"]
+    form = service.form_for(fy_end)
     return templates.TemplateResponse(request, "ciop_exercise.html",
                                       _ctx(request, company=company, cfg=cfg, fy=fy_end, fy_label=service.fy_label(fy_end), ex=ex, totals=ex.get("totals") or {},
+                                           form=form, millesime=service.form_millesime(fy_end), forms=service.forms(),
                                            runs=runs, arts=arts, running=running, msg=msg, site_of=service.site_of, fr=service._fr, eur=lambda x: f"{x:,.2f}".replace(",", " ").replace(".", ",") + " €"))
+
+
+@router.post("/c/{code}/ciop/{fy}/form")
+async def ciop_form_upload(request: Request, code: str, fy: str, file: UploadFile = File(...)):
+    """Dépôt du CERFA 2083-SD vierge du millésime (PDF impots.gouv) : millésime lu dans le PDF, calage vérifié."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    data = await file.read()
+    f, info = service.save_form(data, file.filename or "2083-sd.pdf", by=_who(request))
+    if not f:
+        return RedirectResponse(f"/c/{code}/ciop/{fy}?msg=Formulaire refusé : {info.get('refused')}", status_code=303)
+    exp = service.form_millesime(_fy(fy))
+    note = "" if f.millesime == exp else f" Attention : millésime {f.millesime} alors que l'exercice attend {exp}."
+    return RedirectResponse(f"/c/{code}/ciop/{fy}?msg=CERFA millésime {f.millesime} (version {f.version or '?'}) enregistré, calage vérifié sur {info.get('pages')} pages.{note}", status_code=303)
 
 
 @router.get("/c/{code}/ciop/{fy}/piece/{entry_id}")
