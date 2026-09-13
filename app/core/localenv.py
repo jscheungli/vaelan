@@ -15,6 +15,7 @@ Structure du fichier (groupée PAR CONNECTEUR ; ajouter une société = une entr
   "toporder":  { "baseUrl": "…", "establishments": [{"name": "…", "apiKey": "…"}] },
   "odoo":      { "LACORP": {"url": "…", "db": "…", "login": "…", "apiKey": "…"} },
   "lodgify":   { "VDS": {"apiKey": "…"} },
+  "shopify":   { "OWINE": {"shop": "owine.myshopify.com", "token": "shpat_…", "apiVersion": "2026-07"} },
   "smtp":      { "host": "smtp.gmail.com", "port": 587, "user": "…", "password": "…", "from": "Nom <adresse>" }
 }
 
@@ -89,6 +90,11 @@ def load(path: str = None, db: bool = False) -> str:
     for code, c in (d.get("lodgify") or {}).items():
         k = _env_key(code)
         _set(f"LODGIFY_{k}_APIKEY", c.get("apiKey") if isinstance(c, dict) else c)
+    for code, c in (d.get("shopify") or {}).items():
+        k = _env_key(code)
+        _set(f"SHOPIFY_{k}_SHOP", c.get("shop") or c.get("domain"))
+        _set(f"SHOPIFY_{k}_TOKEN", c.get("token") or c.get("accessToken"))
+        _set(f"SHOPIFY_{k}_APIVERSION", c.get("apiVersion"))
     tg = d.get("telegram") or {}
     _set("TELEGRAM_BOT_TOKEN", tg.get("botToken") or tg.get("token"))
     an = d.get("anthropic") or {}
