@@ -15,7 +15,8 @@ Structure du fichier (groupée PAR CONNECTEUR ; ajouter une société = une entr
   "toporder":  { "baseUrl": "…", "establishments": [{"name": "…", "apiKey": "…"}] },
   "odoo":      { "LACORP": {"url": "…", "db": "…", "login": "…", "apiKey": "…"} },
   "lodgify":   { "VDS": {"apiKey": "…"} },
-  "shopify":   { "OWINE": {"shop": "owine.myshopify.com", "token": "shpat_…", "apiVersion": "2026-07"} },
+  "shopify":   { "OWINE": {"shop": "2ac587-75.myshopify.com", "clientId": "…", "clientSecret": "…", "apiVersion": "2026-07"} }
+               (ou "token": "shpat_…" à la place du couple clientId / clientSecret),
   "smtp":      { "host": "smtp.gmail.com", "port": 587, "user": "…", "password": "…", "from": "Nom <adresse>" }
 }
 
@@ -94,6 +95,8 @@ def load(path: str = None, db: bool = False) -> str:
         k = _env_key(code)
         _set(f"SHOPIFY_{k}_SHOP", c.get("shop") or c.get("domain"))
         _set(f"SHOPIFY_{k}_TOKEN", c.get("token") or c.get("accessToken"))
+        _set(f"SHOPIFY_{k}_CLIENT_ID", c.get("clientId"))
+        _set(f"SHOPIFY_{k}_CLIENT_SECRET", c.get("clientSecret"))
         _set(f"SHOPIFY_{k}_APIVERSION", c.get("apiVersion"))
     tg = d.get("telegram") or {}
     _set("TELEGRAM_BOT_TOKEN", tg.get("botToken") or tg.get("token"))
