@@ -2,7 +2,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlmodel import Session, select
 
 from app.core.db import engine
@@ -83,6 +83,21 @@ def ciop_exercise(request: Request, code: str, fy: str, msg: str = ""):
     return templates.TemplateResponse(request, "ciop_exercise.html",
                                       _ctx(request, company=company, cfg=cfg, fy=fy_end, fy_label=service.fy_label(fy_end), ex=ex, totals=ex.get("totals") or {},
                                            runs=runs, arts=arts, running=running, msg=msg, site_of=service.site_of, fr=service._fr, eur=lambda x: f"{x:,.2f}".replace(",", " ").replace(".", ",") + " €"))
+
+
+@router.get("/c/{code}/ciop/{fy}/piece/{entry_id}")
+def ciop_piece(request: Request, code: str, fy: str, entry_id: int):
+    """La pièce d'une ligne, redemandée à Pennylane à la volée (les URL signées expirent en 30 min)."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    ex = service.get_exercise(code, _fy(fy))
+    line = next((l for l in ex.get("lines", []) if int(l.get("entry_id") or 0) == entry_id), None)
+    got = service.fetch_piece(code, entry_id, (line or {}).get("attachment_name") or "")
+    if not got:
+        return Response("Pièce introuvable dans Pennylane.", status_code=404, media_type="text/plain; charset=utf-8")
+    fn = service.file_name(line) if line else f"{entry_id}.pdf"
+    return Response(got[0], media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{fn}"'})
 
 
 @router.post("/c/{code}/ciop/{fy}/lines")

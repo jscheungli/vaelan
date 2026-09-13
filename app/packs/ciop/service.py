@@ -196,8 +196,31 @@ def _lines(c, account_id, d0: str, d1: str) -> List[dict]:
     return out
 
 
+def fresh_attachment(company_code: str, entry_id) -> Tuple[Optional[str], str]:
+    """(URL, nom de fichier) de la pièce d'une écriture, redemandés à Pennylane : les URL sont signées et
+    expirent en ~30 minutes, on ne réutilise jamais une URL mémorisée."""
+    c = for_company(company_code)
+    if not c:
+        return None, ""
+    try:
+        att = (c.get(f"/ledger_entries/{entry_id}") or {}).get("attachment") or {}
+        return att.get("url") or None, att.get("filename") or ""
+    except Exception:
+        return None, ""
+
+
+def fetch_piece(company_code: str, entry_id, filename_hint: str = "") -> Optional[Tuple[bytes, str]]:
+    """Pièce d'une écriture en PDF (photo convertie), via une URL fraîche. None si absente ou inaccessible."""
+    url, fn = fresh_attachment(company_code, entry_id)
+    data = download(url) if url else None
+    if not data:
+        return None
+    pdf, _ = to_pdf(data, fn or filename_hint or "piece.pdf")
+    return pdf, fn
+
+
 def download(url: str) -> Optional[bytes]:
-    """Pièce jointe Pennylane (URL signée, accessible sans jeton)."""
+    """Pièce jointe Pennylane (URL signée, accessible sans jeton, valable ~30 min)."""
     try:
         r = httpx.get(url, follow_redirects=True, timeout=60)
         if r.status_code == 200 and len(r.content) > 300:

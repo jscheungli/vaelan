@@ -247,18 +247,23 @@ def build_zip(company_code: str, fy_end: date, log=None) -> Tuple[bytes, dict]:
     name = cfg["identity"].get("name") or company_code
     stamp = datetime.now().strftime("%Y%m%d")
     lab = service.fy_label(fy_end)
-    files = []
+    files, written = [], {}
     zbio = io.BytesIO()
     with zipfile.ZipFile(zbio, "w", zipfile.ZIP_DEFLATED) as z:
         for l in _lines_ok(ex):
-            data = service.download(l["attachment_url"]) if l.get("attachment_url") else None
-            if not data:
+            fn = service.file_name(l)
+            if l["entry_id"] in written:                      # plusieurs lignes d'une même facture : un seul fichier
+                files.append((written[l["entry_id"]], l))
+                l["has_file"] = True
+                continue
+            got = service.fetch_piece(company_code, l["entry_id"], l.get("attachment_name") or "")   # URL fraîche (les URL expirent)
+            if not got:
                 log(f"pièce manquante : {l['supplier']} {l['invoice_number']}")
                 l["has_file"] = False
                 continue
-            pdf, _ = service.to_pdf(data, l.get("attachment_name") or "")
-            fn = service.file_name(l)
+            pdf, _ = got
             z.writestr(f"Factures/{fn}", pdf)
+            written[l["entry_id"]] = fn
             files.append((fn, l))
             l["has_file"] = True
         ex["totals"] = service.totals(cfg, ex)
