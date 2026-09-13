@@ -48,27 +48,16 @@
   {# ---- étape 1 : cartons #}
   <div class="card shadow-sm mb-3 {{ 'border-warning' if step == 1 else '' }}"><div class="card-header py-2 small fw-semibold">1. Cartons {% if cartons %}<span class="badge text-bg-success">validés</span>{% endif %}</div><div class="card-body py-2 small">
   {% if not cartons and proposal %}
-    <p class="text-muted mb-2">Proposition : cartons de 6 puis de 3, bouteilles réparties pour équilibrer la valeur assurée (coût d'achat), 1,5 kg par bouteille. Le dépôt-vente LMB est utilisé quand le stock OWINE ne suffit pas.</p>
-    <form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cartons">
-    <div class="row g-2">{% for p in proposal %}<div class="col-md-6"><div class="border rounded p-2 h-100">
-      <div class="d-flex align-items-center gap-2"><span class="badge text-bg-dark fs-6">{{ p.ref }}</span><select name="box_{{ p.ref }}" class="form-select form-select-sm w-auto">{% for sku, pk in cfg.PACKAGING.items() if pk.bottles %}<option value="{{ sku }}" {% if sku == p.box_sku %}selected{% endif %}>{{ pk.title }}</option>{% endfor %}</select><span class="ms-auto text-muted">{{ p.bottles }} btl · {{ p.weight_kg }} kg</span></div>
-      <table class="table table-sm mb-1 mt-1" style="font-size:.78rem"><thead><tr class="text-muted"><th>Qté</th><th>Vin</th><th class="text-end">Prix vente u.</th><th class="text-end">Coût u.</th><th class="text-end">Coût ligne</th></tr></thead><tbody>
-      {% for l in p.lines %}<tr><td><input type="number" min="0" class="form-control form-control-sm" style="width:58px" name="q_{{ p.ref }}_{{ l.sku }}" value="{{ l.qty }}"></td><td>{{ l.title }}{% if l.owner == 'LMB' %} <span class="badge text-bg-info">LMB</span>{% endif %}</td><td class="text-end">{{ eur(l.price) if l.price else '—' }}</td><td class="text-end {{ 'text-danger' if not l.cost else '' }}">{{ eur(l.cost) if l.cost else '?' }}</td><td class="text-end">{{ eur(l.cost * l.qty) }}</td></tr>{% endfor %}
-      <tr class="fw-semibold"><td colspan="2">Carton {{ p.ref }}</td><td class="text-end">{{ eur(p.sale_total) }}</td><td></td><td class="text-end">{{ eur(p.cost_total) }}<div class="text-muted fw-normal" style="font-size:.68rem">valeur assurée : {{ p.insured_value }} €</div></td></tr>
-      </tbody></table>
-      {% for l in lines if l.sku not in (p.lines|map(attribute='sku')|list) %}<div class="d-flex align-items-center gap-1 mt-1 text-muted"><input type="number" min="0" class="form-control form-control-sm" style="width:64px" name="q_{{ p.ref }}_{{ l.sku }}" value="0"><span class="flex-grow-1">{{ l.title }}</span></div>{% endfor %}
-    </div></div>{% endfor %}</div>
-    <input type="hidden" name="n_boxes" value="{{ proposal|length }}">
-    <div class="mt-2 small"><strong>Total des cartons</strong> : coût d'achat {{ eur(proposal|sum(attribute='cost_total')) }} (valeur assurée {{ proposal|sum(attribute='insured_value') }} €) · prix de vente {{ eur(proposal|sum(attribute='sale_total')) }} · {{ proposal|sum(attribute='bottles') }} bouteilles · {{ proposal|sum(attribute='weight_kg') }} kg</div>
-    <div class="mt-2 d-flex gap-2"><button class="btn btn-sm btn-dark">Valider ces cartons</button><button class="btn btn-sm btn-outline-secondary" name="auto" value="1">Recalculer automatiquement</button></div>
-    </form>
+    <p class="text-muted mb-2">Proposition : cartons de 6 puis de 3, bouteilles réparties pour équilibrer la valeur assurée (coût d'achat), 1,5 kg par bouteille. Déplacez les bouteilles par glisser-déposer ; tout doit être placé pour valider.</p>
+    <div id="carton-editor"></div>
   {% elif cartons %}
     <table class="table table-sm mb-1"><thead><tr class="text-muted"><th>Ref</th><th>Carton</th><th>Contenu (qté × vin · coût unitaire = coût ligne)</th><th>Poids</th><th class="text-end">Coût d'achat = valeur assurée</th><th>N° Chronopost</th></tr></thead><tbody>
     {% for c in cartons %}<tr><td><span class="badge text-bg-dark">{{ c.ref }}</span></td><td>{{ cfg.PACKAGING[c.box_sku].title if c.box_sku in cfg.PACKAGING else (c.box_sku or '—') }}</td>
       <td>{% for l in carton_lines(c) %}{{ l.qty }} × {{ l.title }}{% if l.owner == 'LMB' %} <span class="badge text-bg-info">LMB</span>{% endif %} <span class="text-muted">· {{ eur(l.cost) }} = {{ eur(l.cost * l.qty) }}</span><br>{% endfor %}</td>
       <td>{{ c.weight_kg }} kg</td><td class="text-end fw-semibold">{{ c.insured_value|int }} €</td><td>{{ c.tracking or '—' }}</td></tr>{% endfor %}
     <tr class="fw-semibold"><td colspan="3">Total : {{ cartons|length }} carton(s)</td><td>{{ cartons|sum(attribute='weight_kg') }} kg</td><td class="text-end">{{ cartons|sum(attribute='insured_value')|int }} €</td><td></td></tr></tbody></table>
-    {% if o.status in ('cartons', 'etiquettes') %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cartons/reset" class="d-inline"><button class="btn btn-sm btn-link p-0">refaire la ventilation</button></form>{% endif %}
+    {% if o.status in ('cartons', 'etiquettes') %}<button type="button" class="btn btn-sm btn-link p-0" onclick="document.getElementById('carton-editor').classList.toggle('d-none');this.textContent=this.textContent.includes('Modifier')?'Fermer la modification':'Modifier la ventilation (glisser-déposer)'">Modifier la ventilation (glisser-déposer)</button>
+    <div id="carton-editor" class="d-none mt-2"></div>{% endif %}
   {% else %}<span class="text-muted">Aucune ligne.</span>{% endif %}
   </div></div>
 
@@ -114,4 +103,114 @@
     {% if moves %}<details class="mt-1"><summary class="text-muted">{{ moves|length }} mouvement(s) de stock</summary>{% for m in moves %}<div>{{ m.date.strftime('%d/%m/%Y') }} · {{ m.qty|int }} × {{ m.sku }} · {{ m.location }} / {{ m.owner }} · {{ m.kind }}</div>{% endfor %}</details>{% endif %}
   </div></div>{% endif %}
 </div></div>
+{% if o.status in ('a_traiter', 'cartons', 'etiquettes') %}
+<script id="editor-data" type="application/json">{{ editor|safe }}</script>
+<style>
+.ce-zone{min-height:54px;border:2px dashed #cfd4da;border-radius:.5rem;padding:.4rem;display:flex;flex-wrap:wrap;gap:.35rem;background:#fafbfc}
+.ce-zone.over{border-color:#0d6efd;background:#eef4ff}
+.ce-chip{cursor:grab;user-select:none;border:1px solid #adb5bd;border-radius:999px;padding:.15rem .55rem;font-size:.78rem;background:#fff;white-space:nowrap}
+.ce-chip:active{cursor:grabbing}.ce-chip.lmb{border-color:#0dcaf0}
+.ce-top{border-color:#ffc107;background:#fff8e6}
+.ce-box{border:1px solid #dee2e6;border-radius:.5rem;padding:.5rem}
+.ce-box.full .ce-zone{border-style:solid;border-color:#198754}
+.ce-box.over-cap .ce-zone{border-style:solid;border-color:#dc3545;background:#fff1f1}
+</style>
+<script>
+(function(){
+  const D = JSON.parse(document.getElementById('editor-data').textContent);
+  const root = document.getElementById('carton-editor'); if (!root) return;
+  const eur = v => (Math.round(v*100)/100).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
+  // bouteilles : une entrée par bouteille
+  const bottles = {}; const bySku = {};
+  D.lines.forEach(l => { bySku[l.sku] = l; for (let i = 0; i < l.qty; i++) { const id = l.sku + '#' + i; bottles[id] = {id, sku: l.sku, title: l.title, cost: l.cost, price: l.price}; } });
+  const state = {cartons: [], unplaced: []};
+  const pool = {}; Object.values(bottles).forEach(b => { (pool[b.sku] = pool[b.sku] || []).push(b.id); });
+  (D.cartons || []).forEach(c => { const ids = []; (c.lines || []).forEach(l => { for (let i = 0; i < l.qty; i++) { const id = (pool[l.sku] || []).shift(); if (id) ids.push(id); } }); state.cartons.push({ref: c.ref, box: c.box_sku || '2036', ids}); });
+  Object.values(pool).forEach(arr => arr.forEach(id => state.unplaced.push(id)));
+  const cap = c => (D.boxes[c.box] || {}).bottles || 6;
+  const letter = i => String.fromCharCode(65 + i);
+  function relabel(){ state.cartons.forEach((c, i) => c.ref = letter(i)); }
+  function move(id, target){
+    state.unplaced = state.unplaced.filter(x => x !== id); state.cartons.forEach(c => c.ids = c.ids.filter(x => x !== id));
+    if (target === 'top') state.unplaced.push(id); else state.cartons[target].ids.push(id);
+    render();
+  }
+  function errors(){
+    const e = [];
+    if (state.unplaced.length) e.push(state.unplaced.length + ' bouteille(s) à placer');
+    state.cartons.forEach(c => { if (!c.ids.length) e.push('carton ' + c.ref + ' vide'); if (c.ids.length > cap(c)) e.push('carton ' + c.ref + ' : ' + c.ids.length + ' bouteilles pour ' + cap(c)); });
+    if (!state.cartons.length) e.push('aucun carton');
+    return e;
+  }
+  function chip(id){
+    const b = bottles[id]; const el = document.createElement('span'); el.className = 'ce-chip'; el.draggable = true; el.dataset.id = id;
+    el.title = 'coût ' + eur(b.cost) + ' · vente ' + eur(b.price) + ' · cliquer pour déplacer';
+    el.textContent = b.title.replace(/, \d{4}$/, '') + ' · ' + eur(b.cost);
+    el.addEventListener('dragstart', ev => { ev.dataTransfer.setData('text/plain', id); ev.dataTransfer.effectAllowed = 'move'; });
+    return el;
+  }
+  function zone(target){
+    const z = document.createElement('div'); z.className = 'ce-zone' + (target === 'top' ? ' ce-top' : '');
+    z.addEventListener('dragover', ev => { ev.preventDefault(); z.classList.add('over'); });
+    z.addEventListener('dragleave', () => z.classList.remove('over'));
+    z.addEventListener('drop', ev => { ev.preventDefault(); z.classList.remove('over'); const id = ev.dataTransfer.getData('text/plain'); if (id) move(id, target); });
+    return z;
+  }
+  function render(){
+    relabel();
+    root.innerHTML = '';
+    // zone haute
+    const top = document.createElement('div'); top.className = 'mb-2';
+    top.innerHTML = '<div class="d-flex align-items-center gap-2 mb-1"><strong>Bouteilles à placer</strong><span class="badge text-bg-' + (state.unplaced.length ? 'warning' : 'success') + '">' + state.unplaced.length + '</span><span class="text-muted">glissez chaque bouteille dans un carton (ou cliquez : elle va dans le premier carton qui a de la place)</span></div>';
+    const tz = zone('top'); if (!state.unplaced.length) { tz.innerHTML = '<span class="text-muted small">Toutes les bouteilles sont placées.</span>'; }
+    state.unplaced.forEach(id => { const c = chip(id); c.addEventListener('click', () => { const i = state.cartons.findIndex(x => x.ids.length < cap(x)); if (i >= 0) move(id, i); }); tz.appendChild(c); });
+    top.appendChild(tz); root.appendChild(top);
+    // cartons
+    const grid = document.createElement('div'); grid.className = 'row g-2';
+    state.cartons.forEach((c, i) => {
+      const col = document.createElement('div'); col.className = 'col-md-6';
+      const box = document.createElement('div'); box.className = 'ce-box' + (c.ids.length > cap(c) ? ' over-cap' : (c.ids.length === cap(c) ? ' full' : ''));
+      const cost = c.ids.reduce((a, id) => a + bottles[id].cost, 0), sale = c.ids.reduce((a, id) => a + bottles[id].price, 0);
+      const head = document.createElement('div'); head.className = 'd-flex align-items-center gap-2 mb-1 flex-wrap';
+      head.innerHTML = '<span class="badge text-bg-dark fs-6">' + c.ref + '</span>';
+      const sel = document.createElement('select'); sel.className = 'form-select form-select-sm w-auto';
+      Object.entries(D.boxes).forEach(([sku, b]) => { const op = document.createElement('option'); op.value = sku; op.textContent = b.title; if (sku === c.box) op.selected = true; sel.appendChild(op); });
+      sel.addEventListener('change', () => { c.box = sel.value; render(); });
+      head.appendChild(sel);
+      const info = document.createElement('span'); info.className = 'ms-auto small text-muted';
+      info.innerHTML = c.ids.length + ' / ' + cap(c) + ' btl · ' + (c.ids.length * D.bottle_kg).toFixed(1) + ' kg · coût <strong>' + eur(cost) + '</strong> (assuré ' + Math.round(cost) + ' €) · vente ' + eur(sale);
+      head.appendChild(info);
+      const rm = document.createElement('button'); rm.type = 'button'; rm.className = 'btn btn-sm btn-outline-secondary py-0'; rm.textContent = '×'; rm.title = 'retirer ce carton (ses bouteilles remontent à placer)';
+      rm.addEventListener('click', () => { c.ids.forEach(id => state.unplaced.push(id)); state.cartons.splice(i, 1); render(); });
+      head.appendChild(rm);
+      box.appendChild(head);
+      const z = zone(i);
+      c.ids.forEach(id => { const ch = chip(id); ch.addEventListener('click', () => move(id, 'top')); z.appendChild(ch); });
+      box.appendChild(z); col.appendChild(box); grid.appendChild(col);
+    });
+    root.appendChild(grid);
+    // pied : totaux, erreurs, actions
+    const errs = errors();
+    const allCost = Object.values(bottles).reduce((a, b) => a + b.cost, 0), allSale = Object.values(bottles).reduce((a, b) => a + b.price, 0);
+    const foot = document.createElement('div'); foot.className = 'mt-2 small';
+    foot.innerHTML = '<div><strong>Total</strong> : ' + Object.keys(bottles).length + ' bouteilles · coût d\'achat ' + eur(allCost) + ' · prix de vente ' + eur(allSale) + ' · ' + state.cartons.length + ' carton(s)</div>'
+      + (errs.length ? '<div class="text-danger mt-1"><i class="bi bi-exclamation-triangle"></i> ' + errs.join(' · ') + '</div>' : '<div class="text-success mt-1"><i class="bi bi-check2"></i> Tout cadre : chaque bouteille est placée une fois, aucun carton ne dépasse sa capacité.</div>');
+    const actions = document.createElement('div'); actions.className = 'mt-2 d-flex flex-wrap gap-2';
+    const add = document.createElement('button'); add.type = 'button'; add.className = 'btn btn-sm btn-outline-dark'; add.textContent = '+ Ajouter un carton';
+    add.addEventListener('click', () => { state.cartons.push({ref: '', box: '2036', ids: []}); render(); });
+    const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn btn-sm btn-dark'; ok.textContent = 'Valider ces cartons'; ok.disabled = errs.length > 0;
+    ok.addEventListener('click', async () => {
+      ok.disabled = true; ok.textContent = 'Validation…';
+      const payload = {cartons: state.cartons.map(c => ({ref: c.ref, box_sku: c.box, skus: c.ids.map(id => bottles[id].sku)}))};
+      const r = await fetch(location.pathname.replace(/\?.*$/, '') + '/cartons/json', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      const j = await r.json();
+      if (j.ok) location.href = location.pathname + '?msg=' + encodeURIComponent('Cartons validés : ' + j.cartons + '.'); else { alert('Refusé : ' + j.error); ok.disabled = false; ok.textContent = 'Valider ces cartons'; }
+    });
+    const auto = document.createElement('a'); auto.className = 'btn btn-sm btn-outline-secondary'; auto.textContent = 'Revenir à la proposition automatique'; auto.href = location.pathname;
+    actions.appendChild(ok); actions.appendChild(add); actions.appendChild(auto); foot.appendChild(actions); root.appendChild(foot);
+  }
+  render();
+})();
+</script>
+{% endif %}
 {% endblock %}

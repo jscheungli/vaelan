@@ -91,7 +91,11 @@ def _order_ctx(request, company, o, msg=""):
     cs = service.cartons(o.id)
     proposal = service.propose_cartons(lines, st) if not cs else None
     sheet = docs.chronopost_sheet(o, cs) if cs else None
-    return _base(request, company, o=o, lines=lines, cartons=cs, carton_lines=service.carton_lines, proposal=proposal, sheet=sheet, msg=msg,
+    initial = [{"ref": p["ref"], "box_sku": p["box_sku"], "lines": p["lines"]} for p in proposal] if proposal else \
+              [{"ref": c.ref, "box_sku": c.box_sku or "2036", "lines": service.carton_lines(c)} for c in cs]
+    editor = {"lines": [{"sku": l["sku"], "title": l["title"], "qty": int(l["qty"]), "cost": float(l.get("cost") or 0), "price": float(l.get("price") or 0)} for l in lines],
+              "cartons": initial, "boxes": {k: v for k, v in cfg.PACKAGING.items() if v["bottles"]}, "bottle_kg": cfg.BOTTLE_KG}
+    return _base(request, company, o=o, lines=lines, cartons=cs, carton_lines=service.carton_lines, proposal=proposal, sheet=sheet, msg=msg, editor=json.dumps(editor, ensure_ascii=False),
                  email_alix=docs.email_alix(o, cs) if cs else None, email_client=docs.email_client(o, cs) if cs else None,
                  gmail_ok=gmail_imap.configured(CODE), tasks=[t for t in service.tasks("open") if t.ref == o.name], moves=service.moves(ref=o.name))
 
@@ -166,6 +170,72 @@ async def owine_order_cartons(request: Request, code: str, name: str):
             return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Ventilation incomplète : les quantités par carton ne correspondent pas à la commande.", status_code=303)
     service.validate_cartons(o, plan, by=_who(request))
     return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Cartons validés : {len(plan)}.", status_code=303)
+
+
+@router.post("/c/{code}/owine/commandes/{name}/cartons/json")
+async def owine_order_cartons_json(request: Request, code: str, name: str):
+    """Ventilation faite en glisser-déposer : {cartons: [{ref, box_sku, skus: [sku, sku…]}]}. Contrôles : toutes les bouteilles de la
+    commande placées une fois et une seule, capacité des cartons respectée, aucun carton vide."""
+    from fastapi.responses import JSONResponse
+    company, redir = _guard(request, code)
+    if redir:
+        return JSONResponse({"ok": False, "error": "accès refusé"}, status_code=403)
+    o = service.get_order(name)
+    if not o or o.status not in ("a_traiter", "cartons", "etiquettes"):
+        return JSONResponse({"ok": False, "error": "commande introuvable ou déjà envoyée"})
+    body = await request.json()
+    lines = service.order_lines(o); st = service.stock(); imap = service.item_map()
+    by_sku = {}
+    for l in lines:
+        it = imap.get(l["sku"])
+        if not l.get("cost") and it and it.cost:
+            l["cost"] = it.cost
+        by_sku[l["sku"]] = l
+    want = {l["sku"]: int(l["qty"]) for l in lines}
+    got = defaultdict(int); errors = []
+    plan = []
+    for i, c in enumerate(body.get("cartons") or []):
+        skus = [x for x in (c.get("skus") or []) if x]
+        box = c.get("box_sku") or "2036"
+        cap = (cfg.PACKAGING.get(box) or {}).get("bottles") or 6
+        ref = (c.get("ref") or chr(65 + i)).strip().upper()[:2]
+        if not skus:
+            errors.append(f"carton {ref} vide"); continue
+        if len(skus) > cap:
+            errors.append(f"carton {ref} : {len(skus)} bouteilles pour un carton de {cap}")
+        counts = defaultdict(int)
+        for sku in skus:
+            counts[sku] += 1; got[sku] += 1
+        blines = []
+        avail = {sku: service.available(sku, st.get(sku, {})) for sku in counts}
+        for sku, q in counts.items():
+            l = by_sku.get(sku)
+            if not l:
+                errors.append(f"carton {ref} : {sku} n'est pas dans la commande"); continue
+            ow, lmb = avail[sku]
+            owner = "OWINE" if ow >= q else "LMB"
+            blines.append({"sku": sku, "title": l["title"], "qty": q, "cost": float(l.get("cost") or 0), "price": float(l.get("price") or 0), "owner": owner})
+        nb = len(skus)
+        plan.append({"ref": ref, "box_sku": box, "lines": blines, "weight_kg": round(nb * cfg.BOTTLE_KG, 1), "insured_value": round(sum(x["qty"] * x["cost"] for x in blines))})
+    for sku, q in want.items():
+        if got.get(sku, 0) != q:
+            errors.append(f"{by_sku[sku]['title']} : {got.get(sku, 0)} placée(s) sur {q}")
+    for sku in got:
+        if sku not in want:
+            errors.append(f"{sku} : bouteille en trop")
+    refs = [p["ref"] for p in plan]
+    if len(set(refs)) != len(refs):
+        errors.append("références de cartons en double")
+    if not plan:
+        errors.append("aucun carton")
+    if errors:
+        return JSONResponse({"ok": False, "error": " · ".join(errors)})
+    # conservation des numéros Chronopost déjà saisis pour les mêmes références
+    old = {c.ref: c.tracking for c in service.cartons(o.id)}
+    for p_ in plan:
+        p_["tracking"] = old.get(p_["ref"])
+    service.validate_cartons(o, plan, by=_who(request))
+    return JSONResponse({"ok": True, "cartons": len(plan)})
 
 
 @router.post("/c/{code}/owine/commandes/{name}/cartons/reset")
