@@ -41,4 +41,8 @@ ALIX_CC = ["remi.sery@gmail.com"]
 ALIX_ADDRESS = "OWINE chez ALIX TRANSPORT, 6 Rue JF Champollion, 21200 BEAUNE"
 DIGEST_TO = ["js@owine.co"]
 
-OWINE_ADDRESS = {"name": "OWINE SAS", "address1": "Parc d'activité", "address2": "14 E rue Coubertin", "zip": "21000", "city": "DIJON", "country": "FR", "email": "js@owine.co"}
+OWINE_ADDRESS = {"name": "OWINE SAS", "address1": "Parc d'activité", "address2": "14 E rue Coubertin", "zip": "21000", "city": "DIJON", "country": "FR", "email": "contact@owine.co"}
+CONTACT_EMAIL = "contact@owine.co"            # adresse affichée aux clients (documents, e-mails)
+MOTTO = "L'amitié & l'émotion"
+GMAIL_USER = "js@owine.co"                    # boîte dans laquelle les brouillons sont déposés
+GMAIL_PASSWORD_ENV = "GMAIL_JS_AT_OWINE_CO_APPPWD"   # variable Render créée par JS (mot de passe d'application)

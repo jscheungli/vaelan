@@ -319,15 +319,16 @@ def owine_order_drafts(request: Request, code: str, name: str):
     o = service.get_order(name); cs = service.cartons(o.id)
     pl = docs.packing_list_pdf(o, cs); xl = docs.alix_xlsx(o, cs); labels = _labels(o)
     ea, ec = docs.email_alix(o, cs), docs.email_client(o, cs)
+    logo = [("logo", open(docs.LOGO, "rb").read(), "image/png")]
     att_alix = [(f"Détail {o.name}.pdf", pl, "application/pdf"), (f"{o.name}.xlsx", xl, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] + [(n, d, "application/pdf") for n, d in labels]
-    ok1, m1 = gmail_imap.create_draft(CODE, ea["to"], ea["subject"], ea["body"] + "\n\n" + _signature(), cc=ea["cc"], attachments=att_alix)
+    ok1, m1 = gmail_imap.create_draft(CODE, ea["to"], ea["subject"], ea["body"] + "\n\n" + _signature(), cc=ea["cc"], attachments=att_alix, html=docs.email_alix_html(o, cs), inline=logo)
     att_cli = [(f"Détail {o.name}.pdf", pl, "application/pdf")] + [(n, d, "application/pdf") for n, d in labels]
-    ok2, m2 = gmail_imap.create_draft(CODE, ec["to"], ec["subject"], ec["body"] + "\n\n" + _signature(), attachments=att_cli)
+    ok2, m2 = gmail_imap.create_draft(CODE, ec["to"], ec["subject"], ec["body"] + "\n\n" + _signature(), attachments=att_cli, html=docs.email_client_html(o, cs), inline=logo)
     return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Brouillon Alix : {m1} · brouillon client : {m2}", status_code=303)
 
 
 def _signature() -> str:
-    return "Jean-Sébastien CHEUNG-AH-SEUNG\n\noWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon\nwww.owine.co"
+    return "Jean-Sébastien CHEUNG-AH-SEUNG\n\noWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon\nwww.owine.co · contact@owine.co"
 
 
 @router.post("/c/{code}/owine/commandes/{name}/envoye")

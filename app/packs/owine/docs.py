@@ -53,7 +53,10 @@ def packing_list_pdf(o, cs) -> bytes:
             pg.draw_line((M, 100), (W - M, 100), color=WINE, width=1.2)
         else:
             pg.insert_text((M, 40), f"Liste de colisage · commande {o.name} (suite)", fontname="helv", fontsize=9, color=GREY)
-        foot = "oWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon · www.owine.co · js@owine.co"
+        motto = f"« {config.MOTTO} »"
+        pg.insert_text((W / 2 - fitz.get_text_length(motto, fontname="tiit", fontsize=11) / 2, H - 52), motto, fontname="tiit", fontsize=11, color=WINE)
+        pg.draw_line((W / 2 - 28, H - 44), (W / 2 + 28, H - 44), color=WINE, width=0.6)
+        foot = f"oWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon · www.owine.co · {config.CONTACT_EMAIL}"
         pg.insert_text((W / 2 - fitz.get_text_length(foot, fontname="helv", fontsize=8) / 2, H - 30), foot, fontname="helv", fontsize=8, color=GREY)
         return pg
 
@@ -114,13 +117,14 @@ def packing_list_pdf(o, cs) -> bytes:
         # encart « à la livraison » : trois réflexes + la règle Chronopost expliquée
         steps = [
             ("Ouvrez chaque carton devant le livreur, avant de signer", "Vérifiez que les bouteilles sont intactes et que le contenu correspond à cette liste, carton par carton."),
-            ("Écrivez toute anomalie sur le bon de livraison, avant de signer", "Bouteille cassée ou manquante, carton abîmé ou humide : notez-le en toutes lettres, par exemple « 1 bouteille cassée, carton B »."),
-            ("Photographiez et prévenez-nous", "Colis, bouteilles et bon de livraison annoté, envoyés à js@owine.co : nous ouvrons la réclamation et remplaçons ce qui doit l'être."),
+            ("Écrivez toute anomalie sur le bon de livraison, avant de signer", "Précisez le carton et la bouteille concernée (nom et millésime), par exemple « carton B : Meursault Narvaux 2022, 1 bouteille cassée ». Idem pour une bouteille manquante ou un carton abîmé ou humide."),
+            ("Photographiez et prévenez-nous", f"La bouteille concernée, le carton et le bon de livraison annoté, envoyés à {config.CONTACT_EMAIL} : nous ouvrons la réclamation auprès de Chronopost."),
         ]
         why = ("Pourquoi c'est essentiel : Chronopost n'accepte une réclamation que si les réserves figurent sur le bon de livraison au moment de la remise. "
                "Un bon signé sans réserve vaut acceptation d'un colis complet et en bon état ; plus aucun recours n'est ensuite possible, ni pour vous, ni pour nous. "
-               "Ces règles sont celles du transporteur : en les suivant, vous nous permettez de vous garantir un remplacement en cas de problème.")
-        box_h = 34 + len(steps) * 40 + 62
+               "Ces règles sont celles du transporteur : en les suivant, vous nous permettez de vous garantir un remplacement, ou un remboursement si un remplacement "
+               "par la même bouteille ou une autre qui vous conviendrait n'est pas possible.")
+        box_h = 34 + len(steps) * 42 + 70
         if y + box_h > H - 50:
             pg = new_page(); y = 60
         pg.draw_rect(fitz.Rect(M, y, W - M, y + box_h), color=WINE, fill=(0.99, 0.975, 0.975), width=0.8)
@@ -130,10 +134,10 @@ def packing_list_pdf(o, cs) -> bytes:
             pg.draw_circle((M + 22, yy + 6), 7.5, color=None, fill=DARK)
             pg.insert_text((M + 19.2, yy + 9.2), str(i), fontname="hebo", fontsize=8.5, color=(1, 1, 1))
             pg.insert_text((M + 36, yy + 9), title, fontname="hebo", fontsize=9, color=DARK)
-            r = pg.insert_textbox(fitz.Rect(M + 36, yy + 13, W - M - 12, yy + 40), detail, fontname="helv", fontsize=8.2, color=(0.2, 0.2, 0.2), lineheight=1.15)
+            r = pg.insert_textbox(fitz.Rect(M + 36, yy + 13, W - M - 12, yy + 42), detail, fontname="helv", fontsize=8.2, color=(0.2, 0.2, 0.2), lineheight=1.15)
             assert r >= 0, "texte de l'encart trop long"
-            yy += 40
-        r = pg.insert_textbox(fitz.Rect(M + 14, yy + 2, W - M - 12, yy + 60), why, fontname="heit", fontsize=8, color=GREY, lineheight=1.15)
+            yy += 42
+        r = pg.insert_textbox(fitz.Rect(M + 14, yy + 2, W - M - 12, yy + 68), why, fontname="heit", fontsize=8, color=GREY, lineheight=1.15)
         assert r >= 0, "paragraphe de l'encart trop long"
         y += box_h
     return doc.tobytes()
@@ -251,7 +255,9 @@ def email_client(o, cs) -> dict:
                 "doit impérativement être signalé sur le bon de livraison avant signature.\n\n"
                 "👉 Si le bon de livraison est signé sans réserve, Chronopost considère le colis comme complet et en bon état et ne permet plus d'ouvrir de réclamation par la suite. "
                 "Dans ce cas, nous ne pourrons malheureusement plus intervenir auprès d'eux.\n\n"
-                "En cas de problème (bouteille cassée, manquante, carton humide ou abîmé, etc.), il suffit donc de :\n- le mentionner clairement sur le bon de livraison ;\n- prendre des photos et nous les transmettre.\n\n"
+                "En cas de problème (bouteille cassée ou manquante, carton humide ou abîmé), il suffit donc de :\n- le mentionner clairement sur le bon de livraison, en précisant le carton et la bouteille concernée (nom et millésime) ;\n"
+                f"- photographier la bouteille, le carton et le bon annoté, et nous les envoyer à {config.CONTACT_EMAIL}.\n\n"
+                "Nous pourrons alors vous garantir un remplacement, ou un remboursement si un remplacement par la même bouteille ou une autre qui vous conviendrait n'est pas possible.\n\n"
                 "Nous restons bien entendu à votre disposition pour toute question et vous souhaitons une excellente réception et une très belle journée.\n\nTrès cordialement,")
         subject = f"Confirmation de planification d'enlèvement de votre commande {o.name}"
     return {"to": [o.email] if o.email else [], "cc": [], "subject": subject, "body": body}
@@ -270,3 +276,99 @@ def bundle_zip(o, cs, labels: List[Tuple[str, bytes]] = None) -> bytes:
         z.writestr("E-mail Alix.txt", f"À : {', '.join(ea['to'])}\nCc : {', '.join(ea['cc'])}\nObjet : {ea['subject']}\n\n{ea['body']}")
         z.writestr("E-mail client.txt", f"À : {', '.join(ec['to'])}\nObjet : {ec['subject']}\n\n{ec['body']}")
     return bio.getvalue()
+
+
+# ---------------------------------------------------------------- e-mails HTML (style de la liste de colisage, logo inline cid:logo)
+import html as _html
+
+CSS_WINE, CSS_DARK, CSS_GREY, CSS_LIGHT = "#8c1a1a", "#4a0d1f", "#6b6b6b", "#f7efef"
+TRACK_URL = "https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT={n}"
+
+
+def _esc(x) -> str:
+    return _html.escape(str(x or ""))
+
+
+def _shell(title: str, inner: str) -> str:
+    """Gabarit : bandeau logo + titre, corps, devise, pied de page."""
+    return f"""<!doctype html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f4f1f1;font-family:Helvetica,Arial,sans-serif;color:#222;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f1f1;padding:24px 12px;"><tr><td align="center">
+<table role="presentation" width="620" cellpadding="0" cellspacing="0" style="max-width:620px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;">
+<tr><td style="padding:22px 30px 14px 30px;border-bottom:2px solid {CSS_WINE};">
+  <table role="presentation" width="100%"><tr><td><img src="cid:logo" alt="oWine" style="height:46px;width:auto;display:block;"></td>
+  <td align="right" style="font-size:15px;font-weight:bold;color:{CSS_DARK};">{_esc(title)}</td></tr></table></td></tr>
+<tr><td style="padding:22px 30px 10px 30px;font-size:14.5px;line-height:1.55;">{inner}</td></tr>
+<tr><td align="center" style="padding:8px 30px 4px 30px;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:15px;color:{CSS_WINE};">« {_esc(config.MOTTO)} »</td></tr>
+<tr><td align="center" style="padding:0 30px 4px 30px;"><div style="width:56px;border-top:1px solid {CSS_WINE};"></div></td></tr>
+<tr><td align="center" style="padding:10px 30px 22px 30px;font-size:11.5px;color:{CSS_GREY};">oWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon · <a href="https://www.owine.co" style="color:{CSS_GREY};">www.owine.co</a> · <a href="mailto:{config.CONTACT_EMAIL}" style="color:{CSS_GREY};">{config.CONTACT_EMAIL}</a></td></tr>
+</table></td></tr></table></body></html>"""
+
+
+def _cartons_table(o, cs, with_tracking: bool = True) -> str:
+    rows = ""
+    for c in cs:
+        lines = service.carton_lines(c); nb = sum(int(l["qty"]) for l in lines)
+        track = ""
+        if with_tracking and c.tracking:
+            track = f'<a href="{TRACK_URL.format(n=c.tracking)}" style="color:{CSS_WINE};text-decoration:none;font-size:12.5px;">{_esc(c.tracking)}</a>'
+        content = "<br>".join(f"{int(l['qty'])} × {_esc(l.get('title') or l['sku'])}" for l in lines)
+        rows += (f'<tr><td style="padding:8px 10px;border-top:1px solid #e9e2e2;vertical-align:top;"><span style="display:inline-block;background:{CSS_DARK};color:#fff;font-weight:bold;border-radius:4px;padding:2px 8px;">{_esc(c.ref)}</span></td>'
+                 f'<td style="padding:8px 10px;border-top:1px solid #e9e2e2;font-size:13.5px;vertical-align:top;">{content}</td>'
+                 f'<td style="padding:8px 10px;border-top:1px solid #e9e2e2;text-align:right;white-space:nowrap;vertical-align:top;font-size:13px;">{nb} btl{("<br>" + track) if track else ""}</td></tr>')
+    total = sum(sum(int(l["qty"]) for l in service.carton_lines(c)) for c in cs)
+    return (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e9e2e2;border-radius:6px;font-size:14px;">'
+            f'<tr style="background:{CSS_LIGHT};"><td style="padding:8px 10px;font-weight:bold;color:{CSS_DARK};">Carton</td><td style="padding:8px 10px;font-weight:bold;color:{CSS_DARK};">Contenu</td>'
+            f'<td style="padding:8px 10px;font-weight:bold;color:{CSS_DARK};text-align:right;">Bouteilles{" · n° de suivi" if with_tracking else ""}</td></tr>{rows}'
+            f'<tr style="background:{CSS_LIGHT};"><td colspan="3" style="padding:8px 10px;text-align:right;font-weight:bold;color:{CSS_DARK};">TOTAL : {len(cs)} carton{"s" if len(cs) > 1 else ""} · {total} bouteille{"s" if total > 1 else ""}</td></tr></table>')
+
+
+def _delivery_box() -> str:
+    steps = [("Ouvrez chaque carton devant le livreur, avant de signer", "et vérifiez que les bouteilles sont intactes et que le contenu correspond à la liste de colisage jointe."),
+             ("Écrivez toute anomalie sur le bon de livraison, avant de signer", "en précisant le carton et la bouteille concernée (nom et millésime), par exemple « carton B : Meursault Narvaux 2022, 1 bouteille cassée ». Idem pour une bouteille manquante ou un carton abîmé ou humide."),
+             ("Photographiez et prévenez-nous", f"la bouteille concernée, le carton et le bon annoté, à <a href=\"mailto:{config.CONTACT_EMAIL}\" style=\"color:{CSS_WINE};\">{config.CONTACT_EMAIL}</a> : nous ouvrons la réclamation auprès de Chronopost.")]
+    items = "".join(f'<tr><td style="padding:6px 8px 6px 0;vertical-align:top;"><span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:11px;background:{CSS_DARK};color:#fff;font-weight:bold;font-size:12px;">{i}</span></td>'
+                    f'<td style="padding:6px 0;vertical-align:top;font-size:13.5px;"><strong style="color:{CSS_DARK};">{t}</strong><br><span style="color:#333;">{d}</span></td></tr>' for i, (t, d) in enumerate(steps, 1))
+    return (f'<div style="border:1px solid {CSS_WINE};border-radius:8px;background:#fdf8f8;padding:14px 16px;margin:18px 0;">'
+            f'<div style="font-weight:bold;color:{CSS_WINE};font-size:13px;letter-spacing:.3px;margin-bottom:6px;">À LA LIVRAISON : TROIS RÉFLEXES QUI VOUS PROTÈGENT</div>'
+            f'<table role="presentation" cellpadding="0" cellspacing="0">{items}</table>'
+            f'<div style="font-size:12.5px;color:{CSS_GREY};font-style:italic;margin-top:8px;line-height:1.45;">Pourquoi c\'est essentiel : Chronopost n\'accepte une réclamation que si les réserves figurent sur le bon de livraison au moment de la remise. '
+            f'Un bon signé sans réserve vaut acceptation d\'un colis complet et en bon état ; plus aucun recours n\'est ensuite possible, ni pour vous, ni pour nous. '
+            f'Ces règles sont celles du transporteur : en les suivant, vous nous permettez de vous garantir un remplacement, ou un remboursement si un remplacement par la même bouteille ou une autre qui vous conviendrait n\'est pas possible.</div></div>')
+
+
+def email_client_html(o, cs) -> str:
+    first = _esc((o.customer or "").split(" ")[0])
+    if o.mode == "retrait":
+        inner = (f"<p>Bonjour {first},</p><p>J'ai le plaisir de vous confirmer que votre commande <strong>{_esc(o.name)}</strong> sera prête pour être collectée à notre entrepôt "
+                 f"à partir du <strong>{_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'}</strong>.</p>"
+                 f"<p>Merci de vous présenter muni de la confirmation ci-jointe et de votre pièce d'identité, aux horaires d'ouverture : 8h-12h / 13h30-17h (sauf le vendredi 16h30).</p>"
+                 f"<p style=\"background:{CSS_LIGHT};padding:10px 14px;border-radius:6px;\"><strong>{_esc(config.ALIX_ADDRESS)}</strong><br>{_esc(config.ALIX_EMAIL)} · 03 73 55 41 35</p>"
+                 + _cartons_table(o, cs, with_tracking=False) + "<p>En vous souhaitant bonne réception,</p><p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+        return _shell(f"Commande {o.name} prête", inner)
+    deliv = o.delivery_date or (next_business_day(o.pickup_date) if o.pickup_date else None)
+    inner = (f"<p>Bonjour {first},</p>"
+             f"<p>J'ai le plaisir de vous confirmer que l'enlèvement de votre commande <strong>{_esc(o.name)}</strong> par Chronopost est programmé pour le <strong>{_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'}</strong>. "
+             f"La livraison est prévue pour le <strong>{_esc(fr_date(deliv)) if deliv else '(à confirmer)'}</strong> ou le lendemain, sous réserve des délais de transport.</p>"
+             + _cartons_table(o, cs, with_tracking=True)
+             + "<p style=\"font-size:13px;color:#555;\">Vous trouverez ci-joints la liste de colisage détaillée et les étiquettes d'envoi (un numéro de suivi par carton, cliquable ci-dessus).</p>"
+             + _delivery_box()
+             + "<p>Nous restons bien entendu à votre disposition pour toute question et vous souhaitons une excellente réception.</p>"
+             + "<p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+    return _shell(f"Votre commande {o.name} est en route", inner)
+
+
+def email_alix_html(o, cs) -> str:
+    nb = sum(sum(int(l["qty"]) for l in service.carton_lines(c)) for c in cs)
+    if o.mode == "retrait":
+        inner = (f"<p>Bonjour,</p><p>Je vous prie de trouver ci-joint le détail de cette nouvelle commande à préparer pour un <strong>retrait sur place par le client</strong> ({nb} bouteille{'s' if nb > 1 else ''}, dans nos cartons).</p>"
+                 f"<p>Le client se présentera à partir du <strong>{_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'}</strong> muni de la confirmation de commande et d'une pièce d'identité.</p>"
+                 + _cartons_table(o, cs, with_tracking=False) + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+        return _shell(f"Commande OWINE #{o.name} — retrait client", inner)
+    slot = f"Enlèvement n° {_esc(o.pickup_no or '…')} · {_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'} entre {_esc(o.pickup_slot or '14:00 et 17:00')} · 21200 BEAUNE"
+    inner = (f"<p>Bonjour,</p><p>Je vous prie de trouver ci-joint le détail et les étiquettes d'envoi pour cette nouvelle commande à préparer ({len(cs)} carton{'s' if len(cs) > 1 else ''}, {nb} bouteille{'s' if nb > 1 else ''}).</p>"
+             f"<p style=\"background:#fff3cd;border-radius:6px;padding:10px 14px;\"><strong>Rappel :</strong> attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.</p>"
+             + _cartons_table(o, cs, with_tracking=True)
+             + f"<p style=\"background:{CSS_LIGHT};border-radius:6px;padding:10px 14px;margin-top:14px;\"><strong>L'enlèvement a été réservé sur le créneau suivant :</strong><br>{slot}</p>"
+             + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+    return _shell(f"Commande OWINE #{o.name}", inner)
