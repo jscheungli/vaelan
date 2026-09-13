@@ -40,3 +40,5 @@ ALIX_EMAIL = "beaune@transportsalix.com"
 ALIX_CC = ["remi.sery@gmail.com"]
 ALIX_ADDRESS = "OWINE chez ALIX TRANSPORT, 6 Rue JF Champollion, 21200 BEAUNE"
 DIGEST_TO = ["js@owine.co"]
+
+OWINE_ADDRESS = {"name": "OWINE SAS", "address1": "Parc d'activité", "address2": "14 E rue Coubertin", "zip": "21000", "city": "DIJON", "country": "FR", "email": "js@owine.co"}

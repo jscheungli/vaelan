@@ -82,8 +82,10 @@
   {% endif %}
 
   {# ---- étape 3 : envoi Alix + client #}
-  {% if cartons and (o.mode == 'retrait' or o.status in ('etiquettes', 'envoye', 'attente_reception', 'cloturee')) %}
-  <div class="card shadow-sm mb-3 {{ 'border-warning' if step in (2, 3) else '' }}"><div class="card-header py-2 small fw-semibold">3. Envoi à Alix et au client {% if o.status in ('envoye', 'attente_reception', 'cloturee') %}<span class="badge text-bg-success">fait</span>{% endif %}</div><div class="card-body py-2 small">
+  {% if cartons %}
+  <div class="card shadow-sm mb-3 {{ 'border-warning' if step in (2, 3) else '' }}"><div class="card-header py-2 small fw-semibold">3. Documents, envoi à Alix et au client {% if o.status in ('envoye', 'attente_reception', 'cloturee') %}<span class="badge text-bg-success">fait</span>{% endif %}</div><div class="card-body py-2 small">
+    {% if o.mode == 'chronopost' and cartons|rejectattr('tracking')|list %}<div class="text-warning-emphasis mb-1"><i class="bi bi-exclamation-triangle"></i> Numéros Chronopost manquants : la liste de colisage sera sans numéro de colis tant que les étiquettes ne sont pas enregistrées.</div>{% endif %}
+    <div class="text-muted mb-1">Les documents sont générés à la demande avec le format en vigueur : retéléchargez-les pour obtenir la dernière version, même sur une commande envoyée ou clôturée.</div>
     <div class="d-flex flex-wrap gap-2 mb-2">
       <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}/doc/colisage" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Liste de colisage</a>
       <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}/doc/alix"><i class="bi bi-file-earmark-spreadsheet"></i> Fichier Alix ({{ o.name }}.xlsx)</a>

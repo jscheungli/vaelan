@@ -327,7 +327,7 @@ def owine_order_drafts(request: Request, code: str, name: str):
 
 
 def _signature() -> str:
-    return "Jean-Sébastien CHEUNG-AH-SEUNG\n\noWine SAS 51 rue Devosge, 21000 Dijon\nwww.owine.co"
+    return "Jean-Sébastien CHEUNG-AH-SEUNG\n\noWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon\nwww.owine.co"
 
 
 @router.post("/c/{code}/owine/commandes/{name}/envoye")

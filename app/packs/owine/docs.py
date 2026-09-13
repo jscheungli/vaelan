@@ -53,7 +53,7 @@ def packing_list_pdf(o, cs) -> bytes:
             pg.draw_line((M, 100), (W - M, 100), color=WINE, width=1.2)
         else:
             pg.insert_text((M, 40), f"Liste de colisage · commande {o.name} (suite)", fontname="helv", fontsize=9, color=GREY)
-        foot = "oWine SAS · 51 rue Devosge, 21000 Dijon · www.owine.co · js@owine.co"
+        foot = "oWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon · www.owine.co · js@owine.co"
         pg.insert_text((W / 2 - fitz.get_text_length(foot, fontname="helv", fontsize=8) / 2, H - 30), foot, fontname="helv", fontsize=8, color=GREY)
         return pg
 
@@ -109,11 +109,33 @@ def packing_list_pdf(o, cs) -> bytes:
     pg.draw_line((M, y), (W - M, y), color=WINE, width=1)
     tot = f"TOTAL : {len(cs)} CARTON{'S' if len(cs) > 1 else ''} · {total_b} BOUTEILLE{'S' if total_b > 1 else ''}"
     pg.insert_text((W - M - fitz.get_text_length(tot, fontname="hebo", fontsize=10.5), y + 17), tot, fontname="hebo", fontsize=10.5, color=DARK)
-    y += 40
+    y += 34
     if o.mode == "chronopost":
-        for ln in ("À réception, nous vous conseillons d'ouvrir chaque carton avant de signer le bon de livraison et de vérifier",
-                   "que son contenu correspond à cette liste. Toute bouteille manquante ou cassée doit être signalée sur le bon de livraison."):
-            pg.insert_text((M, y), ln, fontname="heit", fontsize=8.5, color=GREY); y += 11
+        # encart « à la livraison » : trois réflexes + la règle Chronopost expliquée
+        steps = [
+            ("Ouvrez chaque carton devant le livreur, avant de signer", "Vérifiez que les bouteilles sont intactes et que le contenu correspond à cette liste, carton par carton."),
+            ("Écrivez toute anomalie sur le bon de livraison, avant de signer", "Bouteille cassée ou manquante, carton abîmé ou humide : notez-le en toutes lettres, par exemple « 1 bouteille cassée, carton B »."),
+            ("Photographiez et prévenez-nous", "Colis, bouteilles et bon de livraison annoté, envoyés à js@owine.co : nous ouvrons la réclamation et remplaçons ce qui doit l'être."),
+        ]
+        why = ("Pourquoi c'est essentiel : Chronopost n'accepte une réclamation que si les réserves figurent sur le bon de livraison au moment de la remise. "
+               "Un bon signé sans réserve vaut acceptation d'un colis complet et en bon état ; plus aucun recours n'est ensuite possible, ni pour vous, ni pour nous. "
+               "Ces règles sont celles du transporteur : en les suivant, vous nous permettez de vous garantir un remplacement en cas de problème.")
+        box_h = 34 + len(steps) * 40 + 62
+        if y + box_h > H - 50:
+            pg = new_page(); y = 60
+        pg.draw_rect(fitz.Rect(M, y, W - M, y + box_h), color=WINE, fill=(0.99, 0.975, 0.975), width=0.8)
+        pg.insert_text((M + 14, y + 20), "À LA LIVRAISON : TROIS RÉFLEXES QUI VOUS PROTÈGENT", fontname="hebo", fontsize=9.5, color=WINE)
+        yy = y + 34
+        for i, (title, detail) in enumerate(steps, 1):
+            pg.draw_circle((M + 22, yy + 6), 7.5, color=None, fill=DARK)
+            pg.insert_text((M + 19.2, yy + 9.2), str(i), fontname="hebo", fontsize=8.5, color=(1, 1, 1))
+            pg.insert_text((M + 36, yy + 9), title, fontname="hebo", fontsize=9, color=DARK)
+            r = pg.insert_textbox(fitz.Rect(M + 36, yy + 13, W - M - 12, yy + 40), detail, fontname="helv", fontsize=8.2, color=(0.2, 0.2, 0.2), lineheight=1.15)
+            assert r >= 0, "texte de l'encart trop long"
+            yy += 40
+        r = pg.insert_textbox(fitz.Rect(M + 14, yy + 2, W - M - 12, yy + 60), why, fontname="heit", fontsize=8, color=GREY, lineheight=1.15)
+        assert r >= 0, "paragraphe de l'encart trop long"
+        y += box_h
     return doc.tobytes()
 
 
