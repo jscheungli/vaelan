@@ -20,6 +20,16 @@ def eur(x: float) -> str:
     return s + " €"
 
 
+def round_euro(x: float) -> int:
+    """Arrondi à l'euro le plus proche (règle fiscale : 0,50 → au-dessus)."""
+    from decimal import Decimal, ROUND_HALF_UP
+    return int(Decimal(str(x)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def eur0(x: float) -> str:
+    return f"{round_euro(x):,}".replace(",", " ") + " €"
+
+
 def _lines_ok(ex: dict) -> List[dict]:
     return [l for l in ex["lines"] if l.get("include", True)]
 
@@ -84,16 +94,14 @@ def table_pdf(cfg: dict, ex: dict) -> bytes:
             pg.insert_text((tx, y + rh - 2.4), v, fontname=FONT, fontsize=fs)
             x += w
         y += rh
-    # totaux (non arrondis, mention « arrondi à l'euro » dessous, comme le modèle)
+    # totaux : montant exact (décimales), puis EN GRAS le montant arrondi à l'euro (celui qu'on retient), puis la mention
     t_amt = round(sum(r["amount"] for r in rows), 2); t_red = round(sum(r["reduction"] for r in rows), 2)
     xs = [x0 + sum(widths[:i]) for i in range(len(widths))]
     y += 8
-    for i, v in ((8, eur(t_amt)), (9, eur(t_amt)), (11, eur(t_red))):
-        tw = fitz.get_text_length(v, fontname=FONTB, fontsize=6.2)
-        pg.insert_text((xs[i] + widths[i] - 2 - tw, y), v, fontname=FONTB, fontsize=6.2)
-        n = "(arrondi à l'euro)"
-        tw = fitz.get_text_length(n, fontname=FONTI, fontsize=5.4)
-        pg.insert_text((xs[i] + widths[i] - 2 - tw, y + 7), n, fontname=FONTI, fontsize=5.4)
+    for i, v in ((8, t_amt), (9, t_amt), (11, t_red)):
+        for dy, txt, font, fs in ((0, eur(v), FONT, 6.2), (8, eur0(v), FONTB, 7.0), (15, "(arrondi à l'euro)", FONTI, 5.4)):
+            tw = fitz.get_text_length(txt, fontname=font, fontsize=fs)
+            pg.insert_text((xs[i] + widths[i] - 2 - tw, y + dy), txt, fontname=font, fontsize=fs)
     return doc.tobytes()
 
 
@@ -116,10 +124,18 @@ def table_xlsx(cfg: dict, ex: dict) -> bytes:
             c.font = Font(size=8); c.border = Border(top=thin, bottom=thin, left=thin, right=thin)
         row[8].number_format = row[9].number_format = row[11].number_format = '#,##0.00 €'; row[10].number_format = "0%"
     ws.append([]); ws.append(["", "", "", "", "", "", "", "TOTAL", f"=SUM(I4:I{n})", f"=SUM(J4:J{n})", "", f"=SUM(L4:L{n})"])
-    for c in ws[ws.max_row]:
-        c.font = Font(bold=True, size=8)
-    ws[f"I{ws.max_row}"].number_format = ws[f"J{ws.max_row}"].number_format = ws[f"L{ws.max_row}"].number_format = '#,##0.00 €'
+    r1 = ws.max_row
+    for c in ws[r1]:
+        c.font = Font(size=8)
+    ws[f"I{r1}"].number_format = ws[f"J{r1}"].number_format = ws[f"L{r1}"].number_format = '#,##0.00 €'
+    ws.append(["", "", "", "", "", "", "", "TOTAL RETENU", f"=ROUND(I{r1},0)", f"=ROUND(J{r1},0)", "", f"=ROUND(L{r1},0)"])
+    r2 = ws.max_row
+    for c in ws[r2]:
+        c.font = Font(bold=True, size=9)
+    ws[f"I{r2}"].number_format = ws[f"J{r2}"].number_format = ws[f"L{r2}"].number_format = '#,##0 €'
     ws.append(["", "", "", "", "", "", "", "", "(arrondi à l'euro)", "(arrondi à l'euro)", "", "(arrondi à l'euro)"])
+    for c in ws[ws.max_row]:
+        c.font = Font(italic=True, size=7)
     for col, w in zip("ABCDEFGHIJKL", (7, 52, 16, 12, 16, 13, 40, 13, 14, 14, 9, 14)):
         ws.column_dimensions[col].width = w
     ws.page_setup.orientation = "landscape"; ws.page_setup.fitToWidth = 1
