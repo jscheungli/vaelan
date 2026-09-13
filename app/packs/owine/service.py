@@ -245,7 +245,7 @@ def propose_cartons(lines: List[dict], stock_map: dict = None) -> List[dict]:
                 elif own_lmb is not None and own_lmb >= 1:
                     own_lmb -= 1
                     owner = "LMB"
-            bottles.append({"sku": l["sku"], "title": l.get("title", ""), "cost": cost, "owner": owner})
+            bottles.append({"sku": l["sku"], "title": l.get("title", ""), "cost": cost, "price": float(l.get("price") or 0), "owner": owner})
     n = len(bottles)
     caps = box_plan(n)
     boxes = [{"cap": c, "bottles": [], "value": 0.0} for c in caps]
@@ -260,10 +260,11 @@ def propose_cartons(lines: List[dict], stock_map: dict = None) -> List[dict]:
         agg: Dict[Tuple[str, str], dict] = {}
         for b in bx["bottles"]:
             k = (b["sku"], b["owner"])
-            agg.setdefault(k, {"sku": b["sku"], "title": b["title"], "qty": 0, "cost": b["cost"], "owner": b["owner"]})["qty"] += 1
+            agg.setdefault(k, {"sku": b["sku"], "title": b["title"], "qty": 0, "cost": b["cost"], "price": b.get("price") or 0, "owner": b["owner"]})["qty"] += 1
         nb = len(bx["bottles"])
         plan.append({"ref": chr(65 + i), "box_sku": config.BOX_FOR.get(bx["cap"], "2036"), "lines": list(agg.values()),
-                     "weight_kg": round(nb * config.BOTTLE_KG, 1), "insured_value": round(bx["value"]), "bottles": nb, "cap": bx["cap"]})
+                     "weight_kg": round(nb * config.BOTTLE_KG, 1), "insured_value": round(bx["value"]), "bottles": nb, "cap": bx["cap"],
+                     "cost_total": round(bx["value"], 2), "sale_total": round(sum(b.get("price") or 0 for b in bx["bottles"]), 2)})
     return plan
 
 

@@ -153,7 +153,7 @@ async def owine_order_cartons(request: Request, code: str, name: str):
                 if q > 0:
                     ow, lmb = service.available(l["sku"], st.get(l["sku"], {}))
                     owner = "OWINE" if ow >= q else "LMB"
-                    blines.append({"sku": l["sku"], "title": l["title"], "qty": q, "cost": float(l.get("cost") or 0), "owner": owner})
+                    blines.append({"sku": l["sku"], "title": l["title"], "qty": q, "cost": float(l.get("cost") or 0), "price": float(l.get("price") or 0), "owner": owner})
             if blines:
                 nb = sum(x["qty"] for x in blines)
                 plan.append({"ref": ref, "box_sku": box, "lines": blines, "weight_kg": round(nb * cfg.BOTTLE_KG, 1), "insured_value": round(sum(x["qty"] * x["cost"] for x in blines))})

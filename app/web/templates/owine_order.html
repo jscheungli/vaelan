@@ -31,8 +31,17 @@
     </div>
     <div class="mt-2 d-flex gap-2"><button class="btn btn-sm btn-dark">Enregistrer</button>{% if o.status in ('a_traiter', 'cartons') %}<button class="btn btn-sm btn-outline-danger" name="cancel" value="1" onclick="return confirm('Annuler cette commande dans Vaelan ?')">Annuler</button>{% endif %}</div>
   </form></div></div>
-  <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Lignes de la commande</div>
-  <table class="table table-sm mb-0 small"><tbody>{% for l in lines %}<tr class="{{ 'table-danger' if l.short else '' }}"><td>{{ l.qty }} ×</td><td>{{ l.title }}<div class="text-muted" style="font-size:.7rem">{{ l.sku }} · coût {{ eur(l.cost) if l.cost else '<span class=text-danger>manquant</span>'|safe }} · dispo OWINE {{ l.avail_owine|int }} / dépôt LMB {{ l.avail_lmb|int }}</div></td></tr>{% endfor %}</tbody></table></div>
+  <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Lignes de la commande — prix de vente et coût d'achat</div>
+  <div class="table-responsive"><table class="table table-sm mb-0 small"><thead><tr class="text-muted"><th>Qté</th><th>Vin</th><th class="text-end">Prix de vente unit.</th><th class="text-end">Coût d'achat unit.</th><th class="text-end">Coût ligne</th></tr></thead><tbody>
+  {% set ns = namespace(cost=0, sale=0, missing=false) %}
+  {% for l in lines %}{% set ns.cost = ns.cost + (l.cost or 0) * l.qty %}{% set ns.sale = ns.sale + (l.price or 0) * l.qty %}{% if not l.cost %}{% set ns.missing = true %}{% endif %}
+  <tr class="{{ 'table-danger' if l.short else '' }}"><td>{{ l.qty }}</td><td>{{ l.title }}<div class="text-muted" style="font-size:.7rem">{{ l.sku }} · dispo OWINE {{ l.avail_owine|int }} / dépôt LMB {{ l.avail_lmb|int }}</div></td>
+    <td class="text-end">{{ eur(l.price) if l.price else '—' }}</td><td class="text-end {{ 'text-danger fw-semibold' if not l.cost else '' }}">{{ eur(l.cost) if l.cost else 'MANQUANT' }}</td><td class="text-end">{{ eur((l.cost or 0) * l.qty) }}</td></tr>{% endfor %}
+  <tr class="fw-semibold"><td>{{ lines|sum(attribute='qty') }}</td><td>Total commande</td><td class="text-end">{{ eur(ns.sale) }}<div class="text-muted fw-normal" style="font-size:.7rem">prix de vente</div></td><td></td><td class="text-end">{{ eur(ns.cost) }}<div class="text-muted fw-normal" style="font-size:.7rem">coût d'achat = valeur à assurer</div></td></tr>
+  </tbody></table></div>
+  {% if ns.missing %}<div class="card-body py-1 small text-danger">Un coût d'achat manque : la valeur assurée sera fausse. Renseignez-le dans Shopify (coût par article) ou dans la fiche du vin sous Stock.</div>{% endif %}
+  {% if o.total and ns.sale and (o.total - ns.sale)|abs > 0.5 %}<div class="card-body py-1 small text-muted">Total Shopify {{ eur(o.total) }} (frais de port et remises compris) ; lignes {{ eur(ns.sale) }}.</div>{% endif %}
+  </div>
 </div>
 
 <div class="col-lg-8">
@@ -42,18 +51,23 @@
     <p class="text-muted mb-2">Proposition : cartons de 6 puis de 3, bouteilles réparties pour équilibrer la valeur assurée (coût d'achat), 1,5 kg par bouteille. Le dépôt-vente LMB est utilisé quand le stock OWINE ne suffit pas.</p>
     <form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cartons">
     <div class="row g-2">{% for p in proposal %}<div class="col-md-6"><div class="border rounded p-2 h-100">
-      <div class="d-flex align-items-center gap-2"><span class="badge text-bg-dark fs-6">{{ p.ref }}</span><select name="box_{{ p.ref }}" class="form-select form-select-sm w-auto">{% for sku, pk in cfg.PACKAGING.items() if pk.bottles %}<option value="{{ sku }}" {% if sku == p.box_sku %}selected{% endif %}>{{ pk.title }}</option>{% endfor %}</select><span class="ms-auto text-muted">{{ p.bottles }} btl · {{ p.weight_kg }} kg · <strong>{{ p.insured_value }} €</strong></span></div>
-      {% for l in p.lines %}<div class="d-flex align-items-center gap-1 mt-1"><input type="number" min="0" class="form-control form-control-sm" style="width:64px" name="q_{{ p.ref }}_{{ l.sku }}" value="{{ l.qty }}"><span class="flex-grow-1">{{ l.title }}</span>{% if l.owner == 'LMB' %}<span class="badge text-bg-info">LMB</span>{% endif %}</div>{% endfor %}
+      <div class="d-flex align-items-center gap-2"><span class="badge text-bg-dark fs-6">{{ p.ref }}</span><select name="box_{{ p.ref }}" class="form-select form-select-sm w-auto">{% for sku, pk in cfg.PACKAGING.items() if pk.bottles %}<option value="{{ sku }}" {% if sku == p.box_sku %}selected{% endif %}>{{ pk.title }}</option>{% endfor %}</select><span class="ms-auto text-muted">{{ p.bottles }} btl · {{ p.weight_kg }} kg</span></div>
+      <table class="table table-sm mb-1 mt-1" style="font-size:.78rem"><thead><tr class="text-muted"><th>Qté</th><th>Vin</th><th class="text-end">Prix vente u.</th><th class="text-end">Coût u.</th><th class="text-end">Coût ligne</th></tr></thead><tbody>
+      {% for l in p.lines %}<tr><td><input type="number" min="0" class="form-control form-control-sm" style="width:58px" name="q_{{ p.ref }}_{{ l.sku }}" value="{{ l.qty }}"></td><td>{{ l.title }}{% if l.owner == 'LMB' %} <span class="badge text-bg-info">LMB</span>{% endif %}</td><td class="text-end">{{ eur(l.price) if l.price else '—' }}</td><td class="text-end {{ 'text-danger' if not l.cost else '' }}">{{ eur(l.cost) if l.cost else '?' }}</td><td class="text-end">{{ eur(l.cost * l.qty) }}</td></tr>{% endfor %}
+      <tr class="fw-semibold"><td colspan="2">Carton {{ p.ref }}</td><td class="text-end">{{ eur(p.sale_total) }}</td><td></td><td class="text-end">{{ eur(p.cost_total) }}<div class="text-muted fw-normal" style="font-size:.68rem">valeur assurée : {{ p.insured_value }} €</div></td></tr>
+      </tbody></table>
       {% for l in lines if l.sku not in (p.lines|map(attribute='sku')|list) %}<div class="d-flex align-items-center gap-1 mt-1 text-muted"><input type="number" min="0" class="form-control form-control-sm" style="width:64px" name="q_{{ p.ref }}_{{ l.sku }}" value="0"><span class="flex-grow-1">{{ l.title }}</span></div>{% endfor %}
     </div></div>{% endfor %}</div>
     <input type="hidden" name="n_boxes" value="{{ proposal|length }}">
+    <div class="mt-2 small"><strong>Total des cartons</strong> : coût d'achat {{ eur(proposal|sum(attribute='cost_total')) }} (valeur assurée {{ proposal|sum(attribute='insured_value') }} €) · prix de vente {{ eur(proposal|sum(attribute='sale_total')) }} · {{ proposal|sum(attribute='bottles') }} bouteilles · {{ proposal|sum(attribute='weight_kg') }} kg</div>
     <div class="mt-2 d-flex gap-2"><button class="btn btn-sm btn-dark">Valider ces cartons</button><button class="btn btn-sm btn-outline-secondary" name="auto" value="1">Recalculer automatiquement</button></div>
     </form>
   {% elif cartons %}
-    <table class="table table-sm mb-1"><thead><tr class="text-muted"><th>Ref</th><th>Carton</th><th>Contenu</th><th>Poids</th><th>Valeur assurée</th><th>N° Chronopost</th></tr></thead><tbody>
+    <table class="table table-sm mb-1"><thead><tr class="text-muted"><th>Ref</th><th>Carton</th><th>Contenu (qté × vin · coût unitaire = coût ligne)</th><th>Poids</th><th class="text-end">Coût d'achat = valeur assurée</th><th>N° Chronopost</th></tr></thead><tbody>
     {% for c in cartons %}<tr><td><span class="badge text-bg-dark">{{ c.ref }}</span></td><td>{{ cfg.PACKAGING[c.box_sku].title if c.box_sku in cfg.PACKAGING else (c.box_sku or '—') }}</td>
-      <td>{% for l in carton_lines(c) %}{{ l.qty }} × {{ l.title }}{% if l.owner == 'LMB' %} <span class="badge text-bg-info">LMB</span>{% endif %}<br>{% endfor %}</td>
-      <td>{{ c.weight_kg }} kg</td><td>{{ c.insured_value|int }} €</td><td>{{ c.tracking or '—' }}</td></tr>{% endfor %}</tbody></table>
+      <td>{% for l in carton_lines(c) %}{{ l.qty }} × {{ l.title }}{% if l.owner == 'LMB' %} <span class="badge text-bg-info">LMB</span>{% endif %} <span class="text-muted">· {{ eur(l.cost) }} = {{ eur(l.cost * l.qty) }}</span><br>{% endfor %}</td>
+      <td>{{ c.weight_kg }} kg</td><td class="text-end fw-semibold">{{ c.insured_value|int }} €</td><td>{{ c.tracking or '—' }}</td></tr>{% endfor %}
+    <tr class="fw-semibold"><td colspan="3">Total : {{ cartons|length }} carton(s)</td><td>{{ cartons|sum(attribute='weight_kg') }} kg</td><td class="text-end">{{ cartons|sum(attribute='insured_value')|int }} €</td><td></td></tr></tbody></table>
     {% if o.status in ('cartons', 'etiquettes') %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cartons/reset" class="d-inline"><button class="btn btn-sm btn-link p-0">refaire la ventilation</button></form>{% endif %}
   {% else %}<span class="text-muted">Aucune ligne.</span>{% endif %}
   </div></div>
