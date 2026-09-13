@@ -106,9 +106,11 @@
 {% if o.status in ('a_traiter', 'cartons', 'etiquettes') %}
 <script id="editor-data" type="application/json">{{ editor|safe }}</script>
 <style>
-.ce-zone{min-height:54px;border:2px dashed #cfd4da;border-radius:.5rem;padding:.4rem;display:flex;flex-wrap:wrap;gap:.35rem;background:#fafbfc}
+.ce-zone{min-height:54px;border:2px dashed #cfd4da;border-radius:.5rem;padding:.4rem;display:flex;flex-direction:column;gap:.3rem;background:#fafbfc}
 .ce-zone.over{border-color:#0d6efd;background:#eef4ff}
-.ce-chip{cursor:grab;user-select:none;border:1px solid #adb5bd;border-radius:999px;padding:.15rem .55rem;font-size:.78rem;background:#fff;white-space:nowrap}
+.ce-chip{cursor:grab;user-select:none;border:1px solid #adb5bd;border-radius:.4rem;padding:.25rem .6rem;font-size:.8rem;background:#fff;display:flex;justify-content:space-between;gap:.75rem;align-items:center;width:100%}
+.ce-chip .ce-name{white-space:normal;overflow-wrap:anywhere;flex:1 1 auto}
+.ce-chip .ce-cost{white-space:nowrap;color:#495057}
 .ce-chip:active{cursor:grabbing}.ce-chip.lmb{border-color:#0dcaf0}
 .ce-top{border-color:#ffc107;background:#fff8e6}
 .ce-box{border:1px solid #dee2e6;border-radius:.5rem;padding:.5rem}
@@ -145,7 +147,8 @@
   function chip(id){
     const b = bottles[id]; const el = document.createElement('span'); el.className = 'ce-chip'; el.draggable = true; el.dataset.id = id;
     el.title = 'coût ' + eur(b.cost) + ' · vente ' + eur(b.price) + ' · cliquer pour déplacer';
-    el.textContent = b.title.replace(/, \d{4}$/, '') + ' · ' + eur(b.cost);
+    el.innerHTML = '<span class="ce-name"></span><span class="ce-cost">coût ' + eur(b.cost) + '</span>';
+    el.querySelector('.ce-name').textContent = b.title;
     el.addEventListener('dragstart', ev => { ev.dataTransfer.setData('text/plain', id); ev.dataTransfer.effectAllowed = 'move'; });
     return el;
   }
@@ -168,7 +171,7 @@
     // cartons
     const grid = document.createElement('div'); grid.className = 'row g-2';
     state.cartons.forEach((c, i) => {
-      const col = document.createElement('div'); col.className = 'col-md-6';
+      const col = document.createElement('div'); col.className = 'col-12';
       const box = document.createElement('div'); box.className = 'ce-box' + (c.ids.length > cap(c) ? ' over-cap' : (c.ids.length === cap(c) ? ' full' : ''));
       const cost = c.ids.reduce((a, id) => a + bottles[id].cost, 0), sale = c.ids.reduce((a, id) => a + bottles[id].price, 0);
       const head = document.createElement('div'); head.className = 'd-flex align-items-center gap-2 mb-1 flex-wrap';
