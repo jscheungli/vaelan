@@ -69,3 +69,40 @@ def create_draft(code: str, to: List[str], subject: str, body: str, cc: Optional
         return (typ == "OK"), ("brouillon créé" if typ == "OK" else f"IMAP {typ}")
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"[:200]
+
+
+def send_mail(code: str, to: List[str], subject: str, body: str, cc: Optional[List[str]] = None,
+              attachments: Optional[List[Tuple[str, bytes, str]]] = None, html: Optional[str] = None,
+              inline: Optional[List[Tuple[str, bytes, str]]] = None, from_name: str = "oWine", reply_to: Optional[str] = None) -> Tuple[bool, str]:
+    """Envoi par SMTP Gmail (smtp.gmail.com, mot de passe d'application) : le message part du compte et se retrouve dans « Envoyés »."""
+    import smtplib, ssl
+    from email.utils import formataddr
+    user, pwd = account(code)
+    if not (user and pwd):
+        return False, "Gmail non configuré (mot de passe d'application absent)"
+    msg = EmailMessage()
+    msg["From"] = formataddr((from_name, user))
+    msg["To"] = ", ".join(to or [])
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid()
+    msg.set_content(body)
+    if html:
+        msg.add_alternative(html, subtype="html")
+        for cid, data, ctype in (inline or []):
+            maintype, _, subtype = (ctype or "image/png").partition("/")
+            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=f"<{cid}>")
+    for fname, data, ctype in (attachments or []):
+        maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream", filename=fname)
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=60) as smtp:
+            smtp.ehlo(); smtp.starttls(context=ssl.create_default_context()); smtp.login(user, pwd)
+            smtp.send_message(msg, from_addr=user, to_addrs=list(to or []) + list(cc or []))
+        return True, "envoyé"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:200]

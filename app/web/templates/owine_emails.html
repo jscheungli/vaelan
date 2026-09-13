@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}E-mails {{ o.name }} · OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine/commandes/{{ o.name }}">{{ o.name }}</a></li><li class="breadcrumb-item active">E-mails</li></ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><h1 class="h4 mb-0">E-mails de la commande {{ o.name }}</h1>{% if sent %}<span class="badge text-bg-success">déjà envoyés</span>{% endif %}</div>
+{% if msg %}<div class="alert alert-{{ 'danger' if 'incomplet' in msg or 'impossible' in msg else 'success' }} py-2 small">{{ msg }}</div>{% endif %}
+<p class="small text-muted">Relisez les deux messages tels que le destinataire les verra. Vous pouvez retoucher l'objet, les destinataires et ajouter un paragraphe personnel, puis « Actualiser l'aperçu ». L'envoi part de votre boîte Gmail (js@owine.co, réponse à contact@owine.co) avec la liste de colisage{% if labels %}, les étiquettes ({{ labels|length }}){% endif %} et, pour Alix, le fichier {{ o.name }}.xlsx. Une fois envoyés, le stock est décompté et le suivi de réception est créé.</p>
+<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/emails">
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100"><div class="card-header py-2 small fw-semibold">E-mail à Alix Transport</div><div class="card-body py-2 small">
+      <div class="row g-1 mb-2">
+        <div class="col-12"><label class="form-label mb-0 text-muted">À</label><input class="form-control form-control-sm" value="{{ em.alix.to|join(', ') }}" readonly></div>
+        <div class="col-12"><label class="form-label mb-0 text-muted">Cc</label><input class="form-control form-control-sm" name="cc_alix" value="{{ em.alix.cc|join(', ') }}"></div>
+        <div class="col-12"><label class="form-label mb-0 text-muted">Objet</label><input class="form-control form-control-sm" name="subject_alix" value="{{ em.alix.subject }}"></div>
+        <div class="col-12"><label class="form-label mb-0 text-muted">Paragraphe libre (inséré après le créneau d'enlèvement)</label><textarea class="form-control form-control-sm" name="extra_alix" rows="2">{{ ed.get('extra_alix', '') }}</textarea></div>
+      </div>
+      <iframe srcdoc="{{ em.alix.html|e }}" style="width:100%;height:640px;border:1px solid #dee2e6;border-radius:.5rem;background:#fff"></iframe>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100"><div class="card-header py-2 small fw-semibold">E-mail au client</div><div class="card-body py-2 small">
+      <div class="row g-1 mb-2">
+        <div class="col-12"><label class="form-label mb-0 text-muted">À</label><input class="form-control form-control-sm" name="to_client" value="{{ em.client.to|join(', ') }}"></div>
+        <div class="col-12"><label class="form-label mb-0 text-muted">Objet</label><input class="form-control form-control-sm" name="subject_client" value="{{ em.client.subject }}"></div>
+        <div class="col-12"><label class="form-label mb-0 text-muted">Paragraphe libre (inséré après l'annonce de livraison)</label><textarea class="form-control form-control-sm" name="extra_client" rows="2">{{ ed.get('extra_client', '') }}</textarea></div>
+      </div>
+      <iframe srcdoc="{{ em.client.html|e }}" style="width:100%;height:640px;border:1px solid #dee2e6;border-radius:.5rem;background:#fff"></iframe>
+    </div></div>
+  </div>
+</div>
+<div class="d-flex flex-wrap gap-2 mt-3">
+  <button class="btn btn-outline-dark btn-sm" name="action" value="preview">Actualiser l'aperçu</button>
+  {% if not sent %}<button class="btn btn-success btn-sm" name="action" value="send" {% if not gmail_ok %}disabled{% endif %} onclick="return confirm('Envoyer maintenant les deux e-mails (Alix et client) ?')"><i class="bi bi-send-check"></i> Valider et envoyer les deux e-mails</button>{% endif %}
+  {% if not gmail_ok %}<span class="small text-danger align-self-center">Gmail non configuré sur le serveur.</span>{% endif %}
+  <a class="btn btn-link btn-sm" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}">Retour à la commande</a>
+</div>
+</form>
+{% endblock %}

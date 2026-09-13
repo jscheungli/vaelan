@@ -25,6 +25,37 @@ def next_business_day(d: date) -> date:
     return n
 
 
+def delivery_of(pickup: date) -> date:
+    """Règle JS : Chrono Viti livre le lendemain de l'enlèvement avant 13 h (le lundi si l'enlèvement est le samedi)."""
+    n = pickup + timedelta(days=1)
+    if n.weekday() == 6:
+        n += timedelta(days=1)
+    return n
+
+
+def missing_vars(o, cs) -> List[str]:
+    """Ce qu'il faut renseigner avant de générer les e-mails."""
+    miss = []
+    if not cs:
+        miss.append("cartons validés")
+    if not o.pickup_date:
+        miss.append("date de retrait" if o.mode == "retrait" else "date d'enlèvement")
+    if o.mode == "chronopost":
+        if not o.pickup_no:
+            miss.append("numéro d'enlèvement Chronopost")
+        if not o.pickup_slot:
+            miss.append("créneau d'enlèvement")
+        if any(not c.tracking for c in cs):
+            miss.append("numéro Chronopost de chaque carton (étiquettes)")
+        if not (o.address1 and o.zip and o.city):
+            miss.append("adresse de livraison")
+    if not o.email:
+        miss.append("e-mail du client")
+    if not o.customer:
+        miss.append("nom du client")
+    return miss
+
+
 # ---------------------------------------------------------------- liste de colisage (document client, aussi utilisé par Alix)
 import os
 LOGO = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
@@ -245,10 +276,10 @@ def email_client(o, cs) -> dict:
                 f"{config.ALIX_ADDRESS} · {config.ALIX_EMAIL} · 03 73 55 41 35\n\nEn vous souhaitant bonne réception,\n\nTrès cordialement,")
         subject = f"Commande oWine {o.name} prête à être récupérée"
     else:
-        deliv = o.delivery_date or (next_business_day(o.pickup_date) if o.pickup_date else None)
-        body = (f"Bonjour {first},\n\nJ'ai le plaisir de vous confirmer que l'enlèvement de votre commande par Chronopost est programmé pour le "
-                f"{fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'}. Vous trouverez ci-jointes les étiquettes d'envoi correspondantes.\n\n"
-                f"La livraison est ainsi prévue pour le {fr_date(deliv) if deliv else '(à confirmer)'} ou le lendemain (sous réserve des délais de transport).\n\n"
+        deliv = delivery_of(o.pickup_date) if o.pickup_date else None
+        body = (f"Bonjour {first},\n\nJ'ai le plaisir de vous confirmer que l'enlèvement de votre commande {o.name} par Chronopost est réservé pour le "
+                f"{fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'}. Vous trouverez ci-jointes la liste de colisage et les étiquettes d'envoi correspondantes.\n\n"
+                f"La livraison est prévue le {fr_date(deliv) if deliv else '(à confirmer)'} avant 13 h, sauf aléa de transport.\n\n"
                 "⚠️ AVERTISSEMENT IMPORTANT\n\nAu moment de la livraison, nous vous recommandons vivement d'ouvrir le carton avant de signer afin de vérifier que :\n"
                 "- les bouteilles sont intactes ;\n- le nombre de bouteilles correspond bien à votre commande (cf. liste de colisage ci-jointe pour le détail du contenu de chaque carton).\n\n"
                 "Conformément à la politique de Chronopost (que nous sommes tenus d'appliquer), toute bouteille cassée ou manquante, ou tout colis visiblement abîmé, "
@@ -259,7 +290,7 @@ def email_client(o, cs) -> dict:
                 f"- photographier la bouteille, le carton et le bon annoté, et nous les envoyer à {config.CONTACT_EMAIL}.\n\n"
                 "Nous pourrons alors vous garantir un remplacement, ou un remboursement si un remplacement par la même bouteille ou une autre qui vous conviendrait n'est pas possible.\n\n"
                 "Nous restons bien entendu à votre disposition pour toute question et vous souhaitons une excellente réception et une très belle journée.\n\nTrès cordialement,")
-        subject = f"Confirmation de planification d'enlèvement de votre commande {o.name}"
+        subject = f"Votre commande {o.name} : enlèvement Chronopost réservé, livraison le {fr_date(deliv) if deliv else 'lendemain'} avant 13 h"
     return {"to": [o.email] if o.email else [], "cc": [], "subject": subject, "body": body}
 
 
@@ -291,14 +322,15 @@ def _esc(x) -> str:
 
 def _shell(title: str, inner: str) -> str:
     """Gabarit : bandeau logo + titre, corps, devise, pied de page."""
-    return f"""<!doctype html><html><head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;background:#f4f1f1;font-family:Helvetica,Arial,sans-serif;color:#222;">
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">
+<style>:root{{color-scheme:light;}} p,td,span,div{{color:#222222;}}</style></head>
+<body style="margin:0;padding:0;background:#f4f1f1;font-family:Helvetica,Arial,sans-serif;color:#222222;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f1f1;padding:24px 12px;"><tr><td align="center">
 <table role="presentation" width="620" cellpadding="0" cellspacing="0" style="max-width:620px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;">
 <tr><td style="padding:22px 30px 14px 30px;border-bottom:2px solid {CSS_WINE};">
   <table role="presentation" width="100%"><tr><td><img src="cid:logo" alt="oWine" style="height:46px;width:auto;display:block;"></td>
   <td align="right" style="font-size:15px;font-weight:bold;color:{CSS_DARK};">{_esc(title)}</td></tr></table></td></tr>
-<tr><td style="padding:22px 30px 10px 30px;font-size:14.5px;line-height:1.55;">{inner}</td></tr>
+<tr><td style="padding:22px 30px 10px 30px;font-size:14.5px;line-height:1.55;color:#222222;background:#ffffff;">{inner}</td></tr>
 <tr><td align="center" style="padding:8px 30px 4px 30px;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:15px;color:{CSS_WINE};">« {_esc(config.MOTTO)} »</td></tr>
 <tr><td align="center" style="padding:0 30px 4px 30px;"><div style="width:56px;border-top:1px solid {CSS_WINE};"></div></td></tr>
 <tr><td align="center" style="padding:10px 30px 22px 30px;font-size:11.5px;color:{CSS_GREY};">oWine SAS · Parc d'activité, 14 E rue Coubertin, 21000 Dijon · <a href="https://www.owine.co" style="color:{CSS_GREY};">www.owine.co</a> · <a href="mailto:{config.CONTACT_EMAIL}" style="color:{CSS_GREY};">{config.CONTACT_EMAIL}</a></td></tr>
@@ -337,38 +369,41 @@ def _delivery_box() -> str:
             f'Ces règles sont celles du transporteur : en les suivant, vous nous permettez de vous garantir un remplacement, ou un remboursement si un remplacement par la même bouteille ou une autre qui vous conviendrait n\'est pas possible.</div></div>')
 
 
-def email_client_html(o, cs) -> str:
+def email_client_html(o, cs, extra: str = "") -> str:
     first = _esc((o.customer or "").split(" ")[0])
+    extra_html = f"<p>{_esc(extra).replace(chr(10), '<br>')}</p>" if extra else ""
     if o.mode == "retrait":
         inner = (f"<p>Bonjour {first},</p><p>J'ai le plaisir de vous confirmer que votre commande <strong>{_esc(o.name)}</strong> sera prête pour être collectée à notre entrepôt "
                  f"à partir du <strong>{_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'}</strong>.</p>"
                  f"<p>Merci de vous présenter muni de la confirmation ci-jointe et de votre pièce d'identité, aux horaires d'ouverture : 8h-12h / 13h30-17h (sauf le vendredi 16h30).</p>"
                  f"<p style=\"background:{CSS_LIGHT};padding:10px 14px;border-radius:6px;\"><strong>{_esc(config.ALIX_ADDRESS)}</strong><br>{_esc(config.ALIX_EMAIL)} · 03 73 55 41 35</p>"
-                 + _cartons_table(o, cs, with_tracking=False) + "<p>En vous souhaitant bonne réception,</p><p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+                 + extra_html + _cartons_table(o, cs, with_tracking=False) + "<p>En vous souhaitant bonne réception,</p><p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
         return _shell(f"Commande {o.name} prête", inner)
-    deliv = o.delivery_date or (next_business_day(o.pickup_date) if o.pickup_date else None)
+    deliv = delivery_of(o.pickup_date) if o.pickup_date else None
     inner = (f"<p>Bonjour {first},</p>"
-             f"<p>J'ai le plaisir de vous confirmer que l'enlèvement de votre commande <strong>{_esc(o.name)}</strong> par Chronopost est programmé pour le <strong>{_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'}</strong>. "
-             f"La livraison est prévue pour le <strong>{_esc(fr_date(deliv)) if deliv else '(à confirmer)'}</strong> ou le lendemain, sous réserve des délais de transport.</p>"
+             f"<p>J'ai le plaisir de vous confirmer que l'enlèvement de votre commande <strong>{_esc(o.name)}</strong> par Chronopost est réservé pour le <strong>{_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'}</strong>. "
+             f"La livraison est prévue le <strong>{_esc(fr_date(deliv)) if deliv else '(à confirmer)'} avant 13 h</strong>, sauf aléa de transport.</p>"
+             + extra_html
              + _cartons_table(o, cs, with_tracking=True)
              + "<p style=\"font-size:13px;color:#555;\">Vous trouverez ci-joints la liste de colisage détaillée et les étiquettes d'envoi (un numéro de suivi par carton, cliquable ci-dessus).</p>"
              + _delivery_box()
              + "<p>Nous restons bien entendu à votre disposition pour toute question et vous souhaitons une excellente réception.</p>"
              + "<p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
-    return _shell(f"Votre commande {o.name} est en route", inner)
+    return _shell(f"Commande {o.name} · enlèvement réservé", inner)
 
 
-def email_alix_html(o, cs) -> str:
+def email_alix_html(o, cs, extra: str = "") -> str:
     nb = sum(sum(int(l["qty"]) for l in service.carton_lines(c)) for c in cs)
+    extra_html = f"<p>{_esc(extra).replace(chr(10), '<br>')}</p>" if extra else ""
     if o.mode == "retrait":
         inner = (f"<p>Bonjour,</p><p>Je vous prie de trouver ci-joint le détail de cette nouvelle commande à préparer pour un <strong>retrait sur place par le client</strong> ({nb} bouteille{'s' if nb > 1 else ''}, dans nos cartons).</p>"
                  f"<p>Le client se présentera à partir du <strong>{_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'}</strong> muni de la confirmation de commande et d'une pièce d'identité.</p>"
-                 + _cartons_table(o, cs, with_tracking=False) + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+                 + extra_html + _cartons_table(o, cs, with_tracking=False) + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
         return _shell(f"Commande OWINE #{o.name} — retrait client", inner)
     slot = f"Enlèvement n° {_esc(o.pickup_no or '…')} · {_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'} entre {_esc(o.pickup_slot or '14:00 et 17:00')} · 21200 BEAUNE"
     inner = (f"<p>Bonjour,</p><p>Je vous prie de trouver ci-joint le détail et les étiquettes d'envoi pour cette nouvelle commande à préparer ({len(cs)} carton{'s' if len(cs) > 1 else ''}, {nb} bouteille{'s' if nb > 1 else ''}).</p>"
              f"<p style=\"background:#fff3cd;border-radius:6px;padding:10px 14px;\"><strong>Rappel :</strong> attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.</p>"
              + _cartons_table(o, cs, with_tracking=True)
-             + f"<p style=\"background:{CSS_LIGHT};border-radius:6px;padding:10px 14px;margin-top:14px;\"><strong>L'enlèvement a été réservé sur le créneau suivant :</strong><br>{slot}</p>"
-             + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+             + f"<p style=\"background:{CSS_LIGHT};border-radius:6px;padding:10px 14px;margin-top:14px;color:#222;\"><strong>L'enlèvement a été réservé sur le créneau suivant :</strong><br>{slot}</p>"
+             + extra_html + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
     return _shell(f"Commande OWINE #{o.name}", inner)

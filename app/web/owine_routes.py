@@ -96,6 +96,7 @@ def _order_ctx(request, company, o, msg=""):
     editor = {"lines": [{"sku": l["sku"], "title": l["title"], "qty": int(l["qty"]), "cost": float(l.get("cost") or 0), "price": float(l.get("price") or 0)} for l in lines],
               "cartons": initial, "boxes": {k: v for k, v in cfg.PACKAGING.items() if v["bottles"]}, "bottle_kg": cfg.BOTTLE_KG}
     return _base(request, company, o=o, lines=lines, cartons=cs, carton_lines=service.carton_lines, proposal=proposal, sheet=sheet, msg=msg, editor=json.dumps(editor, ensure_ascii=False),
+                 missing=docs.missing_vars(o, cs) if cs else [],
                  email_alix=docs.email_alix(o, cs) if cs else None, email_client=docs.email_client(o, cs) if cs else None,
                  gmail_ok=gmail_imap.configured(CODE), tasks=[t for t in service.tasks("open") if t.ref == o.name], moves=service.moves(ref=o.name))
 
@@ -121,8 +122,8 @@ async def owine_order_infos(request: Request, code: str, name: str):
     o.mode = g("mode") or o.mode
     o.pickup_no, o.pickup_slot, o.note = g("pickup_no"), g("pickup_slot"), g("note")
     o.pickup_date, o.delivery_date = _d(g("pickup_date")), _d(g("delivery_date"))
-    if o.pickup_date and not o.delivery_date and o.mode == "chronopost":
-        o.delivery_date = docs.next_business_day(o.pickup_date)
+    if o.pickup_date and o.mode == "chronopost":
+        o.delivery_date = docs.delivery_of(o.pickup_date)
     for k in ("customer", "company", "address1", "address2", "zip", "city", "phone", "email"):
         if g(k) is not None or k in f:
             setattr(o, k, g(k))
@@ -309,6 +310,80 @@ def owine_order_doc(request: Request, code: str, name: str, what: str):
     if what == "zip":
         return Response(docs.bundle_zip(o, cs, _labels(o)), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{o.name} - envoi.zip"'})
     return Response("?", status_code=404)
+
+
+def _email_edits(o) -> dict:
+    with Session(engine) as s:
+        st = s.exec(select(Setting).where(Setting.company_code == CODE, Setting.key == f"owine:emails:{o.name}")).first()
+    return json.loads(st.value) if st else {}
+
+
+def _save_email_edits(o, d: dict) -> None:
+    with Session(engine) as s:
+        st = s.exec(select(Setting).where(Setting.company_code == CODE, Setting.key == f"owine:emails:{o.name}")).first() or Setting(company_code=CODE, key=f"owine:emails:{o.name}", value="{}")
+        st.value = json.dumps(d, ensure_ascii=False); s.add(st); s.commit()
+
+
+def _emails_of(o, cs, ed: dict) -> dict:
+    ea, ec = docs.email_alix(o, cs), docs.email_client(o, cs)
+    return {"alix": {"to": ea["to"], "cc": [x.strip() for x in (ed.get("cc_alix") or ", ".join(ea["cc"])).split(",") if x.strip()], "subject": ed.get("subject_alix") or ea["subject"],
+                     "html": docs.email_alix_html(o, cs, extra=ed.get("extra_alix") or ""), "text": ea["body"] + ("\n\n" + ed["extra_alix"] if ed.get("extra_alix") else "") + "\n\n" + _signature()},
+            "client": {"to": [ed.get("to_client") or (ec["to"][0] if ec["to"] else "")], "cc": [], "subject": ed.get("subject_client") or ec["subject"],
+                       "html": docs.email_client_html(o, cs, extra=ed.get("extra_client") or ""), "text": ec["body"] + ("\n\n" + ed["extra_client"] if ed.get("extra_client") else "") + "\n\n" + _signature()}}
+
+
+@router.get("/c/{code}/owine/commandes/{name}/emails", response_class=HTMLResponse)
+def owine_order_emails(request: Request, code: str, name: str, msg: str = ""):
+    """Aperçu HTML des deux e-mails, retouches (objet, destinataires, paragraphe libre), envoi."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); cs = service.cartons(o.id)
+    miss = docs.missing_vars(o, cs)
+    if miss:
+        return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Avant les e-mails, renseignez : {', '.join(miss)}.", status_code=303)
+    ed = _email_edits(o)
+    em = _emails_of(o, cs, ed)
+    return templates.TemplateResponse(request, "owine_emails.html", _base(request, company, o=o, em=em, ed=ed, msg=msg, gmail_ok=gmail_imap.configured(CODE), labels=[n for n, _ in _labels(o)],
+                                                                         sent=o.status in ("envoye", "attente_reception", "cloturee")))
+
+
+@router.post("/c/{code}/owine/commandes/{name}/emails")
+async def owine_order_emails_save(request: Request, code: str, name: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); f = await request.form()
+    ed = _email_edits(o)
+    for k in ("subject_alix", "subject_client", "extra_alix", "extra_client", "cc_alix", "to_client"):
+        if k in f:
+            ed[k] = (f.get(k) or "").strip()
+    _save_email_edits(o, ed)
+    if f.get("action") == "send":
+        return _send_emails(request, code, o, ed)
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}/emails?msg=Aperçu mis à jour.", status_code=303)
+
+
+def _send_emails(request, code, o, ed):
+    cs = service.cartons(o.id)
+    miss = docs.missing_vars(o, cs)
+    if miss:
+        return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}?msg=Envoi impossible, il manque : {', '.join(miss)}.", status_code=303)
+    if o.status not in ("cartons", "etiquettes"):
+        return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}/emails?msg=Cette commande a déjà été envoyée.", status_code=303)
+    em = _emails_of(o, cs, ed)
+    pl = docs.packing_list_pdf(o, cs); xl = docs.alix_xlsx(o, cs); labels = _labels(o)
+    logo = [("logo", open(docs.LOGO, "rb").read(), "image/png")]
+    att_alix = [(f"Détail {o.name}.pdf", pl, "application/pdf"), (f"{o.name}.xlsx", xl, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] + [(n, d, "application/pdf") for n, d in labels]
+    att_cli = [(f"Détail {o.name}.pdf", pl, "application/pdf")] + [(n, d, "application/pdf") for n, d in labels]
+    ok1, m1 = gmail_imap.send_mail(CODE, em["alix"]["to"], em["alix"]["subject"], em["alix"]["text"], cc=em["alix"]["cc"], attachments=att_alix, html=em["alix"]["html"], inline=logo,
+                                   from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
+    ok2, m2 = gmail_imap.send_mail(CODE, em["client"]["to"], em["client"]["subject"], em["client"]["text"], attachments=att_cli, html=em["client"]["html"], inline=logo,
+                                   from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
+    if ok1 and ok2:
+        service.mark_sent(o, by=_who(request))
+        return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}?msg=Les deux e-mails sont partis (Alix et client) : stock décompté, suivi de réception créé.", status_code=303)
+    return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}/emails?msg=Envoi incomplet — Alix : {m1} · client : {m2}. Rien n'a été décompté.", status_code=303)
 
 
 @router.post("/c/{code}/owine/commandes/{name}/brouillons")
