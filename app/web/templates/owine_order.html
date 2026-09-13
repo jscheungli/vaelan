@@ -95,7 +95,7 @@
     {% if missing %}<div class="alert alert-warning py-2 mb-2"><strong>À renseigner avant les e-mails :</strong> {{ missing|join(' · ') }}. <span class="text-muted">(fiche de gauche pour les dates, le n° et le créneau d'enlèvement, l'adresse et l'e-mail ; étape 2 pour les numéros Chronopost)</span></div>
     {% else %}<div class="text-success mb-2"><i class="bi bi-check2"></i> Toutes les variables sont renseignées{% if o.mode == 'chronopost' %} : enlèvement le {{ o.pickup_date.strftime('%d/%m/%Y') }} ({{ o.pickup_slot }}, n° {{ o.pickup_no }}), livraison annoncée le {{ o.delivery_date.strftime('%d/%m/%Y') if o.delivery_date else '?' }} avant 13 h{% endif %}.</div>{% endif %}
     <div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-sm btn-primary {{ 'disabled' if missing else '' }}" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}/emails"><i class="bi bi-envelope-paper"></i> {{ 'Revoir les e-mails' if o.status in ('envoye', 'attente_reception', 'cloturee') else 'Relire et envoyer les deux e-mails' }}</a>
+      <a class="btn btn-sm btn-primary {{ 'disabled' if missing else '' }}" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}/emails"><i class="bi bi-envelope-paper"></i> {{ 'Revoir les e-mails envoyés' if o.status in ('envoye', 'attente_reception', 'cloturee') else 'Relire les e-mails (rien ne part à cette étape)' }}</a>
       {% if o.status in ('cartons', 'etiquettes') %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/envoye" class="d-inline"><button class="btn btn-sm btn-outline-secondary" onclick="return confirm('Vous avez envoyé les e-mails vous-même ? Le stock et les emballages seront décomptés.')">J'ai envoyé les e-mails moi-même</button></form>{% endif %}
     </div>
   </div></div>
