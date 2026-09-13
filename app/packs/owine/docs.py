@@ -25,44 +25,95 @@ def next_business_day(d: date) -> date:
     return n
 
 
-# ---------------------------------------------------------------- liste de colisage (format « Détail OWxxxx »)
+# ---------------------------------------------------------------- liste de colisage (document client, aussi utilisé par Alix)
+import os
+LOGO = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
+WINE = (0.55, 0.10, 0.10)      # rouge oWine
+DARK = (0.29, 0.05, 0.12)      # bordeaux foncé du logo
+GREY = (0.45, 0.45, 0.45)
+LIGHT = (0.96, 0.94, 0.94)
+
+
 def packing_list_pdf(o, cs) -> bytes:
+    """Liste de colisage : logo oWine, commande, destinataire, un bloc par carton (référence, n° Chronopost, contenu), totaux."""
     doc = fitz.open()
-    pg = doc.new_page(width=595, height=842)
-    y = 60
-    pg.insert_text((50, y), f"Liste de colisage de la commande {o.name}", fontname="hebo", fontsize=14); y += 18
-    pg.insert_text((50, y), f"MAJ {service.now_local():%d/%m/%Y}", fontname="helv", fontsize=9); y += 10
-    if o.customer:
-        pg.insert_text((50, y + 10), f"Destinataire : {o.customer}{' · ' + o.city if o.city else ''}", fontname="helv", fontsize=9); y += 12
-    y += 16
-    cols = [("Ref.", 50, 40), ("Etiquette", 90, 110), ("Désignation", 200, 250), ("Qté", 450, 40), ("Btl / CRT", 495, 60)]
-    for t, x, w in cols:
-        pg.insert_text((x + 2, y), t, fontname="hebo", fontsize=9)
-    pg.draw_line((50, y + 4), (555, y + 4), width=0.6); y += 16
-    total_b = 0
-    for c in cs:
-        lines = service.carton_lines(c); nb = sum(int(l["qty"]) for l in lines); total_b += nb
-        first = True
-        for l in lines:
-            if y > 790:
-                pg = doc.new_page(width=595, height=842); y = 60
-            if first:
-                pg.insert_text((52, y), c.ref, fontname="hebo", fontsize=9)
-                pg.insert_text((92, y), c.tracking or "—", fontname="helv", fontsize=8)
-                pg.insert_text((497, y), str(nb), fontname="hebo", fontsize=9)
-            title = l.get("title") or l["sku"]
-            fs = 8.5
-            while fitz.get_text_length(title, fontname="helv", fontsize=fs) > 245 and fs > 6: fs -= 0.5
-            pg.insert_text((202, y), title, fontname="helv", fontsize=fs)
-            pg.insert_text((452, y), str(int(l["qty"])), fontname="helv", fontsize=9)
-            y += 13; first = False
-        pg.draw_line((50, y - 4), (555, y - 4), width=0.3, color=(0.6, 0.6, 0.6)); y += 4
-    pg.insert_text((452, y + 4), str(total_b), fontname="hebo", fontsize=9); pg.insert_text((497, y + 4), str(total_b), fontname="hebo", fontsize=9)
-    y += 22
-    pg.insert_text((50, y), f"TOTAL : {len(cs)} CARTON{'S' if len(cs) > 1 else ''} | {total_b} BOUTEILLE{'S' if total_b > 1 else ''}", fontname="hebo", fontsize=10)
+    W, H = 595, 842
+    M = 48
+
+    def new_page(first=False):
+        pg = doc.new_page(width=W, height=H)
+        if first:
+            try:
+                pg.insert_image(fitz.Rect(M, 34, M + 160, 34 + 56), filename=LOGO, keep_proportion=True)
+            except Exception:
+                pg.insert_text((M, 60), "oWine", fontname="tibo", fontsize=22, color=WINE)
+            pg.insert_text((W - M - fitz.get_text_length("LISTE DE COLISAGE", fontname="hebo", fontsize=15), 56), "LISTE DE COLISAGE", fontname="hebo", fontsize=15, color=DARK)
+            sub = f"Commande {o.name} · {service.now_local():%d/%m/%Y}"
+            pg.insert_text((W - M - fitz.get_text_length(sub, fontname="helv", fontsize=9.5), 72), sub, fontname="helv", fontsize=9.5, color=GREY)
+            pg.draw_line((M, 100), (W - M, 100), color=WINE, width=1.2)
+        else:
+            pg.insert_text((M, 40), f"Liste de colisage · commande {o.name} (suite)", fontname="helv", fontsize=9, color=GREY)
+        foot = "oWine SAS · 51 rue Devosge, 21000 Dijon · www.owine.co · js@owine.co"
+        pg.insert_text((W / 2 - fitz.get_text_length(foot, fontname="helv", fontsize=8) / 2, H - 30), foot, fontname="helv", fontsize=8, color=GREY)
+        return pg
+
+    pg = new_page(first=True)
+    y = 122
+    pg.insert_text((M, y), "DESTINATAIRE", fontname="hebo", fontsize=8.5, color=WINE)
+    addr = [x for x in [o.customer, o.company, o.address1, o.address2, f"{o.zip or ''} {o.city or ''}".strip()] if x]
+    if o.mode == "retrait":
+        addr = [o.customer or ""] + ["Retrait à l'entrepôt oWine chez Alix Transport, Beaune"]
+    yy = y + 14
+    for i, line in enumerate(addr):
+        pg.insert_text((M, yy), line, fontname="hebo" if i == 0 else "helv", fontsize=10 if i == 0 else 9.5, color=DARK if i == 0 else (0.15, 0.15, 0.15)); yy += 13
+    x2 = W / 2 + 10
+    pg.insert_text((x2, y), "EXPÉDITION", fontname="hebo", fontsize=8.5, color=WINE)
+    total_b = sum(sum(int(l["qty"]) for l in service.carton_lines(c)) for c in cs)
+    info = [f"{len(cs)} carton{'s' if len(cs) > 1 else ''} · {total_b} bouteille{'s' if total_b > 1 else ''}"]
     if o.mode == "chronopost":
-        y += 24
-        pg.insert_text((50, y), "Attention : respecter le contenu de chaque carton selon l'étiquette référencée.", fontname="heit", fontsize=8.5)
+        info.append("Transporteur : Chronopost (Chrono Viti)")
+        if o.pickup_date:
+            info.append(f"Enlèvement le {fr_date(o.pickup_date)}")
+        if o.delivery_date:
+            info.append(f"Livraison prévue le {fr_date(o.delivery_date)}")
+    else:
+        info.append("Retrait sur place" + (f" à partir du {fr_date(o.pickup_date)}" if o.pickup_date else ""))
+    yy2 = y + 14
+    for line in info:
+        pg.insert_text((x2, yy2), line, fontname="helv", fontsize=9.5, color=(0.15, 0.15, 0.15)); yy2 += 13
+    y = max(yy, yy2) + 16
+    for c in cs:
+        lines = service.carton_lines(c); nb = sum(int(l["qty"]) for l in lines)
+        if y + 36 + 15 * len(lines) > H - 60:
+            pg = new_page(); y = 60
+        pg.draw_rect(fitz.Rect(M, y, W - M, y + 20), color=None, fill=LIGHT)
+        pg.draw_rect(fitz.Rect(M, y, M + 22, y + 20), color=None, fill=DARK)
+        pg.insert_text((M + 7, y + 14.5), c.ref, fontname="hebo", fontsize=11, color=(1, 1, 1))
+        pg.insert_text((M + 30, y + 14), f"Carton {c.ref} · {nb} bouteille{'s' if nb > 1 else ''}", fontname="hebo", fontsize=9.5, color=DARK)
+        if c.tracking:
+            t = f"N° Chronopost {c.tracking}"
+            pg.insert_text((W - M - 6 - fitz.get_text_length(t, fontname="helv", fontsize=9), y + 14), t, fontname="helv", fontsize=9, color=GREY)
+        y += 20
+        for l in lines:
+            y += 14
+            title = l.get("title") or l["sku"]
+            fs = 9.5
+            while fitz.get_text_length(title, fontname="helv", fontsize=fs) > W - 2 * M - 60 and fs > 7:
+                fs -= 0.5
+            pg.insert_text((M + 30, y), title, fontname="helv", fontsize=fs, color=(0.1, 0.1, 0.1))
+            q = f"{int(l['qty'])} btl"
+            pg.insert_text((W - M - 6 - fitz.get_text_length(q, fontname="hebo", fontsize=9.5), y), q, fontname="hebo", fontsize=9.5, color=DARK)
+            pg.draw_line((M + 30, y + 4), (W - M, y + 4), color=(0.88, 0.88, 0.88), width=0.4)
+        y += 18
+    y += 4
+    pg.draw_line((M, y), (W - M, y), color=WINE, width=1)
+    tot = f"TOTAL : {len(cs)} CARTON{'S' if len(cs) > 1 else ''} · {total_b} BOUTEILLE{'S' if total_b > 1 else ''}"
+    pg.insert_text((W - M - fitz.get_text_length(tot, fontname="hebo", fontsize=10.5), y + 17), tot, fontname="hebo", fontsize=10.5, color=DARK)
+    y += 40
+    if o.mode == "chronopost":
+        for ln in ("À réception, nous vous conseillons d'ouvrir chaque carton avant de signer le bon de livraison et de vérifier",
+                   "que son contenu correspond à cette liste. Toute bouteille manquante ou cassée doit être signalée sur le bon de livraison."):
+            pg.insert_text((M, y), ln, fontname="heit", fontsize=8.5, color=GREY); y += 11
     return doc.tobytes()
 
 
