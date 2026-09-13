@@ -342,20 +342,31 @@ def collect(company_code: str, fy_end: date, log=None) -> dict:
             start_default = line["dates"].get("install") or _fr(line["date"])
             line["start"] = old["start"] if edited("start", "start_default") else start_default
             line["start_default"] = start_default
-            line["include"] = old.get("include", not line["warning"]) if old else not line["warning"]
-            line["note"] = old.get("note", "") if old else (line["warning"] or "")
+            # retenue / note : valeur par défaut (indice d'inéligibilité, avoir) sauf si l'utilisateur l'a changée à la main
+            line["include_default"] = not line["warning"]
+            line["note_default"] = line["warning"] or ""
+            line["_old"] = {"include": old.get("include"), "include_default": old.get("include_default"), "note": old.get("note"), "note_default": old.get("note_default")} if old else None
             lines.append(line)
             log(f"{line['date']} {line['supplier']} {line['invoice_number']} {amt:.2f} € → {line['label']} / {line['site'] or 'établissement ?'}{'' if has_file else ' (PAS DE PIÈCE)'}")
     lines.sort(key=lambda x: (x["date"], x["piece"]))
-    # avoir qui annule une facture du même fournisseur (montants opposés) : les deux sortent du tableau, avec la note
+    # avoir qui annule une facture du même fournisseur (montants opposés) : les deux sortent du tableau par défaut, avec la note
+    used = set()
     for l in lines:
-        if l["amount"] < 0 and l["key"] not in prev:
-            inv = next((x for x in lines if x["amount"] == -l["amount"] and x["supplier"] == l["supplier"] and x["key"] not in prev and x.get("include", True) and x["amount"] > 0), None)
+        if l["amount"] < 0:
+            inv = next((x for x in lines if x["amount"] == -l["amount"] and x["supplier"] == l["supplier"] and x["amount"] > 0 and x["key"] not in used), None)
             if inv:
-                l["include"] = inv["include"] = False
-                l["note"] = f"avoir annulant la facture {inv['invoice_number']}"
-                inv["note"] = f"annulée par l'avoir {l['invoice_number']}"
-                l["label"] = inv["label"] = inv["label_proposed"]
+                used.add(inv["key"])
+                l["include_default"] = inv["include_default"] = False
+                l["note_default"] = f"avoir annulant la facture {inv['invoice_number']}"
+                inv["note_default"] = f"annulée par l'avoir {l['invoice_number']}"
+                if not l.get("_old") or l["_old"]["include"] == l["_old"]["include_default"]:
+                    l["label"] = l["label_proposed"] = inv["label_proposed"]
+    for l in lines:
+        old = l.pop("_old", None)
+        edited_inc = bool(old) and old.get("include_default") is not None and old.get("include") != old.get("include_default")
+        edited_note = bool(old) and old.get("note_default") is not None and (old.get("note") or "") != (old.get("note_default") or "")
+        l["include"] = old["include"] if edited_inc else l["include_default"]
+        l["note"] = (old.get("note") or "") if edited_note else l["note_default"]
     ex = {"lines": lines, "other_moves": sorted(other, key=lambda x: x["date"]), "accounts": [{"number": a["number"], "label": a["label"], "id": a["id"]} for a in accs],
           "collected_at": datetime.utcnow().isoformat(timespec="seconds"), "fy_start": d0.isoformat(), "fy_end": d1.isoformat()}
     ex["totals"] = totals(cfg, ex)
