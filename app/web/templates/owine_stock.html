@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Stock OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Stock</li></ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">Stock</h1>
+  <form class="d-flex gap-1" method="get"><input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="vin, SKU"><input type="hidden" name="tout" value="{{ tout }}"><button class="btn btn-sm btn-outline-dark">Filtrer</button></form>
+  <a class="btn btn-sm btn-outline-secondary" href="?tout={{ 0 if tout else 1 }}">{{ 'Masquer les vides' if tout else 'Tout afficher' }}</a>
+  <a class="btn btn-sm btn-outline-secondary" href="/c/{{ company.code }}/owine/mouvements">Livre des mouvements</a>
+  <form method="post" action="/c/{{ company.code }}/owine/stock/shopify" class="ms-auto"><button class="btn btn-sm btn-dark"><i class="bi bi-arrow-repeat"></i> Comparer avec Shopify</button></form>
+</div>
+<p class="small text-muted">Chez Alix : ce qui appartient à OWINE et ce qui est en dépôt-vente LMB. Rue de Chaux : stock propre de La Mémoire de Bourgogne. Shopify ne connaît qu'un total chez Alix{% if snapshot_at %} (relevé du {{ snapshot_at }}){% endif %} ; l'écart = (OWINE + dépôt LMB) − Shopify.</p>
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-sm align-middle mb-0 small">
+<thead><tr class="text-muted"><th>Vin</th><th>SKU</th><th class="text-end">Coût</th><th class="text-end">Cession LMB</th><th class="text-end">Prix</th><th class="text-end">OWINE @Alix</th><th class="text-end">Dépôt LMB @Alix</th><th class="text-end">LMB rue de Chaux</th><th class="text-end">Shopify</th><th class="text-end">Écart</th></tr></thead><tbody>
+{% for r in rows %}<tr class="{{ 'table-warning' if r.ecart else '' }}">
+  <td><a class="text-decoration-none" href="/c/{{ company.code }}/owine/stock/{{ r.it.sku }}">{{ r.it.title }}</a></td><td class="text-muted">{{ r.it.sku }}</td>
+  <td class="text-end {{ 'text-danger' if not r.it.cost else '' }}">{{ eur(r.it.cost) if r.it.cost else '?' }}</td><td class="text-end">{{ eur(r.it.lmb_price) if r.it.lmb_price else '' }}</td><td class="text-end">{{ eur(r.it.price) if r.it.price else '' }}</td>
+  <td class="text-end">{{ r.ow|int }}</td><td class="text-end">{{ r.lmb|int }}</td><td class="text-end">{{ r.chaux|int }}</td><td class="text-end">{{ r.shop if r.shop is not none else '' }}</td><td class="text-end fw-semibold">{{ r.ecart|int if r.ecart else '' }}</td>
+</tr>{% endfor %}
+<tr class="fw-semibold"><td colspan="5">Total ({{ rows|length }} vins)</td><td class="text-end">{{ tot.ow|int }}</td><td class="text-end">{{ tot.lmb|int }}</td><td class="text-end">{{ tot.chaux|int }}</td><td class="text-end">{{ tot.shop|int }}</td><td></td></tr>
+</tbody></table></div></div>
+{% endblock %}

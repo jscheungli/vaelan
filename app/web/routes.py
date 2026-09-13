@@ -292,6 +292,8 @@ _TILES = [
      "Grandes masses des balances Pennylane de toutes les sociétés du groupe : trésorerie, dettes fournisseurs, créances, emprunts."),
     ("interco", "Intercos groupe", "bi-arrow-left-right", "/c/{code}/interco",
      "Dettes intra-groupe à une date : matrice société × société, réciprocité, anomalies, plan de virements de régularisation."),
+    ("owine", "Commandes & stock", "bi-box-seam", "/c/{code}/owine",
+     "Commandes Shopify à préparer (cartons, valeur assurée, Chronopost, Alix, client), stock OWINE et dépôt-vente, emballages, tâches."),
     ("ciop", "CIOP — 2083-SD", "bi-file-earmark-text", "/c/{code}/ciop",
      "Crédit d'impôt investissements productifs outre-mer : comptes CIOP, factures, tableau des investissements acquis, CERFA pré-rempli, cadrage."),
     ("planning", "Planning des équipes", "bi-calendar-week", "/c/{code}/planning",
@@ -346,6 +348,8 @@ def _feature_from_path(path: str):
         return "planning"
     if "/ciop" in path:
         return "ciop"
+    if "/owine" in path:
+        return "owine"
     if "/config" in path:
         return "config"
     if "/salaires" in path:

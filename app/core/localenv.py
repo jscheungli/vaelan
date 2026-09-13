@@ -104,6 +104,10 @@ def load(path: str = None, db: bool = False) -> str:
         _set(f"CHRONOPOST_{k}_ACCOUNT", str(c.get("account") or c.get("contract") or "").split(" ")[0])
         _set(f"CHRONOPOST_{k}_PASSWORD", c.get("password"))
         _set(f"CHRONOPOST_{k}_SUBACCOUNT", c.get("subAccount"))
+    for code, c in (d.get("gmail") or {}).items():
+        k = _env_key(code)
+        _set(f"GMAIL_{k}_USER", c.get("user"))
+        _set(f"GMAIL_{k}_APP_PASSWORD", c.get("appPassword") or c.get("app_password"))
     tg = d.get("telegram") or {}
     _set("TELEGRAM_BOT_TOKEN", tg.get("botToken") or tg.get("token"))
     an = d.get("anthropic") or {}

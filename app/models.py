@@ -512,3 +512,110 @@ class CiopForm(SQLModel, table=True):
     check: Optional[str] = None                      # résultat du calage automatique (JSON)
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
     by_user: Optional[str] = None
+
+
+# ====================================================================== OWINE (commandes, stock, emballages, tâches)
+class OwItem(SQLModel, table=True):
+    """Article : vin (SKU Shopify) ou emballage. Coût OWINE (achat vigneron), prix de vente, prix de cession LMB (dernier BLV)."""
+    __tablename__ = "ow_items"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sku: str = Field(index=True, unique=True)
+    title: str = ""
+    kind: str = "wine"                                   # wine / packaging
+    vigneron: Optional[str] = None
+    appellation: Optional[str] = None
+    niveau: Optional[str] = None
+    climat: Optional[str] = None
+    couleur: Optional[str] = None
+    millesime: Optional[int] = None
+    format: str = "75CL"
+    price: Optional[float] = None                        # prix de vente TTC Shopify
+    cost: Optional[float] = None                         # coût d'achat OWINE (Shopify unitCost, sinon Sheet)
+    cost_source: Optional[str] = None
+    lmb_price: Optional[float] = None                    # prix de cession LMB → OWINE HT (dernier BLV)
+    weight_kg: float = 1.5
+    shopify_variant_id: Optional[str] = None
+    shopify_product_id: Optional[str] = None
+    status: str = "ACTIVE"
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OwMove(SQLModel, table=True):
+    """Mouvement de stock (livre unique) : qty signée, lieu (ALIX / CHAUX), propriétaire (OWINE / LMB)."""
+    __tablename__ = "ow_moves"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    date: _dt.date = Field(index=True)
+    sku: str = Field(index=True)
+    qty: float = 0
+    location: str = "ALIX"
+    owner: str = "OWINE"
+    kind: str = "sale"
+    ref: Optional[str] = Field(default=None, index=True)   # n° commande, n° BLV, n° facture…
+    unit_cost: Optional[float] = None
+    note: Optional[str] = None
+    source: str = "manual"                               # sheet_owine / sheet_lmb / blv / shopify / manual / alix
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    by_user: Optional[str] = None
+
+
+class OwOrder(SQLModel, table=True):
+    __tablename__ = "ow_orders"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)           # OW1047
+    shopify_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    customer: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    address1: Optional[str] = None
+    address2: Optional[str] = None
+    zip: Optional[str] = None
+    city: Optional[str] = None
+    country: str = "FR"
+    shipping_title: Optional[str] = None
+    mode: str = "manuel"                                 # chronopost / retrait / manuel
+    financial_status: Optional[str] = None
+    fulfillment_status: Optional[str] = None
+    total: float = 0
+    lines: str = "[]"                                    # [{sku, title, qty, price, cost}]
+    status: str = "a_traiter"
+    pickup_no: Optional[str] = None
+    pickup_date: Optional[_dt.date] = None
+    pickup_slot: Optional[str] = None
+    delivery_date: Optional[_dt.date] = None
+    sent_alix_at: Optional[datetime] = None
+    sent_client_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    note: Optional[str] = None
+    source: str = "shopify"
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OwCarton(SQLModel, table=True):
+    """Carton d'une commande : référence A, B…, emballage, n° Chronopost, poids, valeur assurée, contenu."""
+    __tablename__ = "ow_cartons"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: int = Field(foreign_key="ow_orders.id", index=True)
+    ref: str = "A"
+    box_sku: Optional[str] = None
+    tracking: Optional[str] = None
+    weight_kg: float = 0
+    insured_value: float = 0
+    lines: str = "[]"                                    # [{sku, title, qty, cost, owner}]
+    sort: int = 0
+
+
+class OwTask(SQLModel, table=True):
+    __tablename__ = "ow_tasks"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(default="OWINE", index=True)
+    kind: str = "other"
+    title: str = ""
+    ref: Optional[str] = Field(default=None, index=True)
+    details: Optional[str] = None
+    due_date: Optional[_dt.date] = None
+    status: str = "open"                                 # open / done
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    done_at: Optional[datetime] = None
+    key: Optional[str] = Field(default=None, index=True)  # clé d'unicité (évite les doublons)

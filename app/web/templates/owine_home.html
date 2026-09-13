@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}OWINE · {{ app_name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item active">Commandes &amp; stock</li></ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0"><i class="bi bi-box-seam"></i> OWINE</h1>
+  <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/commandes">Commandes</a>
+  <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/stock">Stock</a>
+  <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/emballages">Emballages</a>
+  <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/lmb">Dépôt-vente LMB</a>
+  <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/taches">Tâches {% if tasks %}<span class="badge text-bg-warning">{{ tasks|length }}</span>{% endif %}</a>
+  <form method="post" action="/c/{{ company.code }}/owine/sync" class="ms-auto"><button class="btn btn-sm btn-dark"><i class="bi bi-arrow-repeat"></i> Synchroniser Shopify</button></form>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Commandes à traiter et en cours ({{ orders|length }})</div>
+    <table class="table table-sm align-middle mb-0 small"><tbody>
+    {% for o in orders %}<tr>
+      <td><a class="fw-semibold text-decoration-none" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}">{{ o.name }}</a><div class="text-muted" style="font-size:.72rem">{{ o.created_at.strftime('%d/%m/%Y') if o.created_at else '' }}</div></td>
+      <td>{{ o.customer or '—' }}<div class="text-muted" style="font-size:.72rem">{{ o.city or '' }}</div></td>
+      <td><span class="badge text-bg-light border">{{ modes.get(o.mode, o.mode) }}</span></td>
+      <td>{{ eur(o.total) }}</td>
+      <td><span class="badge text-bg-{{ status_labels[o.status][1] }}">{{ status_labels[o.status][0] }}</span>{% if o.financial_status and o.financial_status != 'PAID' %} <span class="badge text-bg-danger">{{ o.financial_status|lower }}</span>{% endif %}</td>
+    </tr>{% else %}<tr><td class="text-muted">Aucune commande en cours. Synchronisez Shopify pour vérifier.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card shadow-sm mb-3"><div class="card-header py-2 small fw-semibold">Tâches ouvertes ({{ tasks|length }})</div>
+    <ul class="list-group list-group-flush small">
+    {% for t in tasks[:12] %}<li class="list-group-item d-flex align-items-center gap-2"><span class="badge text-bg-light border">{{ task_kinds.get(t.kind, t.kind) }}</span><span class="flex-grow-1">{{ t.title }}</span>{% if t.due_date %}<span class="text-{{ 'danger' if t.due_date < today else 'muted' }}">{{ t.due_date.strftime('%d/%m') }}</span>{% endif %}</li>
+    {% else %}<li class="list-group-item text-muted">Rien en attente.</li>{% endfor %}
+    </ul>{% if tasks|length > 12 %}<div class="card-body py-2 small"><a href="/c/{{ company.code }}/owine/taches">voir les {{ tasks|length }} tâches</a></div>{% endif %}</div>
+    <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Emballages Chronopost chez Alix</div>
+    <div class="card-body py-2 small d-flex flex-wrap gap-3">{% for sku, p in cfg.PACKAGING.items() %}<div><span class="text-muted">{{ p.title|replace('Réf. ', '') }}</span><br><strong class="{{ 'text-danger' if pack[sku] <= 3 and p.bottles else '' }}">{{ pack[sku]|int }}</strong></div>{% endfor %}</div></div>
+    {% if cost_missing %}<div class="alert alert-warning small mt-3 py-2">{{ cost_missing|length }} vin(s) actif(s) sans coût d'achat : la valeur assurée sera fausse. <a href="/c/{{ company.code }}/owine/stock?tout=1">voir le stock</a></div>{% endif %}
+  </div>
+</div>
+{% if runs %}<div class="small text-muted mt-3">Dernières tâches : {% for r in runs %}{{ r.started_at.strftime('%d/%m %H:%M') }} {{ r.kind }} <span class="badge text-bg-{{ 'success' if r.status == 'ok' else ('info' if r.status == 'running' else 'danger') }}">{{ r.status }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+{% endblock %}

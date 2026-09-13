@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Tâches · OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Tâches</li></ol></nav>
+<div class="d-flex align-items-center gap-2 mb-2"><h1 class="h4 mb-0">Tâches {{ 'terminées' if done else 'ouvertes' }} ({{ tasks|length }})</h1><a class="btn btn-sm btn-outline-secondary ms-auto" href="?done={{ 0 if done else 1 }}">{{ 'Voir les ouvertes' if done else 'Voir les terminées' }}</a></div>
+<p class="small text-muted">Un rappel par e-mail part chaque lundi matin avec les tâches ouvertes et les commandes en cours.</p>
+<div class="card shadow-sm mb-3"><table class="table table-sm align-middle mb-0 small"><thead><tr class="text-muted"><th>Type</th><th>Tâche</th><th>Réf.</th><th>Échéance</th><th></th></tr></thead><tbody>
+{% for t in tasks %}<tr><td><span class="badge text-bg-light border">{{ task_kinds.get(t.kind, t.kind) }}</span></td><td>{{ t.title }}{% if t.details %}<div class="text-muted" style="font-size:.72rem">{{ t.details }}</div>{% endif %}</td>
+  <td>{% if t.ref and t.ref.startswith('OW') %}<a href="/c/{{ company.code }}/owine/commandes/{{ t.ref }}">{{ t.ref }}</a>{% else %}{{ t.ref or '' }}{% endif %}</td>
+  <td class="{{ 'text-danger fw-semibold' if t.due_date and t.due_date < today and not done else '' }}">{{ t.due_date.strftime('%d/%m/%Y') if t.due_date else '' }}</td>
+  <td class="text-end">{% if not done %}<form method="post" action="/c/{{ company.code }}/owine/taches/{{ t.id }}/fait"><button class="btn btn-sm btn-outline-success py-0">Fait</button></form>{% else %}{{ t.done_at.strftime('%d/%m') if t.done_at else '' }}{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="text-muted">Aucune.</td></tr>{% endfor %}</tbody></table></div>
+<form method="post" action="/c/{{ company.code }}/owine/taches" class="row g-1 small align-items-end">
+  <div class="col-md-2"><select class="form-select form-select-sm" name="kind">{% for k, v in task_kinds.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></div>
+  <div class="col-md-5"><input class="form-control form-control-sm" name="title" placeholder="Nouvelle tâche" required></div>
+  <div class="col-md-2"><input class="form-control form-control-sm" name="ref" placeholder="Réf."></div><div class="col-md-2"><input type="date" class="form-control form-control-sm" name="due"></div>
+  <div class="col-md-1"><button class="btn btn-sm btn-dark">Ajouter</button></div>
+</form>
+{% endblock %}

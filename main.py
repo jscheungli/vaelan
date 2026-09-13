@@ -5,6 +5,7 @@ Le métier vit dans des « packs de contrôle » enregistrés dans le registre ;
 le socle fournit auth, DB, connecteurs, dashboard et journal des runs.
 """
 from contextlib import asynccontextmanager
+from datetime import datetime
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
@@ -21,6 +22,7 @@ from app.web.vds_routes import router as vds_router
 from app.web.telegram_routes import router as telegram_router
 from app.web.planning_routes import router as planning_router
 from app.web.ciop_routes import router as ciop_router
+from app.web.owine_routes import router as owine_router
 from app.core import scheduler
 
 
@@ -63,6 +65,16 @@ def _register_schedules():
         start_job("planning_control", lambda ctx: pl_jobs.run_control(ctx, "STERNA", "daily"), company_id=c.id if c else None, pack="planning",
                   label="Contrôle du planning — règles de la convention collective et règles internes")
     scheduler.register("planning_control", 7, _planning_control)
+
+    from app.packs.owine import jobs as ow_jobs
+
+    def _owine_sync():
+        with Session(engine) as s:
+            c = s.exec(select(Company).where(Company.code == "OWINE")).first()
+        start_job("owine_sync", ow_jobs.run_sync, company_id=c.id if c else None, pack="owine", label="OWINE — synchronisation Shopify et tâches Pennylane")
+        if datetime.now().weekday() == 0:                   # lundi : rappel hebdomadaire des tâches
+            start_job("owine_digest", ow_jobs.weekly_digest, company_id=c.id if c else None, pack="owine", label="OWINE — rappel hebdomadaire des tâches")
+    scheduler.register("owine_sync", 6, _owine_sync)
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -107,6 +119,7 @@ app.include_router(vds_router)
 app.include_router(telegram_router)
 app.include_router(planning_router)
 app.include_router(ciop_router)
+app.include_router(owine_router)
 
 
 @app.get("/healthz")

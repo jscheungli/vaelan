@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Dépôt-vente LMB · OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Dépôt-vente LMB</li></ol></nav>
+<h1 class="h4">Dépôt-vente La Mémoire de Bourgogne → OWINE</h1>
+<p class="small text-muted">Contrat-cadre du 11/03/2025. Les bouteilles déposées chez Alix restent la propriété de LMB jusqu'à la vente ; chaque vente doit être facturée par LMB à OWINE au prix de cession du bon de livraison valorisé.</p>
+<div class="row g-3">
+<div class="col-lg-5">
+  <div class="card shadow-sm mb-3"><div class="card-header py-2 small fw-semibold">Bons de livraison valorisés</div><table class="table table-sm mb-0 small"><tbody>
+  {% for ref, b in blvs %}<tr><td>{{ ref }}</td><td>{{ b.date.strftime('%d/%m/%Y') if b.date else '' }}</td><td class="text-end">{{ b.qty|int }} btl</td><td class="text-end">{{ eur(b.ht) }} HT</td></tr>{% endfor %}</tbody></table></div>
+  <div class="card shadow-sm border-warning"><div class="card-header py-2 small fw-semibold">Ventes à facturer par LMB à OWINE — {{ eur(total_to_invoice) }} HT en attente</div><table class="table table-sm mb-0 small"><tbody>
+  {% for x in to_invoice %}<tr class="{{ '' if x.open else 'text-muted' }}"><td><a href="/c/{{ company.code }}/owine/commandes/{{ x.ref }}">{{ x.ref }}</a></td><td>{% for s, q, t, p in x.lines %}{{ q|int }} × {{ t }} <span class="text-muted">({{ eur(p) if p else 'prix ?' }})</span><br>{% endfor %}</td><td class="text-end">{{ eur(x.ht) }}</td><td>{{ 'à facturer' if x.open else 'facturé' }}</td></tr>{% endfor %}</tbody></table></div>
+</div>
+<div class="col-lg-7"><div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Bouteilles en dépôt chez Alix</div><div class="table-responsive"><table class="table table-sm mb-0 small"><thead><tr class="text-muted"><th>Vin</th><th class="text-end">Cession HT</th><th class="text-end">Déposées</th><th class="text-end">Vendues</th><th class="text-end">Restantes</th></tr></thead><tbody>
+{% for sku, d in dep %}<tr><td><a class="text-decoration-none" href="/c/{{ company.code }}/owine/stock/{{ sku }}">{{ d.title }}</a></td><td class="text-end">{{ eur(d.price) if d.price else '' }}</td><td class="text-end">{{ d.in|int }}</td><td class="text-end">{{ d.sold|int }}</td><td class="text-end fw-semibold">{{ (d.in - d.sold)|int }}</td></tr>{% endfor %}
+</tbody></table></div></div></div>
+</div>
+{% endblock %}

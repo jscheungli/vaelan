@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Commandes OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Commandes</li></ol></nav>
+<div class="d-flex align-items-center gap-2 mb-2"><h1 class="h4 mb-0">Commandes</h1><a class="btn btn-sm btn-outline-secondary ms-auto" href="?all={{ 0 if all else 1 }}">{{ 'En cours seulement' if all else 'Tout l\'historique' }}</a></div>
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-sm align-middle mb-0 small">
+<thead><tr class="text-muted"><th>N°</th><th>Date</th><th>Client</th><th>Mode</th><th>Total</th><th>Paiement</th><th>Statut</th><th>Enlèvement</th></tr></thead><tbody>
+{% for o in orders %}<tr>
+  <td><a class="fw-semibold text-decoration-none" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}">{{ o.name }}</a></td>
+  <td>{{ o.created_at.strftime('%d/%m/%Y') if o.created_at else '—' }}</td><td>{{ o.customer or '—' }} <span class="text-muted">{{ o.city or '' }}</span></td>
+  <td>{{ modes.get(o.mode, o.mode) }}</td><td>{{ eur(o.total) }}</td><td>{{ (o.financial_status or '')|lower }}</td>
+  <td><span class="badge text-bg-{{ status_labels[o.status][1] }}">{{ status_labels[o.status][0] }}</span></td>
+  <td>{{ o.pickup_date.strftime('%d/%m') if o.pickup_date else '' }} {{ o.pickup_no or '' }}</td>
+</tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ o.name }} · OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine/commandes">Commandes</a></li><li class="breadcrumb-item active">{{ o.name }}</li></ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">{{ o.name }}</h1><span class="badge text-bg-{{ status_labels[o.status][1] }} fs-6">{{ status_labels[o.status][0] }}</span>
+  <span class="small text-muted">{{ o.created_at.strftime('%d/%m/%Y') if o.created_at else '' }} · {{ eur(o.total) }} · {{ (o.financial_status or '')|lower }}{% if o.shipping_title %} · Shopify : {{ o.shipping_title }}{% endif %}</span>
+  {% if o.status == 'attente_reception' %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cloturer" class="ms-auto"><button class="btn btn-sm btn-success"><i class="bi bi-check2"></i> Réception confirmée : clôturer</button></form>{% endif %}
+</div>
+{% if msg %}<div class="alert alert-{{ 'warning' if 'incompl' in msg or 'pas au bon' in msg else 'success' }} py-2 small">{{ msg }}</div>{% endif %}
+{% set step = {'a_traiter': 1, 'cartons': 2, 'etiquettes': 3, 'envoye': 4, 'attente_reception': 4, 'cloturee': 5, 'annulee': 0}[o.status] %}
+
+<div class="row g-3">
+<div class="col-lg-4">
+  <div class="card shadow-sm mb-3"><div class="card-header py-2 small fw-semibold">Destinataire et enlèvement</div><div class="card-body py-2">
+  <form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/infos" class="small">
+    <div class="row g-1">
+      <div class="col-6"><label class="form-label mb-0 text-muted">Mode</label><select class="form-select form-select-sm" name="mode">{% for k, v in modes.items() %}<option value="{{ k }}" {% if o.mode == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+      <div class="col-6"><label class="form-label mb-0 text-muted">Téléphone</label><input class="form-control form-control-sm" name="phone" value="{{ o.phone or '' }}"></div>
+      <div class="col-12"><label class="form-label mb-0 text-muted">Nom</label><input class="form-control form-control-sm" name="customer" value="{{ o.customer or '' }}"></div>
+      <div class="col-12"><input class="form-control form-control-sm" name="company" value="{{ o.company or '' }}" placeholder="Société"></div>
+      <div class="col-12"><input class="form-control form-control-sm" name="address1" value="{{ o.address1 or '' }}" placeholder="Adresse"></div>
+      <div class="col-12"><input class="form-control form-control-sm" name="address2" value="{{ o.address2 or '' }}" placeholder="Complément"></div>
+      <div class="col-4"><input class="form-control form-control-sm" name="zip" value="{{ o.zip or '' }}" placeholder="CP"></div><div class="col-8"><input class="form-control form-control-sm" name="city" value="{{ o.city or '' }}" placeholder="Ville"></div>
+      <div class="col-12"><input class="form-control form-control-sm" name="email" value="{{ o.email or '' }}" placeholder="E-mail client"></div>
+      <div class="col-6"><label class="form-label mb-0 text-muted">{{ 'Date de retrait' if o.mode == 'retrait' else 'Enlèvement' }}</label><input type="date" class="form-control form-control-sm" name="pickup_date" value="{{ o.pickup_date.isoformat() if o.pickup_date else '' }}"></div>
+      <div class="col-6"><label class="form-label mb-0 text-muted">Créneau</label><input class="form-control form-control-sm" name="pickup_slot" value="{{ o.pickup_slot or '14:00 et 17:00' }}"></div>
+      <div class="col-6"><label class="form-label mb-0 text-muted">N° d'enlèvement</label><input class="form-control form-control-sm" name="pickup_no" value="{{ o.pickup_no or '' }}"></div>
+      <div class="col-6"><label class="form-label mb-0 text-muted">Livraison prévue</label><input type="date" class="form-control form-control-sm" name="delivery_date" value="{{ o.delivery_date.isoformat() if o.delivery_date else '' }}"></div>
+      <div class="col-12"><input class="form-control form-control-sm" name="note" value="{{ o.note or '' }}" placeholder="Note"></div>
+    </div>
+    <div class="mt-2 d-flex gap-2"><button class="btn btn-sm btn-dark">Enregistrer</button>{% if o.status in ('a_traiter', 'cartons') %}<button class="btn btn-sm btn-outline-danger" name="cancel" value="1" onclick="return confirm('Annuler cette commande dans Vaelan ?')">Annuler</button>{% endif %}</div>
+  </form></div></div>
+  <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Lignes de la commande</div>
+  <table class="table table-sm mb-0 small"><tbody>{% for l in lines %}<tr class="{{ 'table-danger' if l.short else '' }}"><td>{{ l.qty }} ×</td><td>{{ l.title }}<div class="text-muted" style="font-size:.7rem">{{ l.sku }} · coût {{ eur(l.cost) if l.cost else '<span class=text-danger>manquant</span>'|safe }} · dispo OWINE {{ l.avail_owine|int }} / dépôt LMB {{ l.avail_lmb|int }}</div></td></tr>{% endfor %}</tbody></table></div>
+</div>
+
+<div class="col-lg-8">
+  {# ---- étape 1 : cartons #}
+  <div class="card shadow-sm mb-3 {{ 'border-warning' if step == 1 else '' }}"><div class="card-header py-2 small fw-semibold">1. Cartons {% if cartons %}<span class="badge text-bg-success">validés</span>{% endif %}</div><div class="card-body py-2 small">
+  {% if not cartons and proposal %}
+    <p class="text-muted mb-2">Proposition : cartons de 6 puis de 3, bouteilles réparties pour équilibrer la valeur assurée (coût d'achat), 1,5 kg par bouteille. Le dépôt-vente LMB est utilisé quand le stock OWINE ne suffit pas.</p>
+    <form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cartons">
+    <div class="row g-2">{% for p in proposal %}<div class="col-md-6"><div class="border rounded p-2 h-100">
+      <div class="d-flex align-items-center gap-2"><span class="badge text-bg-dark fs-6">{{ p.ref }}</span><select name="box_{{ p.ref }}" class="form-select form-select-sm w-auto">{% for sku, pk in cfg.PACKAGING.items() if pk.bottles %}<option value="{{ sku }}" {% if sku == p.box_sku %}selected{% endif %}>{{ pk.title }}</option>{% endfor %}</select><span class="ms-auto text-muted">{{ p.bottles }} btl · {{ p.weight_kg }} kg · <strong>{{ p.insured_value }} €</strong></span></div>
+      {% for l in p.lines %}<div class="d-flex align-items-center gap-1 mt-1"><input type="number" min="0" class="form-control form-control-sm" style="width:64px" name="q_{{ p.ref }}_{{ l.sku }}" value="{{ l.qty }}"><span class="flex-grow-1">{{ l.title }}</span>{% if l.owner == 'LMB' %}<span class="badge text-bg-info">LMB</span>{% endif %}</div>{% endfor %}
+      {% for l in lines if l.sku not in (p.lines|map(attribute='sku')|list) %}<div class="d-flex align-items-center gap-1 mt-1 text-muted"><input type="number" min="0" class="form-control form-control-sm" style="width:64px" name="q_{{ p.ref }}_{{ l.sku }}" value="0"><span class="flex-grow-1">{{ l.title }}</span></div>{% endfor %}
+    </div></div>{% endfor %}</div>
+    <input type="hidden" name="n_boxes" value="{{ proposal|length }}">
+    <div class="mt-2 d-flex gap-2"><button class="btn btn-sm btn-dark">Valider ces cartons</button><button class="btn btn-sm btn-outline-secondary" name="auto" value="1">Recalculer automatiquement</button></div>
+    </form>
+  {% elif cartons %}
+    <table class="table table-sm mb-1"><thead><tr class="text-muted"><th>Ref</th><th>Carton</th><th>Contenu</th><th>Poids</th><th>Valeur assurée</th><th>N° Chronopost</th></tr></thead><tbody>
+    {% for c in cartons %}<tr><td><span class="badge text-bg-dark">{{ c.ref }}</span></td><td>{{ cfg.PACKAGING[c.box_sku].title if c.box_sku in cfg.PACKAGING else (c.box_sku or '—') }}</td>
+      <td>{% for l in carton_lines(c) %}{{ l.qty }} × {{ l.title }}{% if l.owner == 'LMB' %} <span class="badge text-bg-info">LMB</span>{% endif %}<br>{% endfor %}</td>
+      <td>{{ c.weight_kg }} kg</td><td>{{ c.insured_value|int }} €</td><td>{{ c.tracking or '—' }}</td></tr>{% endfor %}</tbody></table>
+    {% if o.status in ('cartons', 'etiquettes') %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cartons/reset" class="d-inline"><button class="btn btn-sm btn-link p-0">refaire la ventilation</button></form>{% endif %}
+  {% else %}<span class="text-muted">Aucune ligne.</span>{% endif %}
+  </div></div>
+
+  {# ---- étape 2 : Chronopost #}
+  {% if cartons and o.mode == 'chronopost' %}
+  <div class="card shadow-sm mb-3 {{ 'border-warning' if step == 2 else '' }}"><div class="card-header py-2 small fw-semibold">2. Chronopost — à saisir sur chronopost.fr (Expédier → Étape par étape) {% if o.status not in ('a_traiter', 'cartons') %}<span class="badge text-bg-success">étiquettes reçues</span>{% endif %}</div><div class="card-body py-2 small">
+    <div class="row g-2">
+      <div class="col-md-5"><div class="text-muted">Destinataire</div><div class="border rounded p-2"><strong>{{ sheet.recipient.name }}</strong>{% if sheet.recipient.company %} · {{ sheet.recipient.company }}{% endif %}<br>{{ sheet.recipient.address1 }}{% if sheet.recipient.address2 %}<br>{{ sheet.recipient.address2 }}{% endif %}<br>{{ sheet.recipient.zip }} {{ sheet.recipient.city }} {{ sheet.recipient.country }}<br>{{ sheet.recipient.phone or '' }} · {{ sheet.recipient.email or '' }}</div></div>
+      <div class="col-md-7"><div class="text-muted">Colis : {{ sheet.count }} · référence commande <strong>{{ sheet.order_ref }}</strong> · total {{ sheet.total_weight }} kg · assuré {{ sheet.total_insured }} €</div>
+        <table class="table table-sm table-bordered mb-0"><thead><tr><th>Réf. colis</th><th>Poids</th><th>Valeur assurée</th><th>Bouteilles</th></tr></thead><tbody>
+        {% for p in sheet.parcels %}<tr><td><strong>{{ p.ref }}</strong> <span class="text-muted">({{ p.reference }})</span></td><td>{{ p.weight_kg }} kg</td><td>{{ p.insured|int }} €</td><td>{{ p.bottles }}</td></tr>{% endfor %}</tbody></table></div>
+    </div>
+    <form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/etiquettes" enctype="multipart/form-data" class="mt-2">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-6"><label class="form-label mb-0 text-muted">Étiquettes PDF téléchargées de Chronopost (une ou plusieurs)</label><input type="file" name="files" multiple accept="application/pdf" class="form-control form-control-sm"></div>
+        {% for c in cartons %}<div class="col-md-2"><label class="form-label mb-0 text-muted">N° colis {{ c.ref }}</label><input class="form-control form-control-sm" name="tracking_{{ c.ref }}" value="{{ c.tracking or '' }}" placeholder="XN…FR"></div>{% endfor %}
+        <div class="col-md-2"><button class="btn btn-sm btn-dark">Enregistrer</button></div>
+      </div>
+      <div class="form-text">Les numéros sont lus dans les PDF (référence A, B… imprimée sur l'étiquette ou dans le nom du fichier) ; vous pouvez aussi les saisir. Pensez à réserver l'enlèvement et à reporter son numéro et son créneau à gauche.</div>
+    </form>
+  </div></div>
+  {% endif %}
+
+  {# ---- étape 3 : envoi Alix + client #}
+  {% if cartons and (o.mode == 'retrait' or o.status in ('etiquettes', 'envoye', 'attente_reception', 'cloturee')) %}
+  <div class="card shadow-sm mb-3 {{ 'border-warning' if step in (2, 3) else '' }}"><div class="card-header py-2 small fw-semibold">3. Envoi à Alix et au client {% if o.status in ('envoye', 'attente_reception', 'cloturee') %}<span class="badge text-bg-success">fait</span>{% endif %}</div><div class="card-body py-2 small">
+    <div class="d-flex flex-wrap gap-2 mb-2">
+      <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}/doc/colisage" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Liste de colisage</a>
+      <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}/doc/alix"><i class="bi bi-file-earmark-spreadsheet"></i> Fichier Alix ({{ o.name }}.xlsx)</a>
+      <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/commandes/{{ o.name }}/doc/zip"><i class="bi bi-file-earmark-zip"></i> Tout (pièces jointes + textes)</a>
+      {% if gmail_ok %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/brouillons" class="d-inline"><button class="btn btn-sm btn-primary"><i class="bi bi-envelope"></i> Créer les deux brouillons Gmail</button></form>{% else %}<span class="text-muted align-self-center">brouillons Gmail : à configurer (mot de passe d'application)</span>{% endif %}
+    </div>
+    <div class="row g-2">
+      <div class="col-md-6"><div class="text-muted">E-mail Alix — à : {{ email_alix.to|join(', ') }} · cc : {{ email_alix.cc|join(', ') }}</div><div class="fw-semibold">{{ email_alix.subject }}</div><textarea class="form-control form-control-sm" rows="9" readonly>{{ email_alix.body }}</textarea></div>
+      <div class="col-md-6"><div class="text-muted">E-mail client — à : {{ email_client.to|join(', ') or 'e-mail inconnu' }}</div><div class="fw-semibold">{{ email_client.subject }}</div><textarea class="form-control form-control-sm" rows="9" readonly>{{ email_client.body }}</textarea></div>
+    </div>
+    {% if o.status in ('cartons', 'etiquettes') %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/envoye" class="mt-2"><button class="btn btn-sm btn-success" onclick="return confirm('Les deux e-mails sont partis ? Le stock et les emballages seront décomptés.')"><i class="bi bi-send-check"></i> Les deux e-mails sont envoyés</button> <span class="text-muted">→ stock décompté, commande en attente de confirmation de réception</span></form>{% endif %}
+  </div></div>
+  {% endif %}
+
+  {% if tasks or moves %}<div class="card shadow-sm"><div class="card-body py-2 small">
+    {% for t in tasks %}<div><i class="bi bi-check2-square"></i> {{ task_kinds.get(t.kind, t.kind) }} : {{ t.title }}{% if t.due_date %} <span class="text-muted">({{ t.due_date.strftime('%d/%m') }})</span>{% endif %}</div>{% endfor %}
+    {% if moves %}<details class="mt-1"><summary class="text-muted">{{ moves|length }} mouvement(s) de stock</summary>{% for m in moves %}<div>{{ m.date.strftime('%d/%m/%Y') }} · {{ m.qty|int }} × {{ m.sku }} · {{ m.location }} / {{ m.owner }} · {{ m.kind }}</div>{% endfor %}</details>{% endif %}
+  </div></div>{% endif %}
+</div></div>
+{% endblock %}

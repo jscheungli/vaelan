@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Mouvements de stock · OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine/stock">Stock</a></li><li class="breadcrumb-item active">Mouvements</li></ol></nav>
+<form class="d-flex flex-wrap gap-2 align-items-center mb-2" method="get"><h1 class="h4 mb-0 me-2">Livre des mouvements</h1>
+  <input class="form-control form-control-sm w-auto" name="ref" value="{{ ref }}" placeholder="Réf. (OW1047, BLV…)">
+  <select class="form-select form-select-sm w-auto" name="owner"><option value="">tous propriétaires</option>{% for k, v in cfg.OWNERS.items() %}<option value="{{ k }}" {% if owner == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+  <select class="form-select form-select-sm w-auto" name="location"><option value="">tous lieux</option>{% for k, v in cfg.LOCATIONS.items() %}<option value="{{ k }}" {% if location == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+  <button class="btn btn-sm btn-outline-dark">Filtrer</button></form>
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-sm mb-0 small"><thead><tr class="text-muted"><th>Date</th><th>Article</th><th>Mouvement</th><th class="text-end">Qté</th><th>Lieu</th><th>Propriétaire</th><th>Réf.</th><th class="text-end">Coût u.</th><th>Source</th></tr></thead><tbody>
+{% for m in moves %}<tr><td>{{ m.date.strftime('%d/%m/%Y') }}</td><td><a class="text-decoration-none" href="/c/{{ company.code }}/owine/stock/{{ m.sku }}">{{ items[m.sku].title if m.sku in items else m.sku }}</a></td><td>{{ kinds.get(m.kind, m.kind) }}</td><td class="text-end {{ 'text-danger' if m.qty < 0 else 'text-success' }}">{{ '%+d'|format(m.qty|int) }}</td><td>{{ m.location }}</td><td>{{ m.owner }}</td><td>{{ m.ref or '' }}</td><td class="text-end">{{ eur(m.unit_cost) if m.unit_cost else '' }}</td><td class="text-muted">{{ m.source }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

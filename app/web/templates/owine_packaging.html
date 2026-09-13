@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Emballages · OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Emballages</li></ol></nav>
+<h1 class="h4">Emballages Chronopost chez Alix</h1>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<div class="row g-3"><div class="col-lg-5">
+  <div class="card shadow-sm mb-3"><table class="table table-sm mb-0 small"><thead><tr class="text-muted"><th>Réf.</th><th>Emballage</th><th class="text-end">En stock</th></tr></thead><tbody>
+  {% for r in rows %}<tr><td>{{ r.sku }}</td><td>{{ r.p.title }}</td><td class="text-end fw-semibold {{ 'text-danger' if r.stock <= 3 and r.p.bottles else '' }}">{{ r.stock|int }}</td></tr>{% endfor %}</tbody></table></div>
+  <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Réception confirmée par Alix (quantités effectivement reçues)</div><div class="card-body py-2">
+    <form method="post" action="/c/{{ company.code }}/owine/emballages/reception" class="row g-1 small">
+      <div class="col-6"><input type="date" class="form-control form-control-sm" name="date" value="{{ today.isoformat() }}"></div><div class="col-6"><input class="form-control form-control-sm" name="ref" placeholder="Réf. (mail Alix du…)"></div>
+      {% for r in rows %}<div class="col-6"><label class="form-label mb-0 text-muted">{{ r.p.title|replace('Réf. ', '') }}</label><input class="form-control form-control-sm" name="q_{{ r.sku }}" placeholder="0"></div>{% endfor %}
+      <div class="col-12"><input class="form-control form-control-sm" name="note" placeholder="Note (calages livrés, écart avec la commande…)"></div>
+      <div class="col-12"><button class="btn btn-sm btn-dark">Enregistrer la réception</button> <span class="text-muted">une quantité négative = correction</span></div>
+    </form></div></div>
+</div>
+<div class="col-lg-7"><div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Historique</div><table class="table table-sm mb-0 small"><thead><tr class="text-muted"><th>Date</th><th>Emballage</th><th>Mouvement</th><th class="text-end">Qté</th><th>Réf.</th><th>Note</th></tr></thead><tbody>
+{% for m in moves %}<tr><td>{{ m.date.strftime('%d/%m/%Y') }}</td><td>{{ cfg.PACKAGING[m.sku].title if m.sku in cfg.PACKAGING else m.sku }}</td><td>{{ kinds.get(m.kind, m.kind) }}</td><td class="text-end {{ 'text-danger' if m.qty < 0 else 'text-success' }}">{{ '%+d'|format(m.qty|int) }}</td><td>{{ m.ref or '' }}</td><td class="text-muted">{{ m.note or '' }}</td></tr>{% endfor %}
+</tbody></table></div></div></div>
+{% endblock %}
