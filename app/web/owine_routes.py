@@ -95,8 +95,14 @@ def _order_ctx(request, company, o, msg=""):
               [{"ref": c.ref, "box_sku": c.box_sku or "2036", "lines": service.carton_lines(c)} for c in cs]
     editor = {"lines": [{"sku": l["sku"], "title": l["title"], "qty": int(l["qty"]), "cost": float(l.get("cost") or 0), "price": float(l.get("price") or 0)} for l in lines],
               "cartons": initial, "boxes": {k: v for k, v in cfg.PACKAGING.items() if v["bottles"]}, "bottle_kg": cfg.BOTTLE_KG}
+    invoice = None
+    if o.status in ("attente_reception", "a_facturer", "cloturee"):
+        try:
+            invoice = service.pennylane_invoice_for(o.name, force=(o.status == "a_facturer"))
+        except Exception:
+            invoice = None
     return _base(request, company, o=o, lines=lines, cartons=cs, carton_lines=service.carton_lines, proposal=proposal, sheet=sheet, msg=msg, editor=json.dumps(editor, ensure_ascii=False),
-                 missing=docs.missing_vars(o, cs) if cs else [],
+                 missing=docs.missing_vars(o, cs) if cs else [], invoice=invoice,
                  email_alix=docs.email_alix(o, cs) if cs else None, email_client=docs.email_client(o, cs) if cs else None,
                  gmail_ok=gmail_imap.configured(CODE), tasks=[t for t in service.tasks("open") if t.ref == o.name], moves=service.moves(ref=o.name))
 
@@ -357,7 +363,7 @@ def owine_order_emails(request: Request, code: str, name: str, msg: str = ""):
     att_alix = [(f"Détail {o.name}.pdf", f"{base}/colisage", size(pl)), (f"{o.name}.xlsx", f"{base}/alix", size(xl))] + [(n, f"{base}/etiquette/{i}", size(d)) for i, (n, d) in enumerate(labels)]
     att_client = [(f"Détail {o.name}.pdf", f"{base}/colisage", size(pl))] + [(n, f"{base}/etiquette/{i}", size(d)) for i, (n, d) in enumerate(labels)]
     return templates.TemplateResponse(request, "owine_emails.html", _base(request, company, o=o, em=em, ed=ed, msg=msg, gmail_ok=gmail_imap.configured(CODE), labels=[n for n, _ in labels],
-                                                                         att_alix=att_alix, att_client=att_client, sent=o.status in ("envoye", "attente_reception", "cloturee")))
+                                                                         att_alix=att_alix, att_client=att_client, sent=o.status in ("envoye", "attente_reception", "a_facturer", "cloturee")))
 
 
 @router.post("/c/{code}/owine/commandes/{name}/emails")
@@ -442,14 +448,29 @@ def owine_order_sent(request: Request, code: str, name: str):
     return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Commande marquée envoyée : stock et emballages décomptés, suivi de réception créé.", status_code=303)
 
 
-@router.post("/c/{code}/owine/commandes/{name}/cloturer")
-def owine_order_close(request: Request, code: str, name: str):
+@router.post("/c/{code}/owine/commandes/{name}/reception")
+def owine_order_reception(request: Request, code: str, name: str):
     company, redir = _guard(request, code)
     if redir:
         return redir
     o = service.get_order(name)
+    service.confirm_reception(o, by=_who(request))
+    o = service.get_order(name)
+    msg = "Réception confirmée. La facture Pennylane est déjà validée : commande clôturée." if o.status == "cloturee" else "Réception confirmée. Reste à valider la facture dans Pennylane (tâche créée)."
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={msg}", status_code=303)
+
+
+@router.post("/c/{code}/owine/commandes/{name}/cloturer")
+def owine_order_close(request: Request, code: str, name: str):
+    """Clôture : facture validée dans Pennylane (détectée, ou confirmée à la main)."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name)
+    if o.status == "attente_reception":
+        return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Confirmez d'abord la réception.", status_code=303)
     service.close_order(o, by=_who(request))
-    return RedirectResponse(f"/c/{code}/owine/commandes?", status_code=303)
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Commande clôturée.", status_code=303)
 
 
 # ============================== stock

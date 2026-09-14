@@ -5,10 +5,11 @@
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
   <h1 class="h4 mb-0">{{ o.name }}</h1><span class="badge text-bg-{{ status_labels[o.status][1] }} fs-6">{{ status_labels[o.status][0] }}</span>
   <span class="small text-muted">{{ o.created_at.strftime('%d/%m/%Y') if o.created_at else '' }} · {{ eur(o.total) }} · {{ (o.financial_status or '')|lower }}{% if o.shipping_title %} · Shopify : {{ o.shipping_title }}{% endif %}</span>
-  {% if o.status == 'attente_reception' %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cloturer" class="ms-auto"><button class="btn btn-sm btn-success"><i class="bi bi-check2"></i> Réception confirmée : clôturer</button></form>{% endif %}
+  {% if o.status == 'attente_reception' %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/reception" class="ms-auto"><button class="btn btn-sm btn-success"><i class="bi bi-check2"></i> Réception confirmée par le client</button></form>
+  {% elif o.status == 'a_facturer' %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cloturer" class="ms-auto"><button class="btn btn-sm btn-success" onclick="return confirm('La facture est validée dans Pennylane ?')"><i class="bi bi-receipt"></i> Facture validée : clôturer</button></form>{% endif %}
 </div>
 {% if msg %}<div class="alert alert-{{ 'warning' if 'incompl' in msg or 'pas au bon' in msg else 'success' }} py-2 small">{{ msg }}</div>{% endif %}
-{% set step = {'a_traiter': 1, 'cartons': 2, 'etiquettes': 3, 'envoye': 4, 'attente_reception': 4, 'cloturee': 5, 'annulee': 0}[o.status] %}
+{% set step = {'a_traiter': 1, 'cartons': 2, 'etiquettes': 3, 'envoye': 4, 'attente_reception': 4, 'a_facturer': 5, 'cloturee': 6, 'annulee': 0}[o.status] %}
 
 <div class="row g-3">
 <div class="col-lg-4">
@@ -101,6 +102,16 @@
   </div></div>
   {% endif %}
 
+  {% if o.status in ('attente_reception', 'a_facturer', 'cloturee') %}
+  <div class="card shadow-sm mb-3 {{ 'border-warning' if step in (4, 5) else '' }}"><div class="card-header py-2 small fw-semibold">4. Réception et facture {% if o.status == 'cloturee' %}<span class="badge text-bg-success">clôturée</span>{% endif %}</div><div class="card-body py-2 small">
+    <div class="mb-1">{% if o.status == 'attente_reception' %}<i class="bi bi-hourglass-split"></i> En attente de la confirmation du client (tâche de suivi programmée{% if o.delivery_date %} après le {{ o.delivery_date.strftime('%d/%m') }}{% endif %}). Cliquez « Réception confirmée par le client » en haut de page quand c'est fait.{% else %}<i class="bi bi-check2 text-success"></i> Réception confirmée.{% endif %}</div>
+    <div>{% if invoice %}<i class="bi bi-receipt"></i> Facture Pennylane : <strong>{{ invoice.number or 'brouillon' }}</strong> · {{ eur(invoice.amount) }} · {{ invoice.date }} ·
+      <span class="badge text-bg-{{ 'warning' if invoice.draft else ('success' if invoice.paid else 'info') }}">{{ 'brouillon à valider' if invoice.draft else ('payée' if invoice.paid else invoice.status) }}</span>
+      {% if invoice.pdf %} <a href="{{ invoice.pdf }}" target="_blank">PDF</a>{% endif %}
+      {% if invoice.draft %}<div class="text-muted">Vérifiez adresses et lignes puis finalisez-la dans Pennylane : Vaelan clôturera la commande automatiquement à la prochaine synchronisation (chaque matin, ou bouton « Synchroniser Shopify »), ou cliquez « Facture validée : clôturer ».</div>{% endif %}
+      {% else %}<i class="bi bi-receipt"></i> Aucune facture Pennylane trouvée pour cette commande (le connecteur Shopify la crée au paiement). Vérifiez dans Pennylane, puis « Facture validée : clôturer ».{% endif %}</div>
+  </div></div>
+  {% endif %}
   {% if tasks or moves %}<div class="card shadow-sm"><div class="card-body py-2 small">
     {% for t in tasks %}<div><i class="bi bi-check2-square"></i> {{ task_kinds.get(t.kind, t.kind) }} : {{ t.title }}{% if t.due_date %} <span class="text-muted">({{ t.due_date.strftime('%d/%m') }})</span>{% endif %}</div>{% endfor %}
     {% if moves %}<details class="mt-1"><summary class="text-muted">{{ moves|length }} mouvement(s) de stock</summary>{% for m in moves %}<div>{{ m.date.strftime('%d/%m/%Y') }} · {{ m.qty|int }} × {{ m.sku }} · {{ m.location }} / {{ m.owner }} · {{ m.kind }}</div>{% endfor %}</details>{% endif %}

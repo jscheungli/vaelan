@@ -271,8 +271,14 @@ def propose_cartons(lines: List[dict], stock_map: dict = None) -> List[dict]:
 # ================================================================== tâches
 def add_task(kind: str, title: str, ref: str = None, details: str = None, due: date = None, key: str = None, company_code: str = CODE) -> Optional[OwTask]:
     with Session(engine) as s:
-        if key and s.exec(select(OwTask).where(OwTask.key == key)).first():
-            return None
+        if key:
+            ex = s.exec(select(OwTask).where(OwTask.key == key)).first()
+            if ex and ex.status == "open":
+                return None
+            if ex:  # tâche déjà clôturée sous cette clé → on la rouvre (ex. réception confirmée puis facture à revalider)
+                ex.status, ex.done_at, ex.title, ex.details, ex.due_date = "open", None, title, details or ex.details, due or ex.due_date
+                s.add(ex); s.commit(); s.refresh(ex); s.expunge(ex)
+                return ex
         t = OwTask(company_code=company_code, kind=kind, title=title, ref=ref, details=details, due_date=due, key=key)
         s.add(t)
         s.commit()
@@ -483,10 +489,69 @@ def mark_sent(o: OwOrder, by: str = None) -> None:
     save_order(o)
 
 
+def confirm_reception(o: OwOrder, by: str = None) -> None:
+    """Réception confirmée par le client → il reste à valider la facture (brouillon du connecteur Shopify) dans Pennylane."""
+    o.status = "a_facturer"
+    save_order(o)
+    close_tasks_by_key(f"reception:{o.name}")
+    inv = pennylane_invoice_for(o.name)
+    if inv and not inv.get("draft"):
+        close_order(o, by=by)
+    else:
+        add_task("pennylane_invoice", f"{o.name} : vérifier et valider la facture dans Pennylane (brouillon du connecteur Shopify)", ref=o.name, key=f"pennylane_invoice:{o.name}",
+                 details="Contrôler adresses de facturation / livraison et lignes, puis finaliser la facture. Vaelan clôture la commande dès que la facture n'est plus en brouillon.")
+
+
 def close_order(o: OwOrder, by: str = None) -> None:
     o.status, o.closed_at = "cloturee", datetime.utcnow()
     save_order(o)
     close_tasks_by_key(f"reception:{o.name}")
+    close_tasks_by_key(f"pennylane_invoice:{o.name}")
+
+
+_INV_CACHE = {"at": None, "items": []}
+
+
+def pennylane_invoices(force: bool = False) -> List[dict]:
+    """Factures clients Pennylane OWINE (200 dernières), mises en cache 10 minutes."""
+    from app.core.connectors.pennylane import for_company
+    if not force and _INV_CACHE["at"] and (datetime.utcnow() - _INV_CACHE["at"]).total_seconds() < 600:
+        return _INV_CACHE["items"]
+    c = for_company(CODE)
+    if not c:
+        return []
+    items, cur = [], None
+    for _ in range(2):
+        d = c.get("/customer_invoices", limit=100, **({"cursor": cur} if cur else {}))
+        items += d.get("items") or []
+        if not d.get("has_more"):
+            break
+        cur = d.get("next_cursor")
+    _INV_CACHE.update(at=datetime.utcnow(), items=items)
+    return items
+
+
+def pennylane_invoice_for(name: str, force: bool = False) -> Optional[dict]:
+    """La facture Pennylane d'une commande : objet PDF « Commande #OW1049 … » (connecteur Shopify) ou n° de facture = n° de commande (anciennes)."""
+    import re
+    pat = re.compile(rf"#{re.escape(name)}(?!\d)")
+    for inv in pennylane_invoices(force):
+        if pat.search(inv.get("pdf_invoice_subject") or "") or pat.search(inv.get("label") or "") or inv.get("invoice_number") == name:
+            return {"id": inv.get("id"), "number": inv.get("invoice_number") or "", "status": inv.get("status"), "draft": bool(inv.get("draft")), "paid": bool(inv.get("paid")),
+                    "amount": float(inv.get("amount") or 0), "date": inv.get("date"), "pdf": inv.get("public_file_url"), "label": inv.get("label")}
+    return None
+
+
+def close_invoiced_orders(log=None) -> int:
+    """Commandes « à facturer » dont la facture Pennylane n'est plus en brouillon → clôturées."""
+    log = log or (lambda m: None)
+    n = 0
+    for o in orders("a_facturer"):
+        inv = pennylane_invoice_for(o.name, force=(n == 0))
+        if inv and not inv["draft"]:
+            close_order(o); n += 1
+            log(f"{o.name} : facture {inv['number'] or inv['id']} validée → commande clôturée")
+    return n
 
 
 def admin_url() -> str:

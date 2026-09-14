@@ -28,7 +28,8 @@ MOVE_KINDS = {
 ORDER_STATUS = {
     "a_traiter": ("À traiter", "warning"), "cartons": ("Cartons validés", "info"), "etiquettes": ("Étiquettes reçues", "info"),
     "envoye": ("Envoyé à Alix et au client", "primary"), "attente_reception": ("En attente de confirmation de réception", "secondary"),
-    "cloturee": ("Clôturée", "success"), "annulee": ("Annulée", "dark"),
+    "a_facturer": ("Réception confirmée · facture à valider dans Pennylane", "info"),
+    "cloturee": ("Clôturée (livrée et facturée)", "success"), "annulee": ("Annulée", "dark"),
 }
 MODES = {"chronopost": "Chronopost", "retrait": "Retrait chez Alix", "manuel": "À qualifier"}
 TASK_KINDS = {

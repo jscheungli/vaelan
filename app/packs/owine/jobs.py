@@ -14,6 +14,9 @@ def run_sync(ctx=None) -> str:
                              details="Renseigner le coût dans Shopify (fiche variante) ou dans Vaelan ; il sert à la valeur assurée.")
     try:
         n3 = service.pennylane_draft_tasks(log=log)
+        n4 = service.close_invoiced_orders(log=log)
+        if n4:
+            log(f"{n4} commande(s) clôturée(s) (facture validée)")
     except Exception as e:
         log(f"Pennylane : {e}"); n3 = 0
     return f"articles {r1['items']}, commandes +{r2['created']} / {r2['updated']} mises à jour, {len(r1.get('missing_cost') or [])} coût(s) manquant(s), {n3} brouillon(s) Pennylane"
