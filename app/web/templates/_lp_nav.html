@@ -1,0 +1,12 @@
+{% set base = "/c/" ~ company.code ~ "/previsionnel" %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small mb-2">
+  <li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li>
+  <li class="breadcrumb-item"><a href="{{ base }}">Prévisionnel de trésorerie</a></li>
+  {% if crumb %}<li class="breadcrumb-item active">{{ crumb }}</li>{% endif %}
+</ol></nav>
+<ul class="nav nav-pills nav-sm mb-3 small">
+  {% for href, lab, ic in [("", "Tableau de bord", "bi-speedometer2"), ("/hypotheses", "Hypothèses", "bi-sliders"), ("/simulation", "Simulation", "bi-lightning-charge"),
+                          ("/ecarts", "Écarts", "bi-arrow-left-right"), ("/historique", "Historique", "bi-clock-history"), ("/cca", "Comptes courants", "bi-people"), ("/methode", "Méthode", "bi-book")] %}
+  <li class="nav-item"><a class="nav-link py-1 {{ 'active' if active == (href or '/') else '' }}" href="{{ base }}{{ href }}"><i class="bi {{ ic }}"></i> {{ lab }}</a></li>
+  {% endfor %}
+</ul>

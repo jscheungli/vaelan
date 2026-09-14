@@ -22,6 +22,7 @@ _COMPANIES = [
     ("LAMEMOIREDEBOURGOGNE", "La Mémoire de Bourgogne"),   # dépôt-vente au profit d'OWINE (Pennylane)      # holding du groupe (SIREN 981355589)
     ("GONGCHA", "GONG CHA"),       # groupe ISFAHAAN (SIREN 953142080)
     ("VDS", "SCI Les Sables du Lagon"),   # villa en location saisonnière (SIREN 821948163) — check-in voyageurs
+    ("LAPARISIENNE", "La Parisienne (Shanghai)"),   # boulangeries JIANZAN + LEBLANC — prévisionnel de trésorerie
 ]
 
 

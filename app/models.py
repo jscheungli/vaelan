@@ -619,3 +619,92 @@ class OwTask(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     done_at: Optional[datetime] = None
     key: Optional[str] = Field(default=None, index=True)  # clé d'unicité (évite les doublons)
+
+
+# ---------------------------------------------------------------------------
+# Pack LP — La Parisienne (Shanghai) : prévisionnel de trésorerie
+class LpStoreMonth(SQLModel, table=True):
+    """P&L mensuel d'un magasin (ou du siège « HO »), importé du Board Management Report.
+    Montants en RMB hors TVA, tels que présentés dans le rapport (comptes 5101, 5401, 5501, 5502, 5503…)."""
+    __tablename__ = "lp_store_months"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    store: str = Field(index=True)                 # ZHY / BFC / QPLFS / TLQ / HSF / HO
+    month: str = Field(index=True)                 # AAAA-MM
+    revenue: float = 0.0                           # 5101
+    food: float = 0.0                              # Operation Food Cost
+    labor: float = 0.0                             # Operation Labor Cost (salaires, charges, labor service)
+    rent: float = 0.0                              # 5501.09
+    opex_5501: float = 0.0                         # 5501 total (hors masse salariale)
+    marketing: float = 0.0                         # 5501.02
+    utilities: float = 0.0                         # 5501.06
+    delivery: float = 0.0                          # 5501.12
+    amort: float = 0.0                             # 5501.14
+    depr: float = 0.0                              # 5501.15
+    ga: float = 0.0                                # 5502 (siège : G&A réel ; magasin : G&A alloué)
+    fin: float = 0.0                               # 5503 (intérêts, frais bancaires, commissions)
+    tax_ops: float = 0.0                           # 5402
+    income_tax: float = 0.0                        # 5701
+    ebitda_report: float = 0.0                     # « EBITDA (Store) » du rapport
+    ebitda_after_ga: float = 0.0                   # « EBITDA (After G&A) » du rapport
+    source: Optional[str] = None                   # fichier importé
+    imported_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LpEntityMonth(SQLModel, table=True):
+    """Balance de fin de mois d'une entité (JZ / LBL) : soldes débiteurs (+) / créditeurs (−) des comptes clés."""
+    __tablename__ = "lp_entity_months"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    entity: str = Field(index=True)
+    month: str = Field(index=True)
+    cash: float = 0.0                              # 1002 banques
+    cash_on_hand: float = 0.0                      # 1001 caisse
+    ar: float = 0.0                                # 1131
+    deposits: float = 0.0                          # 1133.01
+    interco_recv: float = 0.0                      # 1133.04 prêts intra-groupe (actif)
+    prepaid: float = 0.0                           # 1133.06
+    inventory_food: float = 0.0                    # 1211
+    inventory_other: float = 0.0                   # 1243
+    fixed_assets: float = 0.0                      # 1601 + 1701 + 1801 (brut) — sert à mesurer le capex réel
+    loans: float = 0.0                             # 2101 (créditeur -> négatif)
+    ap: float = 0.0                                # 2121
+    wages_payable: float = 0.0                     # 2151
+    tax_payable: float = 0.0                       # 2171
+    other_03: float = 0.0                          # 2181.03 autres dettes (CCA historiques…)
+    interco_pay: float = 0.0                       # 2181.12 dettes intra-groupe
+    advances: float = 0.0                          # 2181.13 avances clients
+    cca_14: float = 0.0                            # 2181.14 comptes courants d'associés
+    source: Optional[str] = None
+    imported_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LpForecast(SQLModel, table=True):
+    """Un prévisionnel (ou une simulation) enregistré : hypothèses effectives + résultats (JSON) + PDF."""
+    __tablename__ = "lp_forecasts"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    kind: str = "previsionnel"                     # previsionnel / simulation
+    label: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = None
+    as_of: str = ""                                # dernier mois réel (AAAA-MM)
+    horizon: int = 24
+    params: str = "{}"                             # JSON : configuration + overrides utilisés
+    result: str = "{}"                             # JSON : résultat du moteur
+    pdf: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary))
+    note: Optional[str] = None
+
+
+class LpVariance(SQLModel, table=True):
+    """Analyse des écarts prévu / réalisé d'un mois, contre un prévisionnel de référence."""
+    __tablename__ = "lp_variances"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_code: str = Field(index=True)
+    month: str = Field(index=True)
+    forecast_id: Optional[int] = None              # None = référence recalculée (back-test)
+    reference: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = None
+    result: str = "{}"
+    pdf: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary))

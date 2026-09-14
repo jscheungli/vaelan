@@ -300,6 +300,8 @@ _TILES = [
      "Plannings hebdomadaires par établissement, génération automatique, remplacements guidés."),
     ("checkin", "Check-in voyageurs", "bi-clipboard-check", "/c/{code}/checkin",
      "Formulaires d'arrivée (règles, identité, signature) par canal Airbnb / Booking / site : invitations, relances, réponses."),
+    ("previsionnel", "Prévisionnel de trésorerie", "bi-graph-up-arrow", "/c/{code}/previsionnel",
+     "Import des management reports, modèle à ratios, prévisionnel mensuel (PDF), analyse des écarts, simulations, prêts et comptes courants."),
     ("jobs", "Tâches", "bi-list-task", "/jobs?c={code}",
      "Suivi en direct des exécutions (imports, calculs)."),
 ]
@@ -344,6 +346,8 @@ def _feature_from_path(path: str):
     """Déduit la fonctionnalité gardée d'après l'URL (gating automatique par rôle)."""
     if "/checkin" in path:
         return "checkin"
+    if "/previsionnel" in path:
+        return "previsionnel"
     if "/planning" in path:
         return "planning"
     if "/ciop" in path:

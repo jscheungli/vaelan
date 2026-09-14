@@ -76,10 +76,11 @@ _CAISSE = {"suivi", "jobs", "clients", "paiements", "config"}   # modules Groupe
 _PLANNING = {"planning"}                                       # planning des équipes (boulangeries)
 _CIOP = {"ciop"}                                               # préparation du 2083-SD (crédit d'impôt outre-mer)
 _OWINE = {"owine", "jobs"}                                     # cave en ligne : commandes, stock, emballages, tâches
+_LP = {"previsionnel", "jobs"}                                 # La Parisienne (Shanghai) : prévisionnel de trésorerie
 _ODOO = {"odoo", "inqom", "jobs"}                               # modules Groupe ISFAHAAN (Odoo/Inqom × Pennylane)
 _FULL = _CAISSE                                                 # alias historique
 _VDS = {"checkin", "jobs"}                                     # SCI Les Sables du Lagon (villa, Lodgify)
-_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS | _PLANNING | _CIOP | _OWINE
+_ALL = _CAISSE | {"salaires"} | _ODOO | {"treso", "interco"} | _VDS | _PLANNING | _CIOP | _OWINE | _LP
 
 # ---- Registre SOCIÉTÉ -> MODULES ----
 # Chaque société n'expose QUE les modules de son groupe : rien n'est partagé par défaut.
@@ -107,6 +108,7 @@ COMPANY_MODULES = {
     "VDS":          set(_VDS),
     "OWINE":        set(_OWINE),
     "LAMEMOIREDEBOURGOGNE": {"jobs"},
+    "LAPARISIENNE": set(_LP),      # boulangeries La Parisienne, Shanghai (JIANZAN + LEBLANC) — prévisionnel de trésorerie
 }
 
 
@@ -122,11 +124,11 @@ def features_for(role: Optional[str], is_superuser: bool = False) -> set:
     if role == "salaires":
         return {"salaires"}
     if role in ("gestion", "viewer"):
-        return {"clients", "paiements", "checkin", "planning"}
+        return {"clients", "paiements", "checkin", "planning", "previsionnel"}
     if role in ("comptable", "admin", "operator"):
         # le périmètre réel est ENSUITE intersecté avec les modules de la société :
         # un comptable ISFAHAAN ne voit que « odoo », un comptable FDF que la caisse.
-        return _CAISSE | _ODOO | {"treso", "interco"} | _VDS | _PLANNING | _CIOP | _OWINE
+        return _CAISSE | _ODOO | {"treso", "interco"} | _VDS | _PLANNING | _CIOP | _OWINE | _LP
     return set()
 
 

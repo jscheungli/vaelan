@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Hypothèses · {{ company.name }}{% endblock %}
+{% block content %}
+{% set active = "/hypotheses" %}{% set crumb = "Hypothèses" %}{% include "_lp_nav.html" %}
+<h1 class="h4">Hypothèses du modèle</h1>
+<p class="small text-muted">Un champ <strong>vide = auto</strong> : la valeur est recalibrée sur l'historique à chaque prévisionnel (valeur actuelle affichée en grisé). Saisir une valeur pour la fixer. Comptes arrêtés au <strong>{{ ml(st.as_of, True) if st.as_of else "— (rien d'importé)" }}</strong>.</p>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<form method="post" class="small">
+<div class="card shadow-sm mb-3"><div class="card-body">
+  <h2 class="h6 text-uppercase text-muted">Général</h2>
+  {% set g = cfg.general %}
+  <div class="row g-2">
+    <div class="col-md-1"><label class="form-label mb-0">Horizon (mois)</label><input class="form-control form-control-sm" name="g_horizon" value="{{ g.horizon }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Fenêtre calibrage</label><input class="form-control form-control-sm" name="g_calib_months" value="{{ g.calib_months }}" title="nombre de mois (médiane) pour les ratios, salaires, loyers, siège"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Années saison.</label><input class="form-control form-control-sm" name="g_season_years" value="{{ g.season_years }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Frais banc. % CA</label><input class="form-control form-control-sm" name="g_bank_fees_pct" value="{{ g.bank_fees_pct }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Taxes expl. % CA</label><input class="form-control form-control-sm" name="g_tax_ops_pct" value="{{ g.tax_ops_pct }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">IS %</label><input class="form-control form-control-sm" name="g_cit_rate_pct" value="{{ g.cit_rate_pct }}" title="sur le résultat trimestriel positif, payé le mois suivant"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Dérive salaires %/an</label><input class="form-control form-control-sm" name="g_wage_inflation_pct" value="{{ g.wage_inflation_pct }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Dérive fixes %/an</label><input class="form-control form-control-sm" name="g_cost_inflation_pct" value="{{ g.cost_inflation_pct }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0">Seuil alerte groupe / entité</label><div class="input-group input-group-sm"><input class="form-control" name="g_alert_group" value="{{ g.alert_group|int }}"><input class="form-control" name="g_alert_entity" value="{{ g.alert_entity|int }}"></div></div>
+    <div class="col-md-2"><label class="form-label mb-0">Marque du PDF</label><select class="form-select form-select-sm" name="g_branding"><option value="anvael" {{ 'selected' if g.branding == 'anvael' }}>Anvael (logo + mention)</option><option value="none" {{ 'selected' if g.branding == 'none' }}>Aucune</option></select></div>
+  </div>
+  <div class="row g-2 mt-1">
+    <div class="col-md-2"><label class="form-label mb-0">Siège : G&A mensuel (RMB)</label><input class="form-control form-control-sm" name="g_ho_monthly" value="{{ g.ho_monthly|int if g.ho_monthly else '' }}" placeholder="{{ 'auto ' ~ k(calib.HO.value) ~ ' k (' ~ calib.HO.src ~ ')' if calib.HO else 'auto' }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Porté par</label><select class="form-select form-select-sm" name="g_ho_entity">{% for e in entities %}<option value="{{ e }}" {{ 'selected' if e == g.ho_entity }}>{{ e }}</option>{% endfor %}</select></div>
+    {% for e in entities %}<div class="col-md-2"><label class="form-label mb-0">Friction P&L→trésorerie {{ e }} (RMB/mois)</label><input class="form-control form-control-sm" name="g_friction_{{ e }}" value="{{ (g.friction or {}).get(e, 0)|int }}" title="écart structurel mensuel entre l'EBITDA et la trésorerie (négatif = fuite) ; voir Historique › pont de trésorerie"></div>{% endfor %}
+  </div>
+</div></div>
+
+<div class="card shadow-sm mb-3"><div class="card-body">
+  <h2 class="h6 text-uppercase text-muted">Magasins</h2>
+  <p class="text-muted mb-2">Coût par magasin = food (% CA) + masse salariale (montant lissé) + loyer (montant) + autres charges (% CA). Un magasin <em>inactif</em> reste dans l'historique mais n'est pas projeté (utile pour un projet : on l'active pour l'inclure, ou on le simule sans l'activer).</p>
+  {% for s in cfg.stores %}{% set i = loop.index0 %}{% set c = calib.get(s.code, {}) %}
+  <div class="border rounded p-2 mb-2 {{ 'bg-white' if s.active else 'bg-light' }}">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-1"><label class="form-label mb-0">Code</label><input class="form-control form-control-sm" name="s{{ i }}_code" value="{{ s.code }}"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Nom</label><input class="form-control form-control-sm" name="s{{ i }}_name" value="{{ s.name }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Entité</label><select class="form-select form-select-sm" name="s{{ i }}_entity">{% for e in entities %}<option value="{{ e }}" {{ 'selected' if e == s.entity }}>{{ e }}</option>{% endfor %}</select></div>
+      <div class="col-md-1"><div class="form-check mt-3"><input class="form-check-input" type="checkbox" name="s{{ i }}_active" value="1" {{ 'checked' if s.active }} id="sa{{ i }}"><label class="form-check-label" for="sa{{ i }}">projeté</label></div></div>
+      <div class="col-md-1"><label class="form-label mb-0">Ouverture</label><input class="form-control form-control-sm" name="s{{ i }}_opened" value="{{ s.opened or '' }}" placeholder="AAAA-MM"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Fermeture</label><input class="form-control form-control-sm" name="s{{ i }}_closed" value="{{ s.closed or '' }}" placeholder="AAAA-MM"></div>
+      <div class="col-md-2"><label class="form-label mb-0">CA annuel de croisière (RMB HT)</label><input class="form-control form-control-sm" name="s{{ i }}_runrate_annual" value="{{ s.runrate_annual|int if s.runrate_annual else '' }}" placeholder="{{ 'auto ' ~ mio(c.runrate * 12) if c.get('runrate') else 'à saisir' }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Tendance %/an</label><input class="form-control form-control-sm" name="s{{ i }}_growth_pct" value="{{ s.growth_pct or 0 }}"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Saisonnalité</label><select class="form-select form-select-sm" name="s{{ i }}_season">{% for kk, lab in season_labels.items() %}<option value="{{ kk }}" {{ 'selected' if kk == s.season }}>{{ lab }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="row g-2 align-items-end mt-0">
+      <div class="col-md-1"><label class="form-label mb-0">Food % CA</label><input class="form-control form-control-sm" name="s{{ i }}_food_pct" value="{{ s.food_pct if s.food_pct is not none else '' }}" placeholder="{{ 'auto ' ~ pct(c.food_pct) if c.get('food_pct') is not none and c.get('runrate') else '' }}"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Masse salariale RMB/mois</label><input class="form-control form-control-sm" name="s{{ i }}_labor" value="{{ s.labor|int if s.labor else '' }}" placeholder="{{ 'auto ' ~ k(c.labor) ~ ' k (' ~ pct(c.labor_pct_equiv, 0) ~ ' du CA)' if c.get('labor') else '' }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Loyer RMB/mois</label><input class="form-control form-control-sm" name="s{{ i }}_rent" value="{{ s.rent|int if s.rent else '' }}" placeholder="{{ 'auto ' ~ k(c.rent) ~ ' k' if c.get('rent') else '' }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Autres % CA</label><input class="form-control form-control-sm" name="s{{ i }}_other_pct" value="{{ s.other_pct if s.other_pct is not none else '' }}" placeholder="{{ 'auto ' ~ pct(c.other_pct) if c.get('other_pct') is not none and c.get('runrate') else '' }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Loyer payé tous les</label><select class="form-select form-select-sm" name="s{{ i }}_rent_period">{% for p, lab in [(1, 'mois'), (3, '3 mois'), (6, '6 mois'), (12, '12 mois')] %}<option value="{{ p }}" {{ 'selected' if p == s.rent_period }}>{{ lab }}</option>{% endfor %}</select></div>
+      <div class="col-md-1"><label class="form-label mb-0">1er paiement</label><input class="form-control form-control-sm" name="s{{ i }}_rent_first_month" value="{{ s.rent_first_month or '' }}" placeholder="AAAA-MM"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Montée en charge (mois)</label><input class="form-control form-control-sm" name="s{{ i }}_ramp_months" value="{{ s.ramp_months or 0 }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Départ à %</label><input class="form-control form-control-sm" name="s{{ i }}_ramp_start_pct" value="{{ s.ramp_start_pct or 100 }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Mois pré-ouverture</label><input class="form-control form-control-sm" name="s{{ i }}_preopening_months" value="{{ s.preopening_months or 0 }}" title="salaires et loyer payés avant l'ouverture"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Coefficients personnalisés (12)</label><input class="form-control form-control-sm" name="s{{ i }}_season_custom" value="{{ s.season_custom|map('round', 2)|join(', ') if s.season_custom else '' }}" placeholder="{{ c.season|map('round', 2)|join(', ') if c.get('season') else '' }}"></div>
+    </div>
+    <div class="row g-2 mt-0"><div class="col-12"><input class="form-control form-control-sm" name="s{{ i }}_note" value="{{ s.note or '' }}" placeholder="Note">
+      {% if c.get('season') %}<div class="text-muted mt-1">Saisonnalité appliquée ({{ c.season_src }}) : {% for v in c.season %}{{ months_fr[loop.index0] }} {{ '%.2f'|format(v) }}{{ ' · ' if not loop.last }}{% endfor %}{% if c.get('runrate') %} — run-rate {{ c.runrate_src }} ; EBITDA implicite {{ pct(c.ebitda_pct_equiv, 0) }}{% endif %}</div>{% endif %}
+    </div></div>
+  </div>
+  {% endfor %}
+  {% set i = cfg.stores|length %}
+  <div class="border rounded p-2 mb-2 border-dashed">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-1"><label class="form-label mb-0">Nouveau code</label><input class="form-control form-control-sm" name="s{{ i }}_code" placeholder="ex. XYZ"></div>
+      <div class="col-md-2"><label class="form-label mb-0">Nom</label><input class="form-control form-control-sm" name="s{{ i }}_name"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Entité</label><select class="form-select form-select-sm" name="s{{ i }}_entity">{% for e in entities %}<option value="{{ e }}">{{ e }}</option>{% endfor %}</select></div>
+      <div class="col-md-1"><div class="form-check mt-3"><input class="form-check-input" type="checkbox" name="s{{ i }}_active" value="1" id="sa{{ i }}"><label class="form-check-label" for="sa{{ i }}">projeté</label></div></div>
+      <div class="col-md-1"><label class="form-label mb-0">Ouverture</label><input class="form-control form-control-sm" name="s{{ i }}_opened" placeholder="AAAA-MM"></div>
+      <div class="col-md-2"><label class="form-label mb-0">CA annuel (RMB HT)</label><input class="form-control form-control-sm" name="s{{ i }}_runrate_annual"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Food %</label><input class="form-control form-control-sm" name="s{{ i }}_food_pct"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Salaires/mois</label><input class="form-control form-control-sm" name="s{{ i }}_labor"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Loyer/mois</label><input class="form-control form-control-sm" name="s{{ i }}_rent"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Autres %</label><input class="form-control form-control-sm" name="s{{ i }}_other_pct"></div>
+    </div>
+    <div class="row g-2 mt-0">
+      <div class="col-md-2"><label class="form-label mb-0">Saisonnalité</label><select class="form-select form-select-sm" name="s{{ i }}_season">{% for kk, lab in season_labels.items() %}<option value="{{ kk }}" {{ 'selected' if kk == 'school' }}>{{ lab }}</option>{% endfor %}</select></div>
+      <div class="col-md-1"><label class="form-label mb-0">Montée en charge</label><input class="form-control form-control-sm" name="s{{ i }}_ramp_months" value="3"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Départ à %</label><input class="form-control form-control-sm" name="s{{ i }}_ramp_start_pct" value="70"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Pré-ouverture</label><input class="form-control form-control-sm" name="s{{ i }}_preopening_months" value="1"></div>
+      <div class="col-md-1"><label class="form-label mb-0">Tendance %</label><input class="form-control form-control-sm" name="s{{ i }}_growth_pct" value="0"></div>
+      <input type="hidden" name="s{{ i }}_rent_period" value="1">
+      <div class="col-md-6"><label class="form-label mb-0">Note</label><input class="form-control form-control-sm" name="s{{ i }}_note"></div>
+    </div>
+  </div>
+</div></div>
+
+<div class="card shadow-sm mb-3"><div class="card-body">
+  <h2 class="h6 text-uppercase text-muted">Prêts bancaires (bullet, roulés chaque année)</h2>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-1"><thead><tr class="text-muted"><th>Libellé</th><th>Entité</th><th>Capital</th><th>Taux %</th><th>Échéance</th><th>Durée (mois)</th><th>Renouvelé</th><th>Décalage (mois)</th><th>Montant renouvelé</th><th>Actif</th><th>Note</th><th></th></tr></thead><tbody>
+    {% for l in cfg.loans %}{% set i = loop.index0 %}
+    <tr><td><input type="hidden" name="l{{ i }}_id" value="{{ l.id }}"><input class="form-control form-control-sm" name="l{{ i }}_label" value="{{ l.label }}"></td>
+      <td><select class="form-select form-select-sm" name="l{{ i }}_entity">{% for e in entities %}<option value="{{ e }}" {{ 'selected' if e == l.entity }}>{{ e }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_principal" value="{{ l.principal|int }}"></td><td><input class="form-control form-control-sm" name="l{{ i }}_rate_pct" value="{{ l.rate_pct }}" style="width:60px"></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_maturity" value="{{ l.maturity }}" style="width:90px"></td><td><input class="form-control form-control-sm" name="l{{ i }}_term_months" value="{{ l.term_months or 12 }}" style="width:60px"></td>
+      <td class="text-center"><input type="checkbox" class="form-check-input" name="l{{ i }}_renew" value="1" {{ 'checked' if l.renew }}></td><td><input class="form-control form-control-sm" name="l{{ i }}_renew_gap" value="{{ l.renew_gap or 0 }}" style="width:60px"></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_renew_amount" value="{{ l.renew_amount|int if l.renew_amount else '' }}" placeholder="= capital"></td>
+      <td class="text-center"><input type="checkbox" class="form-check-input" name="l{{ i }}_active" value="1" {{ 'checked' if l.active }}></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_note" value="{{ l.note or '' }}"></td><td><input type="checkbox" class="form-check-input" name="l{{ i }}_delete" value="1" title="supprimer"></td></tr>
+    {% endfor %}
+    {% set i = cfg.loans|length %}
+    <tr class="table-light"><td><input class="form-control form-control-sm" name="l{{ i }}_label" placeholder="Nouveau prêt"></td>
+      <td><select class="form-select form-select-sm" name="l{{ i }}_entity">{% for e in entities %}<option value="{{ e }}">{{ e }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_principal"></td><td><input class="form-control form-control-sm" name="l{{ i }}_rate_pct" value="4.2" style="width:60px"></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_maturity" placeholder="AAAA-MM" style="width:90px"></td><td><input class="form-control form-control-sm" name="l{{ i }}_term_months" value="12" style="width:60px"></td>
+      <td class="text-center"><input type="checkbox" class="form-check-input" name="l{{ i }}_renew" value="1" checked></td><td><input class="form-control form-control-sm" name="l{{ i }}_renew_gap" value="0" style="width:60px"></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_renew_amount"></td><td class="text-center"><input type="checkbox" class="form-check-input" name="l{{ i }}_active" value="1" checked></td>
+      <td><input class="form-control form-control-sm" name="l{{ i }}_note"></td><td></td></tr>
+  </tbody></table></div>
+  <p class="text-muted mb-0">Échéance passée à la date d'arrêté = prêt supposé roulé (échéance suivante = +durée). Intérêts = encours × taux / 12, chaque mois. Décalage = mois entre le remboursement et le nouveau tirage (trou de trésorerie visible si &gt; 0).</p>
+</div></div>
+
+<div class="card shadow-sm mb-3"><div class="card-body">
+  <h2 class="h6 text-uppercase text-muted">Événements ponctuels</h2>
+  <p class="text-muted mb-2">Montant : + = encaissement, − = décaissement. Un événement rattaché à un magasin n'est pris en compte que si ce magasin est projeté. « Fermeture » met le CA du magasin à 0 ce mois ; « Variation de CA » applique le % (permanent ou ce mois seulement). « Transfert » : + sur l'entité qui reçoit, − sur la contrepartie.</p>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-1"><thead><tr class="text-muted"><th>Mois</th><th>Entité</th><th>Magasin</th><th>Nature</th><th>Montant</th><th>%</th><th>Perm.</th><th>Contrepartie</th><th>Libellé</th><th>Note</th><th>Actif</th><th></th></tr></thead><tbody>
+    {% for e in cfg.events %}{% set i = loop.index0 %}
+    <tr><td><input type="hidden" name="e{{ i }}_id" value="{{ e.id }}"><input class="form-control form-control-sm" name="e{{ i }}_month" value="{{ e.month }}" style="width:90px"></td>
+      <td><select class="form-select form-select-sm" name="e{{ i }}_entity">{% for x in entities %}<option value="{{ x }}" {{ 'selected' if x == e.entity }}>{{ x }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="e{{ i }}_store" value="{{ e.store or '' }}" style="width:70px"></td>
+      <td><select class="form-select form-select-sm" name="e{{ i }}_category">{% for kk, lab in categories.items() %}<option value="{{ kk }}" {{ 'selected' if kk == e.category }}>{{ lab.split(' (')[0] }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="e{{ i }}_amount" value="{{ e.amount|int if e.amount else '' }}" style="width:100px"></td>
+      <td><input class="form-control form-control-sm" name="e{{ i }}_pct" value="{{ e.pct or '' }}" style="width:55px"></td>
+      <td class="text-center"><input type="checkbox" class="form-check-input" name="e{{ i }}_permanent" value="1" {{ 'checked' if e.permanent }}></td>
+      <td><select class="form-select form-select-sm" name="e{{ i }}_counterparty"><option value="">—</option>{% for x in entities %}<option value="{{ x }}" {{ 'selected' if x == e.counterparty }}>{{ x }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="e{{ i }}_label" value="{{ e.label }}"></td><td><input class="form-control form-control-sm" name="e{{ i }}_note" value="{{ e.note or '' }}"></td>
+      <td class="text-center"><input type="checkbox" class="form-check-input" name="e{{ i }}_active" value="1" {{ 'checked' if e.active }}></td>
+      <td><input type="checkbox" class="form-check-input" name="e{{ i }}_delete" value="1" title="supprimer"></td></tr>
+    {% endfor %}
+    {% for j in range(3) %}{% set i = cfg.events|length + j %}
+    <tr class="table-light"><td><input class="form-control form-control-sm" name="e{{ i }}_month" placeholder="AAAA-MM" style="width:90px"></td>
+      <td><select class="form-select form-select-sm" name="e{{ i }}_entity">{% for x in entities %}<option value="{{ x }}">{{ x }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="e{{ i }}_store" style="width:70px"></td>
+      <td><select class="form-select form-select-sm" name="e{{ i }}_category">{% for kk, lab in categories.items() %}<option value="{{ kk }}">{{ lab.split(' (')[0] }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="e{{ i }}_amount" style="width:100px"></td><td><input class="form-control form-control-sm" name="e{{ i }}_pct" style="width:55px"></td>
+      <td class="text-center"><input type="checkbox" class="form-check-input" name="e{{ i }}_permanent" value="1"></td>
+      <td><select class="form-select form-select-sm" name="e{{ i }}_counterparty"><option value="">—</option>{% for x in entities %}<option value="{{ x }}">{{ x }}</option>{% endfor %}</select></td>
+      <td><input class="form-control form-control-sm" name="e{{ i }}_label" placeholder="Nouvel événement"></td><td><input class="form-control form-control-sm" name="e{{ i }}_note"></td>
+      <td class="text-center"><input type="checkbox" class="form-check-input" name="e{{ i }}_active" value="1" checked></td><td></td></tr>
+    {% endfor %}
+  </tbody></table></div>
+</div></div>
+<button class="btn btn-dark btn-sm">Enregistrer les hypothèses</button>
+<a class="btn btn-outline-secondary btn-sm ms-2" href="/c/{{ company.code }}/previsionnel">Retour</a>
+</form>
+{% endblock %}

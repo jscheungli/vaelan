@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Écarts {{ ml(v.month) }} · {{ company.name }}{% endblock %}
+{% block content %}
+{% set active = "/ecarts" %}{% set crumb = "Écarts " ~ ml(v.month) %}{% include "_lp_nav.html" %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0">Écarts — {{ ml(v.month, True) }}</h1>
+  <span class="small text-muted">référence : {{ v.reference }}{% if v.backtest %} <span class="badge text-bg-secondary">back-test</span>{% endif %} · établie le {{ row.created_at | dtlocal }}</span>
+  <a class="btn btn-sm btn-dark ms-auto" href="/c/{{ company.code }}/previsionnel/ecarts/{{ row.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+</div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+{% set G = v.group %}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Chiffre d'affaires</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.revenue_A) }} k</div><div class="small text-muted">prévu {{ k(G.revenue_F) }} k · {{ pct((G.revenue_A / G.revenue_F - 1) if G.revenue_F else None, 1, True) }}</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">EBITDA après siège</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.ebitda_A) }} k</div><div class="small text-muted">prévu {{ k(G.ebitda_F) }} k · {{ k(G.ebitda_A - G.ebitda_F, True) }} k</div></div></div></div>
+  {% if G.cash_A is defined %}
+  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Trésorerie fin de mois</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.cash_A) }} k</div><div class="small text-muted">prévue {{ k(G.cash_F) }} k · {{ k(G.cash_A - G.cash_F, True) }} k</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Variation du mois</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.cash_A - G.cash_prev_A, True) }} k</div><div class="small text-muted">prévue {{ k(G.cash_F - G.cash_prev_F, True) }} k</div></div></div></div>
+  {% endif %}
+</div>
+<div class="row g-3">
+  <div class="col-lg-7">
+    <h3 class="h6 text-uppercase text-muted">Par magasin (k RMB)</h3>
+    <div class="table-responsive"><table class="table table-sm" style="font-size:.78rem">
+      <thead class="table-light"><tr><th></th><th class="text-end">CA prévu</th><th class="text-end">CA réel</th><th class="text-end">Écart</th><th class="text-end">Food prévu</th><th class="text-end">Food réel</th><th class="text-end">Salaires prévu</th><th class="text-end">réel</th><th class="text-end">EBITDA prévu</th><th class="text-end">réel</th><th class="text-end">Écart</th></tr></thead><tbody>
+      {% for r in v.stores %}{% set F, A = r.F, r.A %}
+      <tr><td>{{ r.code }}</td><td class="text-end">{{ k(F.revenue) }}</td>
+        {% if A %}<td class="text-end">{{ k(A.revenue) }}</td><td class="text-end {{ 'text-danger' if r.D.revenue < 0 else 'text-success' }}">{{ pct(r.Dpct.revenue, 0, True) }}</td>
+          <td class="text-end">{{ pct(r.ratios.food_F) }}</td><td class="text-end">{{ pct(r.ratios.food_A) }}</td><td class="text-end">{{ k(F.labor) }}</td><td class="text-end">{{ k(A.labor) }}</td>
+          <td class="text-end">{{ k(F.ebitda) }}</td><td class="text-end">{{ k(A.ebitda) }}</td><td class="text-end {{ 'text-danger' if r.D.ebitda < 0 else 'text-success' }}">{{ k(r.D.ebitda, True) }}</td>
+        {% else %}<td colspan="9" class="text-muted">pas de réalisé</td>{% endif %}</tr>
+      {% if r.bridge %}<tr class="text-muted"><td colspan="11" class="ps-3 small">Écart d'EBITDA : volume de CA {{ k(r.bridge.ca, True) }} k · ratio food {{ k(r.bridge.food, True) }} k · ratio autres {{ k(r.bridge.other, True) }} k · masse salariale {{ k(r.bridge.labor, True) }} k · loyer {{ k(r.bridge.rent, True) }} k{% if r.cum3.n >= 2 %} — CA cumulé {{ r.cum3.n }} mois : {{ pct(r.cum3.pct, 0, True) }}{% endif %}</td></tr>{% endif %}
+      {% endfor %}
+      <tr class="fw-semibold"><td>Magasins</td><td class="text-end">{{ k(G.revenue_F) }}</td><td class="text-end">{{ k(G.revenue_A) }}</td><td></td><td colspan="4"></td><td class="text-end">{{ k(G.ebitda_stores_F) }}</td><td class="text-end">{{ k(G.ebitda_stores_A) }}</td><td class="text-end">{{ k(G.ebitda_stores_A - G.ebitda_stores_F, True) }}</td></tr>
+      <tr><td>Siège (G&A)</td><td colspan="7"></td><td class="text-end">{{ k(-G.ga_F) }}</td><td class="text-end">{{ k(-G.ga_A) }}</td><td class="text-end">{{ k(G.ga_F - G.ga_A, True) }}</td></tr>
+      <tr class="fw-semibold"><td>EBITDA après siège</td><td colspan="7"></td><td class="text-end">{{ k(G.ebitda_F) }}</td><td class="text-end">{{ k(G.ebitda_A) }}</td><td class="text-end">{{ k(G.ebitda_A - G.ebitda_F, True) }}</td></tr>
+      </tbody></table></div>
+    <h3 class="h6 text-uppercase text-muted mt-3">Trésorerie par entité (k RMB)</h3>
+    <div class="row g-2">
+    {% for e, ent in v.entities.items() %}
+      <div class="col-md-6"><div class="card"><div class="card-body py-2">
+        <div class="fw-semibold small" style="color:#0A2540">{{ entities[e].name if e in entities else e }}</div>
+        {% if ent.cash_A is defined %}
+        <table class="table table-sm mb-1" style="font-size:.76rem"><thead><tr class="text-muted"><th></th><th class="text-end">Prévu</th><th class="text-end">Réel</th></tr></thead><tbody>
+          <tr><td>Début de mois</td><td class="text-end">{{ k(ent.cash_prev_F) }}</td><td class="text-end">{{ k(ent.cash_prev_A) }}</td></tr>
+          <tr><td>EBITDA − siège − financier</td><td class="text-end">{{ k(ent.delta_F - ent.loans_F - ent.cca_F - ent.interco_F - ent.capex_F - ent.other_F) }}</td><td class="text-end">{{ k(ent.ebitda_A - ent.ga_A - ent.fin_A) }}</td></tr>
+          <tr><td>Investissements</td><td class="text-end">{{ k(ent.capex_F) }}</td><td class="text-end">{{ k(ent.capex_A) }}</td></tr>
+          <tr><td>Prêts</td><td class="text-end">{{ k(ent.loans_F) }}</td><td class="text-end">{{ k(ent.d_loans) }}</td></tr>
+          <tr><td>Comptes courants</td><td class="text-end">{{ k(ent.cca_F) }}</td><td class="text-end">{{ k(ent.d_cca) }}</td></tr>
+          <tr><td>Intercos</td><td class="text-end">{{ k(ent.interco_F) }}</td><td class="text-end">{{ k(ent.d_interco) }}</td></tr>
+          <tr><td>Autres / BFR / non expliqué</td><td class="text-end">{{ k(ent.other_F) }}</td><td class="text-end">{{ k(ent.residual) }}</td></tr>
+          <tr class="fw-semibold"><td>Variation</td><td class="text-end">{{ k(ent.delta_F, True) }}</td><td class="text-end">{{ k(ent.delta_A, True) }}</td></tr>
+          <tr class="fw-semibold"><td>Fin de mois</td><td class="text-end">{{ k(ent.cash_F) }}</td><td class="text-end">{{ k(ent.cash_A) }}</td></tr>
+        </tbody></table>
+        <div class="small text-muted">Bilan : {% for kk, vv in ent.wc.items() if vv|abs >= 5000 %}{{ kk }} {{ k(vv, True) }} k{{ ' · ' if not loop.last }}{% endfor %} — BFR {{ k(ent.wc_total, True) }} k</div>
+        {% else %}<div class="small text-muted">balance du mois non importée</div>{% endif %}
+      </div></div></div>
+    {% endfor %}
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <h3 class="h6 text-uppercase text-muted">Diagnostic</h3>
+    {% for d in v.diagnostic %}<div class="alert alert-{{ 'danger' if d.level == 'danger' else ('warning' if d.level == 'warn' else ('success' if d.level == 'ok' else 'light border')) }} py-1 px-2 small mb-1">{{ d.text }}</div>{% endfor %}
+    <h3 class="h6 text-uppercase text-muted mt-3">Propositions de recalibrage</h3>
+    {% for p in v.proposals %}
+    <div class="card mb-2"><div class="card-body py-2 small">
+      <div><strong>{{ p.name }}</strong> — {{ p.label }} <span class="badge text-bg-{{ 'secondary' if p.setting == 'auto' else 'warning' }}">{{ p.setting }}</span></div>
+      <div class="text-muted">{{ p.text }}</div>
+      <form method="post" action="/c/{{ company.code }}/previsionnel/ecarts/{{ row.id }}/appliquer" class="d-flex gap-1 mt-1">
+        <input type="hidden" name="store" value="{{ p.store }}"><input type="hidden" name="param" value="{{ p.param }}"><input type="hidden" name="value" value="{{ p.new }}">
+        <button class="btn btn-sm btn-outline-dark py-0" name="mode" value="set">Fixer à la valeur recalibrée</button>
+        {% if p.setting != 'auto' %}<button class="btn btn-sm btn-outline-secondary py-0" name="mode" value="auto">Remettre en auto</button>{% endif %}
+      </form>
+    </div></div>
+    {% else %}<p class="small text-muted">Aucun recalibrage significatif à proposer.</p>{% endfor %}
+  </div>
+</div>
+{% endblock %}

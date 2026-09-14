@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Simulation · {{ company.name }}{% endblock %}
+{% block content %}
+{% set active = "/simulation" %}{% set crumb = "Simulation" %}{% include "_lp_nav.html" %}
+<h1 class="h4">Simulation</h1>
+<p class="small text-muted">Variantes appliquées <strong>par-dessus</strong> les hypothèses en vigueur, sans les modifier. La courbe de base est le modèle actuel ; la courbe simulée intègre les variantes ci-dessous. « Enregistrer » conserve la simulation (avec son PDF) pour la partager.</p>
+{% if error %}<div class="alert alert-danger py-2 small">{{ error }}</div>{% endif %}
+<form method="post" class="small">
+<div class="card shadow-sm mb-3"><div class="card-body">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-1"><label class="form-label mb-0">CA tous magasins %</label><input class="form-control form-control-sm" name="revenue_pct" value="{{ ov.get('revenue_pct', 0) }}" title="ex. -5 = tous les run-rates à −5 %"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Tendance +pts/an</label><input class="form-control form-control-sm" name="growth_pp" value="{{ ov.get('growth_pp', 0) }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Food +pts</label><input class="form-control form-control-sm" name="food_pp" value="{{ ov.get('food_pp', 0) }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Autres +pts</label><input class="form-control form-control-sm" name="other_pp" value="{{ ov.get('other_pp', 0) }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Salaires %</label><input class="form-control form-control-sm" name="labor_pct" value="{{ ov.get('labor_pct', 0) }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Siège ± RMB/mois</label><input class="form-control form-control-sm" name="ga_delta" value="{{ ov.get('ga_delta', 0)|int }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Capex ×</label><input class="form-control form-control-sm" name="capex_scale" value="{{ ov.get('capex_scale', 1) }}" title="multiplie les investissements saisis (0,8 = −20 %)"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Horizon</label><select class="form-select form-select-sm" name="horizon">{% for h in [12, 18, 24, 36] %}<option value="{{ h }}" {{ 'selected' if h == ov.get('horizon', cfg.general.horizon) }}>{{ h }} m</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-0">Prêts : renouvellement</label><select class="form-select form-select-sm" name="loan_renew"><option value="" {{ 'selected' if ov.get('loan_renew') is none }}>comme les hypothèses</option><option value="1" {{ 'selected' if ov.get('loan_renew') == True }}>tous renouvelés</option><option value="0" {{ 'selected' if ov.get('loan_renew') == False }}>aucun renouvelé (stress)</option></select></div>
+    <div class="col-md-1"><label class="form-label mb-0">Décalage (mois)</label><input class="form-control form-control-sm" name="loan_gap" value="{{ ov.get('loan_gap', '') if ov.get('loan_gap') is not none else '' }}" placeholder="—" title="mois entre remboursement et nouveau tirage"></div>
+  </div>
+  <div class="row g-2 align-items-end mt-1">
+    <div class="col-md-4"><label class="form-label mb-0">Magasins projetés dans la simulation</label><div>
+      {% for s in cfg.stores if not s.closed or s.active %}{% set on = ov.get('stores_active', {}).get(s.code, s.active) %}
+      <div class="form-check form-check-inline"><input type="hidden" name="store_{{ s.code }}" value="0"><input class="form-check-input" type="checkbox" name="store_{{ s.code }}" value="1" id="st{{ s.code }}" {{ 'checked' if on }}><label class="form-check-label" for="st{{ s.code }}">{{ s.code }}{{ ' (projet)' if not s.active }}</label></div>
+      {% endfor %}</div></div>
+    <div class="col-md-1"><label class="form-label mb-0">Apport CCA (RMB)</label><input class="form-control form-control-sm" name="cca_amount" value="{{ ov.get('cca_amount', '')|int if ov.get('cca_amount') else '' }}"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Mois</label><input class="form-control form-control-sm" name="cca_month" value="{{ ov.get('cca_month', '') }}" placeholder="AAAA-MM"></div>
+    <div class="col-md-1"><label class="form-label mb-0">Entité</label><select class="form-select form-select-sm" name="cca_entity">{% for e in entities %}<option value="{{ e }}" {{ 'selected' if e == ov.get('cca_entity') }}>{{ e }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label mb-0">Libellé (si enregistrement)</label><input class="form-control form-control-sm" name="label" placeholder="ex. Fashion Park + CCA 1 M"></div>
+    <div class="col-md-2 d-flex gap-2"><button class="btn btn-sm btn-primary">Simuler</button><button class="btn btn-sm btn-outline-dark" name="save" value="1">Enregistrer + PDF</button></div>
+  </div>
+</div></div>
+</form>
+{% if sim %}
+{% set kb, ks = base.kpis, sim.kpis %}
+<div class="row g-2 mb-3">
+  {% for lab, vb, vs in [("Point bas de trésorerie", k(kb.cash_min) ~ " k (" ~ ml(kb.cash_min_month) ~ ")", k(ks.cash_min) ~ " k (" ~ ml(ks.cash_min_month) ~ ")"),
+                         ("Trésorerie fin d'horizon", k(kb.cash_end) ~ " k", k(ks.cash_end) ~ " k"),
+                         ("EBITDA 12 mois après siège", k(kb.ebitda_12m) ~ " k", k(ks.ebitda_12m) ~ " k"),
+                         ("Investissements sur l'horizon", k(kb.capex_total) ~ " k", k(ks.capex_total) ~ " k")] %}
+  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">{{ lab }}</div>
+    <div class="h6 mb-0" style="color:#0A2540">{{ vs }}</div><div class="small text-muted">base : {{ vb }}</div></div></div></div>
+  {% endfor %}
+</div>
+{% if sim.alerts %}<div class="mb-2">{% for a in sim.alerts %}<div class="alert alert-{{ 'danger' if a.level == 'danger' else ('warning' if a.level == 'warn' else 'light border') }} py-1 px-2 small mb-1">{{ a.text }}</div>{% endfor %}</div>{% endif %}
+<div class="card shadow-sm mb-3"><div class="card-body"><canvas id="cash" height="90"></canvas></div></div>
+<div class="table-responsive"><table class="table table-sm" style="font-size:.76rem;white-space:nowrap">
+  <thead class="table-light"><tr><th></th>{% for m in sim.months %}<th class="text-end">{{ ml(m) }}</th>{% endfor %}</tr></thead><tbody>
+  <tr><td>CA simulé</td>{% for v in sim.group.revenue %}<td class="text-end">{{ k(v) }}</td>{% endfor %}</tr>
+  <tr><td>EBITDA magasins simulé</td>{% for v in sim.group.ebitda_stores %}<td class="text-end">{{ k(v) }}</td>{% endfor %}</tr>
+  <tr><td>Variation de trésorerie simulée</td>{% for v in sim.group.delta %}<td class="text-end {{ 'text-danger' if v < 0 }}">{{ k(v) }}</td>{% endfor %}</tr>
+  {% for e, r in sim.entities.items() %}<tr class="text-muted"><td>Trésorerie {{ e }} simulée</td>{% for v in r.cash %}<td class="text-end {{ 'text-danger' if v < 0 }}">{{ k(v) }}</td>{% endfor %}</tr>{% endfor %}
+  <tr class="fw-semibold"><td>Trésorerie groupe simulée</td>{% for v in sim.group.cash %}<td class="text-end {{ 'text-danger' if v < 0 }}">{{ k(v) }}</td>{% endfor %}</tr>
+  <tr class="text-muted"><td>Trésorerie groupe de base</td>{% for v in base.group.cash %}<td class="text-end">{{ k(v) }}</td>{% endfor %}</tr>
+  </tbody></table></div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+const D = {{ chart|safe }};
+const ds = [{label: 'Base', data: D.base, borderColor: '#8a8f98', borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, tension: .2},
+            {label: 'Simulation', data: D.sim, borderColor: '#0A2540', borderWidth: 2, pointRadius: 2, tension: .2}];
+for (const [e, v] of Object.entries(D.sim_entities)) ds.push({label: e + ' (simulation)', data: v, borderColor: '#b5b9c2', borderWidth: 1, pointRadius: 0, borderDash: e === 'LBL' ? [3, 3] : [], tension: .2});
+new Chart(document.getElementById('cash'), {type: 'line', data: {labels: D.labels, datasets: ds},
+  options: {plugins: {legend: {position: 'bottom'}, title: {display: true, text: 'Trésorerie groupe : base contre simulation (k RMB)'}}, scales: {y: {ticks: {callback: v => v.toLocaleString('fr-FR')}}}}});
+</script>
+{% endif %}
+{% endblock %}

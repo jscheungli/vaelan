@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Écarts · {{ company.name }}{% endblock %}
+{% block content %}
+{% set active = "/ecarts" %}{% set crumb = "Écarts" %}{% include "_lp_nav.html" %}
+<h1 class="h4">Analyse des écarts prévu / réalisé</h1>
+<p class="small text-muted">Chaque mois, après l'import du management report : comparer le réalisé au prévisionnel de référence (le dernier prévisionnel établi <em>avant</em> le début du mois ; à défaut, le modèle recalculé sur les données du mois précédent — « back-test »). Le rapport explique d'où viennent les écarts et propose les recalibrages.</p>
+{% if msg %}<div class="alert alert-info py-2 small">{{ msg }}</div>{% endif %}
+<div class="card shadow-sm mb-3" style="max-width:720px"><div class="card-body">
+  <form method="post" class="row g-2 align-items-end small">
+    <div class="col-auto"><label class="form-label mb-0">Mois analysé</label><select name="month" class="form-select form-select-sm">{% for m in months %}<option value="{{ m }}">{{ ml(m, True) }}</option>{% endfor %}</select></div>
+    <div class="col-auto"><label class="form-label mb-0">Référence</label><select name="forecast_id" class="form-select form-select-sm"><option value="">automatique (dernier prévisionnel antérieur au mois, sinon back-test)</option>
+      {% for f in forecasts %}<option value="{{ f.id }}">#{{ f.id }} {{ f.label }} (arrêté {{ f.as_of }}, établi le {{ f.created_at | dtlocal }})</option>{% endfor %}</select></div>
+    <div class="col-auto"><button class="btn btn-sm btn-dark" {{ 'disabled' if not months }}>Analyser</button></div>
+  </form>
+</div></div>
+<h3 class="h6 text-uppercase text-muted">Analyses enregistrées</h3>
+<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:.82rem">
+  <thead class="table-light"><tr class="small text-muted"><th>Mois</th><th>Référence</th><th>Établie le</th><th>Par</th><th></th></tr></thead><tbody>
+  {% for r in variances %}
+  <tr><td><a href="/c/{{ company.code }}/previsionnel/ecarts/{{ r.id }}">{{ ml(r.month, True) }}</a></td><td class="small">{{ r.reference }}</td><td class="text-nowrap">{{ r.created_at | dtlocal }}</td><td class="small">{{ r.created_by or '' }}</td>
+    <td><a class="small" href="/c/{{ company.code }}/previsionnel/ecarts/{{ r.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> PDF</a></td></tr>
+  {% else %}<tr><td colspan="5" class="text-muted small">Aucune analyse.</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endblock %}

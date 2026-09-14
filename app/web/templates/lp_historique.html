@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Historique · {{ company.name }}{% endblock %}
+{% block content %}
+{% set active = "/historique" %}{% set crumb = "Historique" %}{% include "_lp_nav.html" %}
+<h1 class="h4">Historique importé</h1>
+<p class="small text-muted">P&L mensuel par magasin (k RMB, hors TVA) avec les ratios que le modèle calibre, et pont de trésorerie par entité (ce que le P&L n'explique pas). Comptes arrêtés au {{ ml(h.as_of, True) if h.as_of else '—' }}.</p>
+<ul class="nav nav-tabs small mb-2" role="tablist">
+  {% for st in h.stores %}<li class="nav-item"><a class="nav-link {{ 'active' if loop.first }}" data-bs-toggle="tab" href="#t{{ st }}">{{ st }}</a></li>{% endfor %}
+  {% for e in h.bridges %}<li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#b{{ e }}">Trésorerie {{ e }}</a></li>{% endfor %}
+</ul>
+<div class="tab-content">
+{% for st, rows in h.stores.items() %}
+<div class="tab-pane {{ 'show active' if loop.first }}" id="t{{ st }}">
+  <div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.76rem;white-space:nowrap">
+    <thead class="table-light"><tr><th>Mois</th><th class="text-end">CA</th><th class="text-end">Food</th><th class="text-end">%</th><th class="text-end">Masse sal.</th><th class="text-end">%</th><th class="text-end">Loyer</th><th class="text-end">Autres</th><th class="text-end">%</th><th class="text-end">EBITDA modèle</th><th class="text-end">EBITDA rapport</th><th class="text-end">G&A</th><th class="text-end">Financier</th><th class="text-end">Amort.+dépr.</th></tr></thead>
+    <tbody>{% for r in rows|reverse %}
+      <tr><td>{{ ml(r.month) }}</td><td class="text-end">{{ k(r.revenue) }}</td><td class="text-end">{{ k(r.food) }}</td><td class="text-end">{{ pct(r.food_pct) }}</td><td class="text-end">{{ k(r.labor) }}</td><td class="text-end">{{ pct(r.labor_pct) }}</td>
+        <td class="text-end">{{ k(r.rent) }}</td><td class="text-end">{{ k(r.other) }}</td><td class="text-end">{{ pct(r.other_pct) }}</td><td class="text-end">{{ k(r.ebitda) }}</td><td class="text-end text-muted">{{ k(r.ebitda_report) }}</td>
+        <td class="text-end">{{ k(r.ga) }}</td><td class="text-end">{{ k(r.fin) }}</td><td class="text-end text-muted">{{ k(r.amort + r.depr) }}</td></tr>
+    {% endfor %}</tbody></table></div>
+</div>
+{% endfor %}
+{% for e, rows in h.bridges.items() %}
+<div class="tab-pane" id="b{{ e }}">
+  <p class="small text-muted">Variation de trésorerie = EBITDA magasins − siège − financier ± investissements ± prêts ± comptes courants ± intercos ± BFR + résidu. Le résidu médian est un bon candidat pour la <em>friction</em> des hypothèses.</p>
+  <div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.76rem;white-space:nowrap">
+    <thead class="table-light"><tr><th>Mois</th><th class="text-end">Trésorerie</th><th class="text-end">Variation</th><th class="text-end">EBITDA mag.</th><th class="text-end">Siège</th><th class="text-end">Financier</th><th class="text-end">Invest.</th><th class="text-end">Prêts</th><th class="text-end">CCA</th><th class="text-end">Intercos</th><th class="text-end">BFR</th><th class="text-end">Résidu</th></tr></thead>
+    <tbody>{% for r in rows|reverse %}
+      <tr><td>{{ ml(r.month) }}</td><td class="text-end">{{ k(r.cash) }}</td><td class="text-end {{ 'text-danger' if r.dcash < 0 }}">{{ k(r.dcash, True) }}</td><td class="text-end">{{ k(r.ebitda) }}</td><td class="text-end">{{ k(-r.ga) }}</td><td class="text-end">{{ k(-r.fin) }}</td>
+        <td class="text-end">{{ k(r.capex) }}</td><td class="text-end">{{ k(r.loans) }}</td><td class="text-end">{{ k(r.cca) }}</td><td class="text-end">{{ k(r.interco) }}</td><td class="text-end">{{ k(r.wc) }}</td><td class="text-end {{ 'text-danger' if r.residual|abs > 100000 }}">{{ k(r.residual, True) }}</td></tr>
+    {% endfor %}</tbody></table></div>
+</div>
+{% endfor %}
+</div>
+{% endblock %}

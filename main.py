@@ -23,6 +23,7 @@ from app.web.telegram_routes import router as telegram_router
 from app.web.planning_routes import router as planning_router
 from app.web.ciop_routes import router as ciop_router
 from app.web.owine_routes import router as owine_router
+from app.web.lp_routes import router as lp_router
 from app.core import scheduler
 
 
@@ -120,6 +121,7 @@ app.include_router(telegram_router)
 app.include_router(planning_router)
 app.include_router(ciop_router)
 app.include_router(owine_router)
+app.include_router(lp_router)
 
 
 @app.get("/healthz")

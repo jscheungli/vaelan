@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Méthode · {{ company.name }}{% endblock %}
+{% block content %}
+{% set active = "/methode" %}{% set crumb = "Méthode" %}{% include "_lp_nav.html" %}
+<h1 class="h4">Comment le modèle est construit</h1>
+<div class="row g-3">
+<div class="col-lg-8">
+<div class="card shadow-sm mb-3"><div class="card-body small">
+  <h2 class="h6">1. Principe : peu de paramètres, calibrés sur le réel, corrigés chaque mois</h2>
+  <p>Le prévisionnel ne cherche pas à reconstruire le P&L ligne à ligne. Il retient, par magasin, <strong>six grandeurs</strong> qui expliquent l'essentiel de la trésorerie : le niveau d'activité, sa saisonnalité, sa tendance, le food cost, la masse salariale et le loyer (plus un ratio « autres charges »). Chaque grandeur est <strong>calibrée automatiquement</strong> sur les derniers mois importés, et peut être <strong>fixée à la main</strong> quand on sait quelque chose que l'historique ignore (travaux, réouverture, changement de bail). L'analyse mensuelle des écarts dit ensuite si l'hypothèse tient, et propose la valeur recalibrée.</p>
+  <h2 class="h6 mt-3">2. Chiffre d'affaires</h2>
+  <p><code>CA[mois] = run-rate × saisonnalité[mois] × (1 + tendance)^(k/12)</code></p>
+  <ul>
+    <li><strong>Run-rate</strong> = CA mensuel désaisonnalisé = moyenne des 12 derniers mois (chaque mois divisé par son coefficient saisonnier), en écartant le plus haut et le plus bas. Robuste à un mois anormal (fermeture BFC en mai 2026, mois de Nouvel An chinois). Se saisit en « CA annuel de croisière » pour un projet.</li>
+    <li><strong>Saisonnalité</strong> = pour chaque mois civil, CA du mois / CA mensuel moyen de l'année, moyenné sur les {{ cfg.general.season_years }} dernières années civiles complètes du magasin. Un kiosque sans 2 ans d'historique utilise le profil « calendrier scolaire » (juillet/août creux), modifiable.</li>
+    <li><strong>Tendance</strong> = % annuel choisi (0 par défaut). On l'ajuste avec les écarts cumulés, pas avec un mois isolé.</li>
+    <li>Pourquoi pas « même mois de l'an dernier × (1 + tendance) » (méthode du prévisionnel d'avril) ? Test sur avril–juillet 2026 : cette méthode se trompe de +23 % à +42 % sur BFC (l'intégration de Jingqiao gonfle la tendance ; la fermeture de mai 2026 aurait donné 0 en mai 2027) ; run-rate × saisonnalité reste entre −6 % et +12 %.</li>
+    <li>Projet de magasin : CA annuel cible, date d'ouverture, montée en charge (départ à X % sur N mois), mois de pré-ouverture (salaires et loyer payés avant l'ouverture), saisonnalité choisie.</li>
+  </ul>
+  <h2 class="h6 mt-3">3. Coûts et EBITDA magasin</h2>
+  <ul>
+    <li><strong>Food cost</strong> et <strong>autres charges d'exploitation</strong> (livraison Meituan/Eleme, énergie, marketing, emballages, entretien… = compte 5501 hors loyer et amortissements) en <strong>% du CA</strong> : médiane des {{ cfg.general.calib_months }} derniers mois.</li>
+    <li><strong>Masse salariale</strong> (salaires, charges, labor service) et <strong>loyer</strong> (loyer + charges d'immeuble) en <strong>montants mensuels lissés</strong> : médiane des {{ cfg.general.calib_months }} derniers mois, avec une dérive annuelle ({{ cfg.general.wage_inflation_pct }} % et {{ cfg.general.cost_inflation_pct }} %). Un ratio de masse salariale appliqué au mois ferait varier la paie avec la saison, ce que la trésorerie ne fait pas ; le ratio équivalent (masse salariale / CA annuel) est affiché pour raisonner en ratio.</li>
+    <li><code>EBITDA magasin = CA − food − masse salariale − loyer − autres charges</code> : écart inférieur à 1 % avec « EBITDA (Store) » du management report sur février–juillet 2026.</li>
+    <li><strong>Siège</strong> : G&A mensuel (compte 5502 de la feuille Head Office, médiane des derniers mois), porté par JIANZAN.</li>
+  </ul>
+  <h2 class="h6 mt-3">4. De l'EBITDA à la trésorerie</h2>
+  <p><code>Trésorerie[m] = Trésorerie[m−1] + Σ EBITDA magasins − siège − intérêts − frais bancaires ({{ cfg.general.bank_fees_pct }} % du CA) − taxes d'exploitation − IS ± prêts ± événements ± décalage de loyer ± friction</code></p>
+  <ul>
+    <li><strong>Prêts</strong> : registre (capital, taux, échéance, durée, renouvelé ou non, décalage entre remboursement et nouveau tirage). Les prêts sont des bullets à un an roulés chaque année : le modèle montre chaque échéance et ce qui se passe si le renouvellement tarde ou n'a pas lieu (simulation « stress »).</li>
+    <li><strong>Événements</strong> : investissements, apports ou remboursements de comptes courants, transferts entre JIANZAN et LEBLANC (neutres pour le groupe), autres encaissements/décaissements, fermeture ou variation de CA d'un magasin.</li>
+    <li><strong>IS</strong> : {{ cfg.general.cit_rate_pct }} % du résultat trimestriel positif (régime small &amp; micro), payé le mois suivant la fin du trimestre. Mettre 0 si les déficits reportables absorbent le résultat.</li>
+    <li><strong>Amortissements</strong> : exclus (non décaissés). <strong>Besoin en fonds de roulement</strong> : non modélisé ligne à ligne (le prévisionnel d'avril utilisait 6 paramètres en jours pour un effet net presque nul et instable). L'écart mensuel entre le P&L et la trésorerie est mesuré dans l'analyse des écarts (mouvements de bilan) ; s'il est structurel, on le porte dans la « friction » mensuelle par entité (Historique › pont de trésorerie).</li>
+    <li><strong>Trésorerie d'ouverture</strong> = comptes 1002 + 1001 des balances du dernier mois importé, par entité.</li>
+  </ul>
+  <h2 class="h6 mt-3">5. Chaque mois : écarts et recalibrage</h2>
+  <ol>
+    <li>Importer le Board Management Report du mois (P&L des magasins et balances JZ / LBL).</li>
+    <li>Lancer l'analyse des écarts : le réalisé est comparé au prévisionnel <em>en vigueur avant le début du mois</em>. Pour chaque magasin : écart de CA (ponctuel ou persistant sur 3 mois), effet ratio food, effet ratio autres charges, masse salariale, loyer → décomposition de l'écart d'EBITDA. Par entité : pont de trésorerie prévu / réel (EBITDA, investissements réels lus dans les immobilisations, prêts, comptes courants, intercos, BFR et résidu).</li>
+    <li>Lire le diagnostic et les propositions : un paramètre en <em>auto</em> se recale seul au prochain prévisionnel ; un paramètre <em>saisi</em> est conservé tant qu'on ne l'applique pas — c'est là que se prend la décision (« l'uplift cuisine chaude de BFC n'est pas au rendez-vous : on garde l'objectif ou on revient au réel ? »).</li>
+    <li>Regénérer le prévisionnel (PDF) : nouvelle référence pour le mois suivant.</li>
+  </ol>
+  <h2 class="h6 mt-3">6. Ce que le modèle ne fait pas</h2>
+  <p>Pas de TVA (le CA est hors taxes, la TVA nette est dans la friction / BFR), pas de bilan prévisionnel complet, pas de scénarios multiples enregistrés côte à côte (la simulation sert à ça, et peut être enregistrée), pas de lecture automatique de la comptabilité chinoise (Kingdee) : l'import passe par le management report mensuel.</p>
+</div></div>
+</div>
+<div class="col-lg-4">
+<div class="card shadow-sm mb-3"><div class="card-body small">
+  <h2 class="h6">Sources et comptes utilisés</h2>
+  <ul class="mb-2">
+    <li>Feuilles magasins <code>001-ZHY</code>, <code>002-BFC</code>, <code>004-QPLFS</code> (<code>003-TLQ</code>, <code>004-HSF</code> pour l'historique) : 5101 CA, Operation Food Cost, Operation Labor Cost, 5501 (dont .09 loyer, .14 amortissements, .15 dépréciations), 5502, 5503, 5402, 5701, EBITDA (Store) et (After G&amp;A).</li>
+    <li>Feuille <code>Head Office</code> : 5502 G&A du siège, 5503 intérêts.</li>
+    <li>Balances <code>JZ2026MM</code> / <code>LBL2026MM</code> : 1002 banques, 1001 caisse, 1131 clients, 1133.01 dépôts, 1133.04 prêts intra-groupe, 1133.06 charges payées d'avance, 1211/1243 stocks, 1501 immobilisations, 1901 aménagements, 2101 prêts bancaires, 2121 fournisseurs, 2151 salaires, 2171 taxes, 2181.03 autres dettes, 2181.12 dettes intra-groupe, 2181.13 avances clients, 2181.14 comptes courants d'associés.</li>
+  </ul>
+  <h2 class="h6 mt-3">Ordres de grandeur (juillet 2026)</h2>
+  <ul class="mb-0">
+    <li>ZHY : food ~23 %, masse salariale ~176 k/mois (~22 % du CA), loyer 95 k, autres ~13 % → EBITDA ~30 %.</li>
+    <li>BFC + JQ : food ~22 % (24–25 % depuis la cuisine chaude), masse salariale ~162 k, loyer ~115 k, autres ~17 % → EBITDA ~15 %.</li>
+    <li>Qingpu : food ~30 %, masse salariale ~62 k, loyer 13 k, autres ~18 % → EBITDA ~20 %.</li>
+    <li>Siège : ~228 k/mois. Prêt CMBC 2,0 M à ~4,2 %, roulé en juin.</li>
+  </ul>
+</div></div>
+</div>
+</div>
+{% endblock %}

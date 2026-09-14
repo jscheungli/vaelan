@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Prévisionnel de trésorerie · {{ company.name }}{% endblock %}
+{% block content %}
+{% set active = "/" %}{% include "_lp_nav.html" %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <h1 class="h4 mb-0"><i class="bi bi-graph-up-arrow"></i> Prévisionnel de trésorerie — La Parisienne</h1>
+  <span class="text-muted small">JIANZAN (ZHY, BFC + Jingqiao, siège) · LEBLANC (Qingpu)</span>
+</div>
+{% if msg %}<div class="alert alert-info py-2 small">{{ msg }}</div>{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body">
+    <div class="small text-muted">Comptes arrêtés au</div>
+    <div class="h5 mb-0">{{ ml(st.as_of, True) if st.as_of else "—" }}</div>
+    <div class="small text-muted">{{ st.n_months }} mois importés{% if st.as_of %} · {% for s, m in st.last_store.items() %}{{ s }} {{ m }}{{ ", " if not loop.last }}{% endfor %}{% endif %}</div>
+  </div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body">
+    <div class="small text-muted">Trésorerie réelle (k RMB)</div>
+    <div class="h5 mb-0">{% if st.as_of %}{{ k(st.cash.values()|sum) }} k{% else %}—{% endif %}</div>
+    <div class="small text-muted">{% for e, v in st.cash.items() %}{{ e }} {{ k(v) }} k{{ " · " if not loop.last }}{% endfor %}
+      {% if st.loans %}<br>prêts : {% for e, v in st.loans.items() %}{{ e }} {{ k(v) }} k{{ " · " if not loop.last }}{% endfor %}{% endif %}</div>
+  </div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body">
+    <div class="small text-muted">Dernier prévisionnel</div>
+    {% if latest %}
+      <div class="h5 mb-0"><a href="/c/{{ company.code }}/previsionnel/p/{{ latest.id }}">{{ latest.label }}</a></div>
+      <div class="small text-muted">point bas {{ k(res.kpis.cash_min) }} k en {{ ml(res.kpis.cash_min_month) }} · fin {{ k(res.kpis.cash_end) }} k · établi le {{ latest.created_at | dtlocal }}</div>
+    {% else %}<div class="h5 mb-0">—</div><div class="small text-muted">aucun prévisionnel enregistré</div>{% endif %}
+  </div></div></div>
+  <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body">
+    <div class="small text-muted">Prochaines échéances</div>
+    {% set ns = namespace(n=0) %}
+    {% for l in cfg.loans if l.active %}{% set ns.n = ns.n + 1 %}<div class="small">{{ l.label }} : <strong>{{ k(l.principal) }} k</strong> en {{ ml(l.maturity) }}{% if l.renew %} (roulé){% endif %}</div>{% endfor %}
+    {% set active_codes = cfg.stores|selectattr('active')|map(attribute='code')|list %}
+    {% for e in cfg.events if e.active and e.category in ("capex", "cca", "loan") and (not e.store or e.store in active_codes) %}{% set ns.n = ns.n + 1 %}<div class="small">{{ e.label }} : {{ k(e.amount, True) }} k en {{ ml(e.month) }}</div>{% endfor %}
+    {% if not ns.n %}<div class="small text-muted">aucune</div>{% endif %}
+  </div></div></div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body">
+    <h2 class="h6"><i class="bi bi-upload"></i> 1. Importer le Board Management Report</h2>
+    <p class="small text-muted mb-2">Le classeur mensuel (<code>…-LP4-Board Management Report.xlsm</code>). Les mois déjà importés sont remplacés ; on peut déposer plusieurs classeurs (2024, 2025, 2026) d'un coup.</p>
+    <form method="post" action="/c/{{ company.code }}/previsionnel/import" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
+      <input type="file" name="files" class="form-control form-control-sm" accept=".xlsm,.xlsx" multiple required>
+      <button class="btn btn-sm btn-dark text-nowrap">Importer</button>
+    </form>
+  </div></div></div>
+  <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body">
+    <h2 class="h6"><i class="bi bi-play-circle"></i> 2. Générer le prévisionnel</h2>
+    <p class="small text-muted mb-2">Recalibre le modèle sur l'historique importé, applique les <a href="/c/{{ company.code }}/previsionnel/hypotheses">hypothèses</a> et produit le PDF. Ensuite, chaque mois : importer le rapport, puis <a href="/c/{{ company.code }}/previsionnel/ecarts">analyser les écarts</a>.</p>
+    <form method="post" action="/c/{{ company.code }}/previsionnel/generer" class="d-flex gap-2 align-items-center">
+      <input name="label" class="form-control form-control-sm" placeholder="Libellé (facultatif)">
+      <select name="horizon" class="form-select form-select-sm" style="max-width:110px">
+        {% for h in [12, 18, 24, 36] %}<option value="{{ h }}" {{ 'selected' if h == cfg.general.horizon }}>{{ h }} mois</option>{% endfor %}
+      </select>
+      <button class="btn btn-sm btn-primary text-nowrap" {{ 'disabled' if not st.as_of }}>Générer</button>
+    </form>
+  </div></div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <h3 class="h6 text-uppercase text-muted">Prévisionnels et simulations enregistrés</h3>
+    <div class="table-responsive"><table class="table table-sm align-middle" style="font-size:.82rem">
+      <thead class="table-light"><tr class="small text-muted"><th>#</th><th>Libellé</th><th>Type</th><th>Arrêté</th><th>Établi le</th><th>Par</th><th></th></tr></thead>
+      <tbody>
+      {% for r in forecasts %}
+      <tr><td>{{ r.id }}</td><td><a href="/c/{{ company.code }}/previsionnel/p/{{ r.id }}">{{ r.label }}</a></td>
+        <td><span class="badge text-bg-{{ 'primary' if r.kind == 'previsionnel' else 'secondary' }}">{{ r.kind }}</span></td>
+        <td>{{ r.as_of }} · {{ r.horizon }} m</td><td class="text-nowrap">{{ r.created_at | dtlocal }}</td><td class="small">{{ r.created_by or '' }}</td>
+        <td class="text-nowrap"><a class="small" href="/c/{{ company.code }}/previsionnel/p/{{ r.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+          <form method="post" action="/c/{{ company.code }}/previsionnel/p/{{ r.id }}/supprimer" class="d-inline" onsubmit="return confirm('Supprimer ce prévisionnel ?')"><button class="btn btn-link btn-sm text-danger p-0 ms-2"><i class="bi bi-trash"></i></button></form></td></tr>
+      {% else %}<tr><td colspan="7" class="text-muted small">Aucun — importez l'historique puis générez.</td></tr>{% endfor %}
+      </tbody></table></div>
+  </div>
+  <div class="col-lg-5">
+    <h3 class="h6 text-uppercase text-muted">Analyses des écarts</h3>
+    <div class="table-responsive"><table class="table table-sm align-middle" style="font-size:.82rem">
+      <thead class="table-light"><tr class="small text-muted"><th>Mois</th><th>Référence</th><th>Établie le</th><th></th></tr></thead>
+      <tbody>
+      {% for r in variances %}
+      <tr><td><a href="/c/{{ company.code }}/previsionnel/ecarts/{{ r.id }}">{{ ml(r.month, True) }}</a></td><td class="small">{{ (r.reference or '')[:60] }}</td>
+        <td class="text-nowrap">{{ r.created_at | dtlocal }}</td><td><a class="small" href="/c/{{ company.code }}/previsionnel/ecarts/{{ r.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i></a></td></tr>
+      {% else %}<tr><td colspan="4" class="text-muted small">Aucune analyse — voir l'onglet Écarts.</td></tr>{% endfor %}
+      </tbody></table></div>
+  </div>
+</div>
+{% endblock %}
