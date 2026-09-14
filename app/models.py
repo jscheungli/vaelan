@@ -686,8 +686,10 @@ class LpForecast(SQLModel, table=True):
     __tablename__ = "lp_forecasts"
     id: Optional[int] = Field(default=None, primary_key=True)
     company_code: str = Field(index=True)
-    kind: str = "previsionnel"                     # previsionnel / simulation
+    kind: str = "previsionnel"                     # previsionnel / variante / simulation
     label: str = ""
+    set_id: Optional[int] = Field(default=None, index=True)   # jeu de scénarios : id du prévisionnel principal
+    scenario: Optional[str] = None                 # libellé du scénario (ex. « With Fashion Park — with shareholder contributions »)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: Optional[str] = None
     as_of: str = ""                                # dernier mois réel (AAAA-MM)

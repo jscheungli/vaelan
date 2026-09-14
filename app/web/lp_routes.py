@@ -56,10 +56,14 @@ def lp_home(request: Request, code: str, msg: str = ""):
     st = service.status(code)
     latest, res = service.latest_forecast(code)
     forecasts = service.list_forecasts(code, n=15)
+    variants = {}
+    for r in forecasts:
+        if r.set_id:
+            variants[r.id] = service.set_variants(code, r.set_id)
     variances = service.list_variances(code, n=10)
     cfg = service.get_config(code)
     months = sorted({m for d in st["actuals"]["stores"].values() for m in d}, reverse=True)[:18]
-    return templates.TemplateResponse(request, "lp_home.html", _ctx(request, company=company, st=st, latest=latest, res=res, forecasts=forecasts,
+    return templates.TemplateResponse(request, "lp_home.html", _ctx(request, company=company, st=st, latest=latest, res=res, forecasts=forecasts, variants=variants,
                                                                     variances=variances, cfg=cfg, months=months, msg=msg, **_fx()))
 
 
@@ -89,7 +93,7 @@ def lp_generate(request: Request, code: str, label: str = Form(""), horizon: str
     if redir:
         return redir
     try:
-        row = service.make_forecast(code, label=label.strip(), horizon=int(horizon) if horizon.strip() else None, user=_who(request))
+        row = service.make_forecast_set(code, label=label.strip(), horizon=int(horizon) if horizon.strip() else None, user=_who(request))
     except Exception as e:
         return RedirectResponse(f"{P.format(code=code)}?msg=Impossible de générer : {e}", status_code=303)
     return RedirectResponse(f"{P.format(code=code)}/p/{row.id}", status_code=303)
@@ -105,8 +109,10 @@ def lp_forecast_view(request: Request, code: str, fid: int):
     if not row:
         return RedirectResponse(f"{P.format(code=code)}?msg=Prévisionnel introuvable.", status_code=303)
     cfg = service.get_config(code)
+    variants = service.set_variants(code, row.set_id) if row.set_id else []
     return templates.TemplateResponse(request, "lp_forecast.html", _ctx(request, company=company, row=row, res=res, cfg=cfg, chart=json.dumps(_chart_data(res)),
-                                                                        rows=engine.pl_rows(res), ov_text=engine.describe_overrides(res.get("overrides") or {}), **_fx()))
+                                                                        rows=engine.pl_rows(res), ov_text=engine.describe_overrides(res.get("overrides") or {}),
+                                                                        variants=variants, **_fx()))
 
 
 def _chart_data(res: dict) -> dict:
@@ -123,8 +129,8 @@ def lp_forecast_pdf(request: Request, code: str, fid: int):
     row, res = service.get_forecast(code, fid, with_pdf=True)
     if not row:
         return Response("Introuvable", status_code=404)
-    pdf = row.pdf or report.forecast_pdf(service.get_config(code), res, kind=row.kind)
-    name = f"{row.created_at:%Y%m%d} LP {'Previsionnel' if row.kind == 'previsionnel' else 'Simulation'} tresorerie {row.as_of} n{row.id}.pdf"
+    pdf = row.pdf or report.forecast_pdf(service.get_config(code), res, kind="previsionnel" if row.kind != "simulation" else "simulation")
+    name = f"{row.created_at:%Y%m%d} LP {'Cash flow forecast' if row.kind == 'previsionnel' else ('Scenario' if row.kind == 'variante' else 'Simulation')} {row.as_of} n{row.id}.pdf"
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{name}"'})
 
 

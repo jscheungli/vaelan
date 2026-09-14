@@ -405,11 +405,22 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
                     if outstanding_by[ent] <= 0 or avail <= 0:
                         continue
                     rep = min(outstanding_by[ent], math.floor(avail / rnd) * rnd)
-                    if rep > 0:
-                        plan.append({"month": m, "entity": ent, "amount": -rep, "type": "repayment", "reason": "cash position restored"})
-                        outstanding_by[ent] -= rep
-                        cash_g -= rep
-                        avail -= rep
+                    if rep <= 0:
+                        continue
+                    # pas d'aller-retour : on ne rembourse que si, une fois remboursé, la trésorerie reste au-dessus
+                    # du minimum pendant les 6 mois suivants (sinon on attend de pouvoir rembourser pour de bon)
+                    look, ok = cash_g - rep, True
+                    for j in range(i + 1, min(i + 7, horizon)):
+                        look += sum(res_ent[e]["delta"][j] for e in entities)
+                        if look < floor:
+                            ok = False
+                            break
+                    if not ok:
+                        continue
+                    plan.append({"month": m, "entity": ent, "amount": -rep, "type": "repayment", "reason": "cash position restored"})
+                    outstanding_by[ent] -= rep
+                    cash_g -= rep
+                    avail -= rep
         for x in plan:
             r = res_ent[x["entity"]]
             i = months.index(x["month"])
@@ -443,7 +454,18 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
                            "text": f"{mlabel_en(x['month'], True)}: {x['loan']} ({x['entity']}) — {-x['amount']/1000:,.0f} k to repay"
                                    + (f"; renewal expected in {mlabel_en(x['renewal'], True)}." if x.get("renewal") else "; no renewal assumed.")})
     conclusion = []
-    if plan:
+    if not g.get("auto_funding", True) or ov.get("no_funding"):
+        if low_g:
+            short = floor - grp["cash"][imin]
+            reason = next((x for x in loan_events if x["type"] == "repayment" and x["month"] in (months[imin], month_add(months[imin], 1), month_add(months[imin], -1))), None)
+            conclusion.append(f"Without shareholder contributions, group cash falls below the {floor/1000:,.0f} k minimum for {len(low_g)} month(s): "
+                              f"low point {grp['cash'][imin]/1000:,.0f} k in {mlabel_en(months[imin], True)}, i.e. {short/1000:,.0f} k short of the minimum"
+                              + (f" — the {reason['loan']} repayment cannot be made while keeping the minimum cash position." if reason else "."))
+            conclusion.append("Months below the minimum: " + ", ".join(mlabel_en(m, True) for m in low_g) + ".")
+        else:
+            conclusion.append(f"Group cash stays above the {floor/1000:,.0f} k minimum over the whole horizon (low point {grp['cash'][imin]/1000:,.0f} k in "
+                              f"{mlabel_en(months[imin], True)}): no shareholder contribution is needed.")
+    elif plan:
         for x in plan:
             if x["type"] == "contribution":
                 conclusion.append(f"Shareholder contribution of {x['amount']/1000:,.0f} k ({partners} × {x['amount']/partners/1000:,.0f} k) in {mlabel_en(x['month'], True)} {x['reason']}.")
@@ -456,8 +478,9 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
     else:
         conclusion.append(f"No shareholder contribution needed over the horizon: group cash stays above the {floor/1000:,.0f} k minimum "
                           f"(low point {grp['cash'][imin]/1000:,.0f} k in {mlabel_en(months[imin], True)}).")
-    conclusion.append(f"Basis: minimum cash position of {floor/1000:,.0f} k, contributions in round amounts of {rnd/1000:,.0f} k ({partners} equal shares), "
-                      f"repaid as soon as the cash position allows.")
+    if g.get("auto_funding", True) and not ov.get("no_funding"):
+        conclusion.append(f"Basis: minimum cash position of {floor/1000:,.0f} k, contributions in round amounts of {rnd/1000:,.0f} k ({partners} equal shares), "
+                          f"repaid as soon as the cash position allows and no further need arises within six months.")
     n12 = min(12, horizon)
     kpis = {"cash_open": grp["opening"], "cash_min": grp["cash"][imin], "cash_min_month": months[imin], "cash_end": grp["cash"][-1],
             "revenue_12m": sum(grp["revenue"][:n12]), "ebitda_12m": sum(grp["ebitda_after_ga"][:n12]), "pat_12m": sum(grp["pat"][:n12]),
@@ -525,6 +548,8 @@ def describe_overrides(ov: dict) -> str:
             parts.append(fmt.format(float(v)))
     if ov.get("capex_scale") not in (None, "", 1, 1.0):
         parts.append(f"capital expenditure × {float(ov['capex_scale']):.2f}")
+    if ov.get("no_funding"):
+        parts.append("no shareholder contribution")
     if ov.get("loan_renew") is True:
         parts.append("all bank loans renewed")
     elif ov.get("loan_renew") is False:

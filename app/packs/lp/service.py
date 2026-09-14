@@ -140,6 +140,71 @@ def make_forecast(code: str, label: str = "", kind: str = "previsionnel", overri
     return row
 
 
+def scenario_results(cfg: dict, actuals: dict, horizon: int = None) -> List[dict]:
+    """Jeu de scénarios : sans / avec les magasins projetés (ouverture après la date d'arrêté), chacun décliné
+    « sans apport » (trous visibles) puis « avec apports » si un apport est nécessaire."""
+    as_of = engine.last_actual_month(actuals)
+    new_stores = [s["code"] for s in cfg.get("stores") or [] if s.get("active") and s.get("opened") and s["opened"] > as_of]
+    out = []
+    names = " / ".join(s["name"].split(" (")[0] for s in cfg["stores"] if s["code"] in new_stores)
+    variants = [(False, f"Without {names}"), (True, f"With {names}")] if new_stores else [(True, "Base case")]
+    for with_new, title in variants:
+        ov_base = {} if with_new else {"stores_active": {c: False for c in new_stores}}
+        with_f = engine.forecast(cfg, actuals, horizon=horizon, overrides=ov_base)
+        needs = any(x["type"] == "contribution" for x in with_f.get("funding_plan") or [])
+        if needs:
+            no_f = engine.forecast(cfg, actuals, horizon=horizon, overrides={**ov_base, "no_funding": True})
+            no_f["scenario"] = f"{title} — no shareholder contribution (cash shortfalls shown)"
+            no_f["scenario_short"] = f"{title} · no contribution"
+            out.append(no_f)
+            with_f["scenario"] = f"{title} — with the shareholder contributions required"
+            with_f["scenario_short"] = f"{title} · with contributions"
+        else:
+            with_f["scenario"] = f"{title} — no shareholder contribution needed"
+            with_f["scenario_short"] = f"{title} · no contribution needed"
+        out.append(with_f)
+    return out
+
+
+def make_forecast_set(code: str, label: str = "", horizon: int = None, user: str = None) -> LpForecast:
+    """Génère le jeu de scénarios : une ligne par scénario (le dernier = principal, avec le PDF combiné)."""
+    cfg = get_config(code)
+    actuals = load_actuals(code)
+    results = scenario_results(cfg, actuals, horizon)
+    primary = results[-1]
+    label = label.strip() or f"Cash flow forecast at {engine.mlabel_en(primary['as_of'], True)}"
+    for r in results:
+        r["label"] = label
+    combined = report.forecast_set_pdf(cfg, results)
+    rows = []
+    with Session(_engine) as s:
+        main = LpForecast(company_code=code, kind="previsionnel", label=label, created_by=user, as_of=primary["as_of"], horizon=primary["horizon"],
+                          scenario=primary["scenario"], params=json.dumps({"config": cfg, "overrides": primary.get("overrides") or {}}, ensure_ascii=False),
+                          result=json.dumps(primary, ensure_ascii=False), pdf=combined, note="jeu de scénarios")
+        s.add(main)
+        s.commit()
+        s.refresh(main)
+        main.set_id = main.id
+        s.add(main)
+        for r in results[:-1]:
+            v = LpForecast(company_code=code, kind="variante", label=label, created_by=user, as_of=r["as_of"], horizon=r["horizon"], set_id=main.id,
+                           scenario=r["scenario"], params=json.dumps({"config": cfg, "overrides": r.get("overrides") or {}}, ensure_ascii=False),
+                           result=json.dumps(r, ensure_ascii=False), pdf=report.forecast_pdf(cfg, r, kind="previsionnel"))
+            s.add(v)
+        s.commit()
+        s.refresh(main)
+        main.pdf = None
+        return main
+
+
+def set_variants(code: str, set_id: int) -> List[LpForecast]:
+    with Session(_engine) as s:
+        rows = s.exec(select(LpForecast).where(LpForecast.company_code == code, LpForecast.set_id == set_id).order_by(LpForecast.id)).all()
+        for r in rows:
+            r.pdf = None
+        return sorted(rows, key=lambda r: (r.kind != "variante", r.id))   # ordre des scénarios : variantes puis principal
+
+
 def preview_forecast(code: str, overrides: dict = None, horizon: int = None) -> dict:
     return engine.forecast(get_config(code), load_actuals(code), horizon=horizon, overrides=overrides)
 
@@ -149,6 +214,8 @@ def list_forecasts(code: str = CODE, kind: str = None, n: int = 30) -> List[LpFo
         q = select(LpForecast).where(LpForecast.company_code == code)
         if kind:
             q = q.where(LpForecast.kind == kind)
+        else:
+            q = q.where(LpForecast.kind != "variante")
         rows = s.exec(q.order_by(LpForecast.id.desc()).limit(n)).all()
         for r in rows:            # ne pas trimballer les PDF dans les listes
             r.pdf = None
@@ -171,6 +238,8 @@ def delete_forecast(code: str, fid: int) -> bool:
         row = s.exec(select(LpForecast).where(LpForecast.company_code == code, LpForecast.id == fid)).first()
         if not row:
             return False
+        for v in s.exec(select(LpForecast).where(LpForecast.company_code == code, LpForecast.set_id == fid, LpForecast.id != fid)).all():
+            s.delete(v)
         s.delete(row)
         s.commit()
         return True

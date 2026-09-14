@@ -6,8 +6,13 @@
   <h1 class="h4 mb-0">{{ row.label }}</h1>
   <span class="badge text-bg-{{ 'primary' if row.kind == 'previsionnel' else 'secondary' }}">{{ row.kind }}</span>
   <span class="small text-muted">comptes arrêtés au {{ ml(res.as_of, True) }} · {{ res.horizon }} mois · établi le {{ row.created_at | dtlocal }}{% if row.created_by %} par {{ row.created_by }}{% endif %}</span>
-  <a class="btn btn-sm btn-dark ms-auto" href="/c/{{ company.code }}/previsionnel/p/{{ row.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Télécharger le PDF</a>
+  <a class="btn btn-sm btn-dark ms-auto" href="/c/{{ company.code }}/previsionnel/p/{{ row.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> {{ 'PDF — tous les scénarios' if row.kind == 'previsionnel' and row.set_id else 'Télécharger le PDF' }}</a>
 </div>
+{% if variants|length > 1 %}
+<div class="mb-3 small"><span class="text-muted">Scénarios :</span>
+  {% for v in variants %}<a class="badge rounded-pill text-decoration-none {{ 'text-bg-dark' if v.id == row.id else 'text-bg-light border' }}" href="/c/{{ company.code }}/previsionnel/p/{{ v.id }}">{{ loop.index }} · {{ v.scenario }}</a> {% endfor %}
+</div>
+{% elif row.scenario %}<div class="mb-2 small text-muted">Scénario : {{ row.scenario }}</div>{% endif %}
 {% set kp = res.kpis %}
 <div class="row g-2 mb-3">
   {% for lab, val, sub in [("Trésorerie au " ~ ml(res.as_of), k(kp.cash_open) ~ " k", res.entities.keys()|map('string')|join(' · ')),

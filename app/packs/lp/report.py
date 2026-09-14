@@ -231,10 +231,11 @@ class Pdf:
         for i, v in enumerate(values):
             x = x0 + slot * i + (slot - bw) / 2
             r = fitz.Rect(x, min(sy(v), sy(0)), x + bw, max(sy(v), sy(0)))
-            self.page.draw_rect(r, color=None, fill=NAVY if v >= 0 else RED)
+            low = v < (threshold if threshold is not None else 0) - 0.5
+            self.page.draw_rect(r, color=None, fill=RED if low else NAVY)
             lab = k(v)
             fs = 6.2 if n > 18 else 7
-            self.center(x + bw / 2, (sy(v) - 3) if v >= 0 else (sy(v) + fs + 2), lab, fs, "geb", NAVY if v >= 0 else RED)
+            self.center(x + bw / 2, (sy(v) - 3) if v >= 0 else (sy(v) + fs + 2), lab, fs, "geb", RED if low else NAVY)
             self.center(x + bw / 2, y1 + 10, ML(months[i], short_year=True).split(" ")[0], 6.2, "ge", GREY)
             if int(months[i][5:7]) == 1 or i == 0:
                 self.center(x + bw / 2, y1 + 19, months[i][:4], 6.2, "geb", GREY)
@@ -272,36 +273,27 @@ def _closing(as_of):
 
 
 # =============================================================== PRÉVISIONNEL
-def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
+def _chart_and_conclusion(pdf, cfg, res, title=None):
     g = cfg.get("general") or {}
-    branding = (g.get("branding") or "anvael") == "anvael"
-    months, H = res["months"], res["horizon"]
-    grp, ents = res["group"], res["entities"]
-    pdf = Pdf()
-    pdf.footer = _footer("Cash flow forecast" if kind == "previsionnel" else "Cash flow simulation", branding)
-    pdf.new_page()
-    title = "CASH FLOW FORECAST" if kind == "previsionnel" else "CASH FLOW SIMULATION"
-    lines = [f"{ML(months[0], True)} – {ML(months[-1], True)} ({H} months) · based on accounts closed at {_closing(res['as_of'])}",
-             f"Prepared {_now()}" + (f" · {res['label']}" if res.get("label") else "")]
-    pdf.header(title, "LA PARISIENNE — SHANGHAI (JIANZAN · LEBLANC)", lines, branding)
-
-    pdf.section("Group cash position — end of month (k RMB)")
-    pdf.bar_chart(months, grp["cash"], h=176, threshold=float(g.get("alert_group") or 0) or None)
+    if title:
+        pdf.section(title)
+    else:
+        pdf.section("Group cash position — end of month (k RMB)")
+    pdf.bar_chart(res["months"], res["group"]["cash"], h=176, threshold=float(g.get("alert_group") or 0) or None)
     ov = res.get("overrides") or {}
-    if ov and engine.describe_overrides(ov):
+    if ov and engine.describe_overrides(ov) and not res.get("scenario"):
         pdf.para("Simulation — changes versus the base case: " + engine.describe_overrides(ov) + ".", 8.5, "gei", NAVY)
     pdf.box("Conclusion — funding need", res.get("conclusion") or [])
-
-    pdf.section("Loan maturities and alerts")
-    shown = [a for a in res.get("alerts") or [] if a.get("scope") in ("group", "loan")]
+    shown = [a for a in res.get("alerts") or [] if a.get("scope") == "loan"]
     if shown:
+        pdf.section("Loan maturities")
         for a in shown:
-            col = RED if a["level"] == "danger" else (NAVY if a["level"] == "warn" else BLACK)
-            pdf.para("· " + a["text"], 9, "ge", col, indent=4)
-    else:
-        pdf.para("No alert over the horizon.", 9, "ge", GREY)
-    pdf.y += 4
+            pdf.para("· " + a["text"], 9, "ge", BLACK, indent=4)
+        pdf.y += 4
 
+
+def _assumptions(pdf, cfg, res, with_projects=True):
+    g = cfg.get("general") or {}
     pdf.section("Key assumptions — existing stores")
     rows, projects = [], []
     for code, c in res["calibration"].items():
@@ -320,9 +312,14 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
             f"{l['label']} ({l['entity']}) {mio(l['principal'])} at {pct((l.get('rate_pct') or 0)/100)}, repaid {ML(engine.month_add(l['maturity'], -int(g.get('repay_lead', 1) or 0)), True)}"
             + (f" and renewed in {ML(engine.month_add(l['maturity'], int(l.get('renew_gap') or 0)), True)} for {mio(l.get('renew_amount') or l['principal'])} (rolled every {l.get('term_months', 12)} months)" if l.get("renew") else ", not renewed") + "."
             for l in res["loans"]), 8, "ge", GREY)
+    pdf.para(f"Funding rule: minimum group cash position of {k(float(g.get('alert_group') or 0))} k; when the position falls below it, a shareholder contribution in round amounts of "
+             f"{k(float(g.get('contribution_round') or 300000))} k ({int(g.get('partners') or 3)} equal shares) is assumed, repaid as soon as the position allows "
+             "and no further need arises within six months (no back-and-forth).", 8, "ge", GREY)
+    if not with_projects:
+        return
     for code, c in projects:
         e = c["effective"]
-        pdf.ensure(230)          # le bloc projet (deux tableaux) reste entier sur une page
+        pdf.ensure(230)
         pdf.section(f"Project — {e.get('name') or code} ({config.ENTITIES.get(e.get('entity'), {}).get('latin', e.get('entity')).split(' (')[0]})")
         left = [["Opening", ML(e["opened"], True)], ["Year-1 income", f"{mio(e['runrate_annual'])} ex-VAT, projected monthly profile"
                 + (f", ramp-up from {e['ramp_start_pct']:.0f} % over {e['ramp_months']} months" if e.get("ramp_months") else "")],
@@ -339,13 +336,15 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
             erows.append(["", "", "Total cash out before opening", k(sum(x["amount"] for x in evs), True) + " k"])
             pdf.table(["Cash events", "Type", "Description", "Amount"], erows, [90, 110, 226, 66], aligns=["l", "l", "l", "r"], size=8, bold_rows=(len(erows) - 1,))
 
-    # ---- tableaux mensuels (paysage, 12 mois par page)
+
+def _monthly_tables(pdf, res, prefix=""):
+    months, H = res["months"], res["horizon"]
     rows_all = engine.pl_rows(res, with_entities=False)
     for start in range(0, H, 12):
         idx = list(range(start, min(start + 12, H)))
         pdf.finish_page()
         pdf.new_page(landscape=True, top=44)
-        pdf.text(pdf.M, pdf.y, f"Monthly forecast — {ML(months[idx[0]], True)} to {ML(months[idx[-1]], True)} (k RMB)", 10.5, "geb", NAVY)
+        pdf.text(pdf.M, pdf.y, f"{prefix}Monthly forecast — {ML(months[idx[0]], True)} to {ML(months[idx[-1]], True)} (k RMB)", 10.5, "geb", NAVY)
         pdf.y += 18
         cols = [""] + [ML(months[i], short_year=True) for i in idx] + ["Total"]
         wl = 176
@@ -360,12 +359,15 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
                 grey.append(len(trows) - 1)
         pdf.table(cols, trows, widths, size=7.2, bold_rows=bold, grey_rows=grey, zebra=True, lh=11.6)
 
-    # ---- événements et prêts, méthode
+
+def _events_and_method(pdf, cfg, res, include_plan=True):
+    g = cfg.get("general") or {}
     pdf.finish_page()
     pdf.new_page(top=50)
     pdf.section("Cash events included in the forecast")
+    evs = [x for x in res.get("events_applied") or [] if include_plan or "funding plan" not in (x.get("label") or "")]
     items = [(x["month"], x["entity"], {"capex": "Capital expenditure", "cca": "Shareholder contribution" if x["amount"] > 0 else "Shareholder repayment", "loan": "Bank loan", "interco": "Intercompany", "other": "Deposit / other"}.get(x["category"], x["category"]),
-              x["label"], x["amount"]) for x in res.get("events_applied") or []]
+              x["label"], x["amount"]) for x in evs]
     items += [(x["month"], x["entity"], "Bank loan " + x["type"], x["loan"], x["amount"]) for x in res.get("loan_schedule") or []]
     items.sort(key=lambda t: t[0])
     if items:
@@ -373,7 +375,7 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
                   [60, 40, 110, 216, 66], aligns=["l", "l", "l", "l", "r"], size=8)
     else:
         pdf.para("No cash event over the horizon.", 9, "ge", GREY)
-    pdf.para("Shareholder contributions above come from the funding plan (round amounts, equal shares); the shareholder current-account register is a module under development.", 8, "gei", GREY)
+    pdf.para("Shareholder contributions come from the funding rule (round amounts, equal shares); the shareholder current-account register is a module under development.", 8, "gei", GREY)
     pdf.y += 4
     pdf.section("Methodology (summary)")
     for t in METHOD_SHORT:
@@ -385,6 +387,70 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
              f"Head office G&A {k(res['ho_monthly'])} k per month ({res['ho_src']}), borne by JIANZAN; bank charges and platform commissions "
              f"{pct((g.get('bank_fees_pct') or 0)/100)} of income; operation taxes {pct((g.get('tax_ops_pct') or 0)/100)}; corporate income tax "
              f"{pct((g.get('cit_rate_pct') or 0)/100, 0)} of positive quarterly profit, booked and paid the month after quarter end.", 8.3, "ge", BLACK, lh=1.28)
+
+
+def _header_lines(res, H):
+    return [f"{ML(res['months'][0], True)} – {ML(res['months'][-1], True)} ({H} months) · based on accounts closed at {_closing(res['as_of'])}",
+            f"Prepared {_now()}" + (f" · {res['label']}" if res.get("label") else "")]
+
+
+def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
+    """PDF d'un scénario seul (variante ou simulation)."""
+    g = cfg.get("general") or {}
+    branding = (g.get("branding") or "anvael") == "anvael"
+    pdf = Pdf()
+    pdf.footer = _footer("Cash flow forecast" if kind == "previsionnel" else "Cash flow simulation", branding)
+    pdf.new_page()
+    title = "CASH FLOW FORECAST" if kind == "previsionnel" else "CASH FLOW SIMULATION"
+    lines = _header_lines(res, res["horizon"])
+    if res.get("scenario"):
+        lines.append(f"Scenario: {res['scenario']}")
+    res = dict(res, scenario=None)      # titre de section standard pour un scénario seul
+    pdf.header(title, "LA PARISIENNE — SHANGHAI (JIANZAN · LEBLANC)", lines, branding)
+    _chart_and_conclusion(pdf, cfg, res)
+    _assumptions(pdf, cfg, res)
+    _monthly_tables(pdf, res)
+    _events_and_method(pdf, cfg, res)
+    return pdf.bytes()
+
+
+def forecast_set_pdf(cfg: dict, results: list) -> bytes:
+    """PDF combiné : vue d'ensemble des scénarios, hypothèses communes, puis chaque scénario (graphique, conclusion, tableaux)."""
+    g = cfg.get("general") or {}
+    branding = (g.get("branding") or "anvael") == "anvael"
+    base = results[-1]
+    pdf = Pdf()
+    pdf.footer = _footer("Cash flow forecast", branding)
+    pdf.new_page()
+    pdf.header("CASH FLOW FORECAST", "LA PARISIENNE — SHANGHAI (JIANZAN · LEBLANC)", _header_lines(base, base["horizon"]), branding)
+    pdf.section("Scenarios")
+    floor = float(g.get("alert_group") or 0)
+    rows = []
+    for n, r in enumerate(results, 1):
+        kp = r["kpis"]
+        contrib = sum(x["amount"] for x in (r.get("funding_plan") or []) if x["amount"] > 0)
+        repaid = -sum(x["amount"] for x in (r.get("funding_plan") or []) if x["amount"] < 0)
+        low = sum(1 for v in r["group"]["cash"] if v < floor - 0.5)
+        first = next((x for x in (r.get("funding_plan") or []) if x["amount"] > 0), None)
+        last_rep = next((x for x in reversed(r.get("funding_plan") or []) if x["amount"] < 0), None)
+        rows.append([f"{n}", r.get("scenario_short") or r.get("scenario") or "", f"{k(kp['cash_min'])} k · {ML(kp['cash_min_month'], short_year=True)}", str(low) if low else "—",
+                     (f"{k(contrib)} k · {ML(first['month'], short_year=True)}" if contrib else "—"),
+                     (f"{k(repaid)} k · {ML(last_rep['month'], short_year=True)}" if repaid else ("—" if not contrib else "not repaid")), f"{k(kp['cash_end'])} k"])
+    pdf.table(["#", "Scenario", "Low point", "Months\nbelow min.", "Shareholder\ncontribution", "Repaid", "Cash end\nof horizon"], rows, [14, 176, 78, 44, 76, 60, 44],
+              aligns=["l", "l", "r", "r", "r", "r", "r"], size=7.6)
+    pdf.para(f"Minimum group cash position: {k(floor)} k. Scenarios without contribution show the cash shortfalls in red; scenarios with contributions show the "
+             "amounts, timing and repayment required to stay above the minimum.", 8, "ge", GREY)
+    pdf.y += 2
+    _assumptions(pdf, cfg, base)
+    for n, r in enumerate(results, 1):
+        pdf.finish_page()
+        pdf.new_page(top=50)
+        pdf.section(f"Scenario {n} — {r.get('scenario_short') or r.get('scenario') or ''}")
+        if r.get("scenario") and r.get("scenario") != r.get("scenario_short"):
+            pdf.para(r["scenario"], 8.5, "gei", GREY)
+        _chart_and_conclusion(pdf, cfg, r, title="Group cash position — end of month (k RMB)")
+        _monthly_tables(pdf, r, prefix=f"Scenario {n} — ")
+    _events_and_method(pdf, cfg, base, include_plan=False)
     return pdf.bytes()
 
 

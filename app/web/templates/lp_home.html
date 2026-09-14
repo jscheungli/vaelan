@@ -48,7 +48,7 @@
   </div></div></div>
   <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body">
     <h2 class="h6"><i class="bi bi-play-circle"></i> 2. Générer le prévisionnel</h2>
-    <p class="small text-muted mb-2">Recalibre le modèle sur l'historique importé, applique les <a href="/c/{{ company.code }}/previsionnel/hypotheses">hypothèses</a> et produit le PDF. Ensuite, chaque mois : importer le rapport, puis <a href="/c/{{ company.code }}/previsionnel/ecarts">analyser les écarts</a>.</p>
+    <p class="small text-muted mb-2">Recalibre le modèle sur l'historique importé, applique les <a href="/c/{{ company.code }}/previsionnel/hypotheses">hypothèses</a> et produit un PDF combiné : sans et avec les magasins projetés, chacun sans apport (trous en rouge) et avec les apports d'associés nécessaires. Ensuite, chaque mois : importer le rapport, puis <a href="/c/{{ company.code }}/previsionnel/ecarts">analyser les écarts</a>.</p>
     <form method="post" action="/c/{{ company.code }}/previsionnel/generer" class="d-flex gap-2 align-items-center">
       <input name="label" class="form-control form-control-sm" placeholder="Libellé (facultatif)">
       <select name="horizon" class="form-select form-select-sm" style="max-width:110px">
@@ -66,10 +66,12 @@
       <thead class="table-light"><tr class="small text-muted"><th>#</th><th>Libellé</th><th>Type</th><th>Arrêté</th><th>Établi le</th><th>Par</th><th></th></tr></thead>
       <tbody>
       {% for r in forecasts %}
-      <tr><td>{{ r.id }}</td><td><a href="/c/{{ company.code }}/previsionnel/p/{{ r.id }}">{{ r.label }}</a></td>
+      <tr><td>{{ r.id }}</td><td><a href="/c/{{ company.code }}/previsionnel/p/{{ r.id }}">{{ r.label }}</a>
+        {% if r.scenario %}<div class="small text-muted">{{ r.scenario }}</div>{% endif %}
+        {% for v in variants.get(r.id, []) if v.id != r.id %}<div class="small"><a class="text-muted" href="/c/{{ company.code }}/previsionnel/p/{{ v.id }}"><i class="bi bi-arrow-return-right"></i> {{ v.scenario }}</a></div>{% endfor %}</td>
         <td><span class="badge text-bg-{{ 'primary' if r.kind == 'previsionnel' else 'secondary' }}">{{ r.kind }}</span></td>
         <td>{{ r.as_of }} · {{ r.horizon }} m</td><td class="text-nowrap">{{ r.created_at | dtlocal }}</td><td class="small">{{ r.created_by or '' }}</td>
-        <td class="text-nowrap"><a class="small" href="/c/{{ company.code }}/previsionnel/p/{{ r.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+        <td class="text-nowrap"><a class="small" href="/c/{{ company.code }}/previsionnel/p/{{ r.id }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> PDF{{ ' (tous scénarios)' if r.set_id }}</a>
           <form method="post" action="/c/{{ company.code }}/previsionnel/p/{{ r.id }}/supprimer" class="d-inline" onsubmit="return confirm('Supprimer ce prévisionnel ?')"><button class="btn btn-link btn-sm text-danger p-0 ms-2"><i class="bi bi-trash"></i></button></form></td></tr>
       {% else %}<tr><td colspan="7" class="text-muted small">Aucun — importez l'historique puis générez.</td></tr>{% endfor %}
       </tbody></table></div>

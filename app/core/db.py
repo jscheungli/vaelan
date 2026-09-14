@@ -47,6 +47,8 @@ _COLUMN_ADDS = [
     "ALTER TABLE tiers_matches ADD COLUMN IF NOT EXISTS candidates VARCHAR",
     "ALTER TABLE lp_store_months ADD COLUMN IF NOT EXISTS profit_before_tax FLOAT DEFAULT 0",
     "ALTER TABLE lp_store_months ADD COLUMN IF NOT EXISTS profit_after_tax FLOAT DEFAULT 0",
+    "ALTER TABLE lp_forecasts ADD COLUMN IF NOT EXISTS set_id INTEGER",
+    "ALTER TABLE lp_forecasts ADD COLUMN IF NOT EXISTS scenario VARCHAR",
 ]
 
 
