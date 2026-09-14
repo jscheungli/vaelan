@@ -710,6 +710,22 @@ def owine_lmb_draft(request: Request, code: str, name: str):
     return RedirectResponse(f"/c/{code}/owine/lmb?msg={msg}#{name}", status_code=303)
 
 
+@router.post("/c/{code}/owine/commandes/{name}/shopify-sync")
+def owine_order_shopify_sync(request: Request, code: str, name: str):
+    """Relit cette seule commande dans Shopify (client choisi après coup, adresse corrigée, statuts) sans attendre la synchronisation globale."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name)
+    if not o:
+        return RedirectResponse(f"/c/{code}/owine/commandes", status_code=303)
+    try:
+        msg = f"{name} : {service.sync_order(o)}"
+    except Exception as e:
+        msg = f"{name} : synchronisation Shopify impossible — {e}"
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={msg}", status_code=303)
+
+
 @router.post("/c/{code}/owine/commandes/{name}/shopify-traitee")
 def owine_order_shopify_fulfill(request: Request, code: str, name: str):
     """Marque la commande comme traitée dans Shopify (n° Chronopost des cartons), sans e-mail Shopify au client."""

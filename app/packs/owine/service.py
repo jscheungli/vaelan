@@ -389,13 +389,20 @@ def shopify_inventory() -> Dict[str, dict]:
     return out
 
 
-ORDER_Q = """query($first:Int!,$after:String){ orders(first:$first, after:$after, sortKey:CREATED_AT, reverse:true) { pageInfo{hasNextPage endCursor} edges{ node{
-  id name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus note tags
+ORDER_NODE = """id name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus note tags
   shippingLine{ title } totalPriceSet{shopMoney{amount}}
   customer{ displayName email phone } shippingAddress{ name company address1 address2 zip city countryCodeV2 phone }
   lineItems(first:50){ edges{ node{ title quantity sku originalUnitPriceSet{shopMoney{amount}} discountedUnitPriceAfterAllDiscountsSet{shopMoney{amount}} variant{ price inventoryItem{ unitCost{amount} } } } } }
-  fulfillments{ status trackingInfo{ number company } }
-} } } }"""
+  fulfillments{ status trackingInfo{ number company } }"""
+ORDER_Q = "query($first:Int!,$after:String){ orders(first:$first, after:$after, sortKey:CREATED_AT, reverse:true) { pageInfo{hasNextPage endCursor} edges{ node{ " + ORDER_NODE + " } } } }"
+ONE_ORDER_Q = "query($id:ID!){ order(id:$id) { " + ORDER_NODE + " } }"
+ORDER_BY_NAME_Q = "query($q:String!){ orders(first:5, query:$q) { edges{ node{ " + ORDER_NODE + " } } } }"
+
+# champs « en-tête » (client, adresse, livraison) rafraîchis par le bouton « Synchroniser avec Shopify » quel que soit l'avancement dans Vaelan
+ORDER_HEAD = ("customer", "email", "phone", "company", "address1", "address2", "zip", "city", "country", "shipping_title", "total")
+FIELD_LABELS = {"customer": "nom", "email": "e-mail", "phone": "téléphone", "company": "société", "address1": "adresse", "address2": "complément d'adresse", "zip": "code postal",
+                "city": "ville", "country": "pays", "shipping_title": "mode de livraison Shopify", "total": "total", "note": "note", "financial_status": "statut de paiement",
+                "fulfillment_status": "statut de traitement Shopify", "lines": "lignes", "status": "statut Vaelan", "mode": "mode d'expédition"}
 
 
 def _merge_line_prices(old_json: str, new_lines: List[dict]) -> str:
@@ -414,6 +421,47 @@ def _merge_line_prices(old_json: str, new_lines: List[dict]) -> str:
     return json.dumps(old, ensure_ascii=False)
 
 
+def _order_payload(o: dict, imap: Dict[str, OwItem]) -> Tuple[dict, List[dict]]:
+    """Nœud commande Shopify (ORDER_NODE) → (champs OwOrder, lignes)."""
+    sa = o.get("shippingAddress") or {}
+    cu = o.get("customer") or {}
+    lines = []
+    for e in o["lineItems"]["edges"]:
+        li = e["node"]; v = li.get("variant") or {}
+        sku = (li.get("sku") or "").strip()
+        cost = float(((v.get("inventoryItem") or {}).get("unitCost") or {}).get("amount") or 0) or (imap[sku].cost if sku in imap and imap[sku].cost else None)
+        orig = float(((li.get("originalUnitPriceSet") or {}).get("shopMoney") or {}).get("amount") or 0) or float(v.get("price") or 0)    # prix catalogue au jour de la commande
+        netp = float(((li.get("discountedUnitPriceAfterAllDiscountsSet") or {}).get("shopMoney") or {}).get("amount") or 0)                # prix réellement encaissé (toutes remises)
+        lines.append({"sku": sku, "title": li["title"], "qty": int(li["quantity"]), "price": orig, "net": netp, "cost": cost})
+    fields = dict(shopify_id=o["id"], created_at=datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).replace(tzinfo=None),
+                  customer=sa.get("name") or cu.get("displayName"), email=cu.get("email"), phone=sa.get("phone") or cu.get("phone"), company=sa.get("company"),
+                  address1=sa.get("address1"), address2=sa.get("address2"), zip=sa.get("zip"), city=sa.get("city"), country=sa.get("countryCodeV2") or "FR",
+                  shipping_title=(o.get("shippingLine") or {}).get("title"), financial_status=o.get("displayFinancialStatus"), fulfillment_status=o.get("displayFulfillmentStatus"),
+                  total=float(o["totalPriceSet"]["shopMoney"]["amount"]), lines=json.dumps(lines, ensure_ascii=False), note=o.get("note"))
+    return fields, lines
+
+
+def _apply_shopify_order(existing: OwOrder, o: dict, fields: dict, lines: List[dict], refresh_head: bool = False) -> None:
+    """Reporte un nœud Shopify sur une commande existante.
+    « À traiter » : tout est repris de Shopify. Ensuite : statuts Shopify et prix des lignes seulement (les cartons sont posés sur les lignes de Vaelan),
+    sauf `refresh_head` (bouton de la commande) qui reprend aussi client, adresse, livraison et total ; la note n'est remplacée que si Shopify en porte une."""
+    if existing.status == "a_traiter":
+        for k, v in fields.items():
+            setattr(existing, k, v)
+        existing.mode = existing.mode if existing.mode != "manuel" else mode_of(fields["shipping_title"], fields["zip"])
+    else:
+        existing.financial_status, existing.fulfillment_status = fields["financial_status"], fields["fulfillment_status"]
+        existing.lines = _merge_line_prices(existing.lines, lines)   # prix historiques (catalogue du jour, net après remises) rafraîchis sur les commandes déjà traitées
+        if refresh_head:
+            for k in ORDER_HEAD:
+                setattr(existing, k, fields[k])
+            if fields.get("note"):
+                existing.note = fields["note"]
+            existing.mode = existing.mode if existing.mode != "manuel" else mode_of(fields["shipping_title"], fields["zip"])
+    if o.get("cancelledAt") and existing.status in ("a_traiter", "cartons"):
+        existing.status = "annulee"
+
+
 def sync_orders(log=None, max_orders: int = 500) -> dict:
     """Commandes Shopify → OwOrder (création ; mise à jour des statuts Shopify, adresse et lignes tant que la commande est « à traiter »)."""
     log = log or (lambda m: None)
@@ -423,32 +471,10 @@ def sync_orders(log=None, max_orders: int = 500) -> dict:
     imap = item_map()
     created, updated = 0, 0
     for o in c.pages(ORDER_Q, "orders", first=50)[:max_orders]:
-        sa = o.get("shippingAddress") or {}
-        cu = o.get("customer") or {}
-        lines = []
-        for e in o["lineItems"]["edges"]:
-            li = e["node"]; v = li.get("variant") or {}
-            sku = (li.get("sku") or "").strip()
-            cost = float(((v.get("inventoryItem") or {}).get("unitCost") or {}).get("amount") or 0) or (imap[sku].cost if sku in imap and imap[sku].cost else None)
-            orig = float(((li.get("originalUnitPriceSet") or {}).get("shopMoney") or {}).get("amount") or 0) or float(v.get("price") or 0)    # prix catalogue au jour de la commande
-            netp = float(((li.get("discountedUnitPriceAfterAllDiscountsSet") or {}).get("shopMoney") or {}).get("amount") or 0)                # prix réellement encaissé (toutes remises)
-            lines.append({"sku": sku, "title": li["title"], "qty": int(li["quantity"]), "price": orig, "net": netp, "cost": cost})
+        fields, lines = _order_payload(o, imap)
         existing = get_order(o["name"].lstrip("#"))
-        fields = dict(shopify_id=o["id"], created_at=datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).replace(tzinfo=None),
-                      customer=sa.get("name") or cu.get("displayName"), email=cu.get("email"), phone=sa.get("phone") or cu.get("phone"), company=sa.get("company"),
-                      address1=sa.get("address1"), address2=sa.get("address2"), zip=sa.get("zip"), city=sa.get("city"), country=sa.get("countryCodeV2") or "FR",
-                      shipping_title=(o.get("shippingLine") or {}).get("title"), financial_status=o.get("displayFinancialStatus"), fulfillment_status=o.get("displayFulfillmentStatus"),
-                      total=float(o["totalPriceSet"]["shopMoney"]["amount"]), lines=json.dumps(lines, ensure_ascii=False), note=o.get("note"))
         if existing:
-            if existing.status == "a_traiter":
-                for k, v in fields.items():
-                    setattr(existing, k, v)
-                existing.mode = existing.mode if existing.mode != "manuel" else mode_of(fields["shipping_title"], fields["zip"])
-            else:
-                existing.financial_status, existing.fulfillment_status = fields["financial_status"], fields["fulfillment_status"]
-                existing.lines = _merge_line_prices(existing.lines, lines)   # prix historiques (catalogue du jour, net après remises) rafraîchis sur les commandes déjà traitées
-            if o.get("cancelledAt") and existing.status in ("a_traiter", "cartons"):
-                existing.status = "annulee"
+            _apply_shopify_order(existing, o, fields, lines)
             save_order(existing)
             updated += 1
         else:
@@ -462,6 +488,38 @@ def sync_orders(log=None, max_orders: int = 500) -> dict:
             created += 1
     log(f"commandes Shopify : {created} créée(s), {updated} mise(s) à jour")
     return {"created": created, "updated": updated}
+
+
+def fetch_shopify_order(o: OwOrder) -> Optional[dict]:
+    """Relit cette seule commande dans Shopify : par identifiant global, sinon par nom (commande importée avant que l'identifiant ne soit stocké)."""
+    c = _shopify()
+    if not c:
+        raise RuntimeError("Shopify non configuré pour OWINE")
+    node = None
+    if o.shopify_id:
+        node = (c.gql(ONE_ORDER_Q, {"id": o.shopify_id}) or {}).get("order")
+    if not node:
+        edges = ((c.gql(ORDER_BY_NAME_Q, {"q": f"name:{o.name}"}) or {}).get("orders") or {}).get("edges") or []
+        node = next((e["node"] for e in edges if (e["node"].get("name") or "").lstrip("#") == o.name), None)
+    return node
+
+
+def sync_order(o: OwOrder) -> str:
+    """Bouton « Synchroniser avec Shopify » d'une commande : relit cette seule commande et rafraîchit client, adresse, livraison, statuts et note
+    sans attendre la synchronisation globale (client choisi après coup dans Shopify, adresse corrigée…). Renvoie ce qui a changé, en clair."""
+    node = fetch_shopify_order(o)
+    if not node:
+        raise RuntimeError("commande introuvable dans Shopify")
+    fields, lines = _order_payload(node, item_map())
+    watched = [k for k in fields if k not in ("shopify_id", "created_at")] + ["status", "mode"]
+    snap = lambda k: (json.loads(getattr(o, k) or "[]") if k == "lines" else getattr(o, k))
+    before = {k: snap(k) for k in watched}
+    _apply_shopify_order(o, node, fields, lines, refresh_head=True)
+    save_order(o)
+    changed = [FIELD_LABELS.get(k, k) for k in watched if before[k] != snap(k)]
+    if not changed:
+        return "synchronisée avec Shopify, aucune différence."
+    return "synchronisée avec Shopify — mis à jour : " + ", ".join(changed) + "."
 
 
 # ================================================================== cycle de vie d'une commande

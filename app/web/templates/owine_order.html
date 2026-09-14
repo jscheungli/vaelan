@@ -5,10 +5,11 @@
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
   <h1 class="h4 mb-0">{{ o.name }}</h1><span class="badge text-bg-{{ status_labels[o.status][1] }} fs-6">{{ status_labels[o.status][0] }}</span>
   <span class="small text-muted">{{ o.created_at.strftime('%d/%m/%Y') if o.created_at else '' }} · {{ eur(o.total) }} · {{ (o.financial_status or '')|lower }}{% if o.shipping_title %} · Shopify : {{ o.shipping_title }}{% endif %}</span>
+  {% if o.source == 'shopify' %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/shopify-sync" class="d-inline"><button class="btn btn-sm btn-outline-secondary py-0" title="Relire cette commande dans Shopify : client, adresse, livraison, statuts, note (et lignes tant qu'elle est à traiter)"><i class="bi bi-arrow-repeat"></i> Synchroniser avec Shopify</button></form>{% endif %}
   {% if o.status == 'attente_reception' %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/reception" class="ms-auto"><button class="btn btn-sm btn-success"><i class="bi bi-check2"></i> Réception confirmée par le client</button></form>
   {% elif o.status == 'a_facturer' %}<form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/cloturer" class="ms-auto"><button class="btn btn-sm btn-success" onclick="return confirm('La facture est validée dans Pennylane ?')"><i class="bi bi-receipt"></i> Facture validée : clôturer</button></form>{% endif %}
 </div>
-{% if msg %}<div class="alert alert-{{ 'warning' if 'incompl' in msg or 'pas au bon' in msg else 'success' }} py-2 small">{{ msg }}</div>{% endif %}
+{% if msg %}<div class="alert alert-{{ 'warning' if 'incompl' in msg or 'pas au bon' in msg or 'impossible' in msg else 'success' }} py-2 small">{{ msg }}</div>{% endif %}
 {% set step = {'a_traiter': 1, 'cartons': 2, 'etiquettes': 3, 'envoye': 4, 'attente_reception': 4, 'a_facturer': 5, 'cloturee': 6, 'annulee': 0}[o.status] %}
 
 <div class="row g-3">
