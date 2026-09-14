@@ -1,0 +1,458 @@
+[
+ {
+  "date": "2025-03-10",
+  "recu": "2025-03-10",
+  "fournisseur": "PIERRE YVES COLIN MOREY",
+  "facture": "250890",
+  "pl_id": 1826988305,
+  "lignes": [
+   [
+    "PYCSTAVXXXBB22",
+    12,
+    23
+   ],
+   [
+    "PYCSTAPCHPBB22",
+    12,
+    37
+   ],
+   [
+    "PYCCSMPCNVBB22",
+    30,
+    62
+   ],
+   [
+    "PYCBAMGXXXBB22",
+    6,
+    410
+   ],
+   [
+    "PYCMRCGXXXBB20",
+    2,
+    850
+   ]
+  ]
+ },
+ {
+  "date": "2025-03-10",
+  "recu": "2025-03-10",
+  "fournisseur": "CAROLINE MOREY (PYCM)",
+  "facture": "250889",
+  "pl_id": 1826789785,
+  "lignes": [
+   [
+    "CAMCSMPLCGBB22",
+    6,
+    58
+   ],
+   [
+    "CAMCSMPCHMBB22",
+    12,
+    62
+   ],
+   [
+    "CAMCSMPVRGBB22",
+    12,
+    62
+   ],
+   [
+    "CAMCSMPCAIBB22",
+    6,
+    85
+   ],
+   [
+    "CAMCRBGXXXBB22",
+    6,
+    340
+   ]
+  ]
+ },
+ {
+  "date": "2025-03-10",
+  "recu": "2025-03-10",
+  "fournisseur": "DOMAINE HUBERT ET LAURENT LIGNIER",
+  "facture": "2425443",
+  "pl_id": 1827020089,
+  "lignes": [
+   [
+    "HBLCBMPVIVRB21",
+    6,
+    51
+   ],
+   [
+    "HBLNSGVPSTRB21",
+    12,
+    40
+   ],
+   [
+    "HBLGECPACBRM19",
+    3,
+    228
+   ],
+   [
+    "HBLCBMVLBSRB22",
+    18,
+    53
+   ],
+   [
+    "HBLCHCGXXXRB22",
+    6,
+    198
+   ],
+   [
+    "HBLCLRGXXXRB22",
+    12,
+    253
+   ],
+   [
+    "HBLGECVSEVRB22",
+    30,
+    40
+   ],
+   [
+    "HBLMSDPLARRB22",
+    6,
+    68
+   ],
+   [
+    "HBLMSDPCFFRB22",
+    6,
+    68
+   ],
+   [
+    "HBLMSDVXXXRB22",
+    12,
+    36
+   ],
+   [
+    "HBLNSGVPSTRB22",
+    12,
+    40
+   ],
+   [
+    "HBLPMDVENBRB22",
+    18,
+    40
+   ]
+  ]
+ },
+ {
+  "date": "2025-03-10",
+  "recu": "2025-03-10",
+  "fournisseur": "DOMAINE BACHELET-MONNOT",
+  "facture": "24250196 (réémise 25260019 le 09/09/2025)",
+  "pl_id": 1826993978,
+  "lignes": [
+   [
+    "BAMPUMVXXXBB22",
+    24,
+    38
+   ],
+   [
+    "BAMBAMGXXXBB22",
+    3,
+    270
+   ],
+   [
+    "BAMSTNVLPDRB22",
+    18,
+    18
+   ]
+  ]
+ },
+ {
+  "date": "2025-03-10",
+  "recu": "2025-03-10",
+  "fournisseur": "DOMAINE JEAN VAUDOISEY",
+  "facture": "20250010",
+  "pl_id": 1826957856,
+  "lignes": [
+   [
+    "VDSPMDVXXXRB23",
+    30,
+    19.5
+   ],
+   [
+    "VDSVLNVXXXRB23",
+    36,
+    18.5
+   ],
+   [
+    "VDSMSTVCRBBB23",
+    36,
+    22
+   ]
+  ]
+ },
+ {
+  "date": "2025-03-14",
+  "recu": "2025-03-14",
+  "fournisseur": "THIERRY PILLOT",
+  "facture": "2024028",
+  "pl_id": 1829160412,
+  "lignes": [
+   [
+    "THPBAMGXXXBB22",
+    3,
+    360
+   ],
+   [
+    "THPMSTPPRSBB22",
+    6,
+    85
+   ],
+   [
+    "THPMSTVNRVBB22",
+    66,
+    48
+   ]
+  ]
+ },
+ {
+  "date": "2025-03-14",
+  "recu": "2025-03-14",
+  "fournisseur": "DOMAINE PAUL PILLOT",
+  "facture": "125275",
+  "pl_id": 1829160411,
+  "lignes": [
+   [
+    "PAPCSMPLCGBB22",
+    12,
+    54
+   ],
+   [
+    "PAPCSMVXXXBB22",
+    6,
+    35
+   ],
+   [
+    "PAPCSMPCSJRB22",
+    6,
+    45
+   ],
+   [
+    "PAPSTNVVIVRB22",
+    30,
+    20
+   ],
+   [
+    "PAPBPNRXXXRB22",
+    60,
+    14
+   ]
+  ]
+ },
+ {
+  "date": "2025-05-05",
+  "recu": "2025-05-05",
+  "fournisseur": "MICHEL MALLARD ET FILS",
+  "facture": "250476",
+  "pl_id": 2031851878,
+  "lignes": [
+   [
+    "MIMLDXVLCRRB22",
+    30,
+    19,
+    "MALLARD Ladoix Le Clos Royer rouge 2022"
+   ],
+   [
+    "MIMALCVLCRRB20",
+    30,
+    23,
+    "MALLARD Aloxe-Corton rouge 2022"
+   ]
+  ]
+ },
+ {
+  "date": "2025-05-05",
+  "recu": "2025-05-05",
+  "fournisseur": "DOMAINE PAUL PILLOT",
+  "facture": "125299",
+  "pl_id": 4613241225,
+  "lignes": [
+   [
+    "PAPBCHRXXXBB23",
+    36,
+    14,
+    "PAUL PILLOT Bourgogne Chardonnay blanc 2023"
+   ]
+  ]
+ },
+ {
+  "date": "2025-05-20",
+  "recu": "2025-05-05",
+  "fournisseur": "FRANCOISE ET DENIS CLAIR ET FILS",
+  "facture": "25000381",
+  "pl_id": 2231395004,
+  "lignes": [
+   [
+    "FDCSTAVXXXBB23",
+    30,
+    17,
+    "CLAIR Saint-Aubin blanc 2023"
+   ],
+   [
+    "FDCHCBRXXXBB23",
+    30,
+    12.5,
+    "CLAIR Bourgogne Hautes Côtes de Beaune blanc 2023"
+   ],
+   [
+    "FDCSTAPSRDBB23",
+    30,
+    24,
+    "CLAIR Saint-Aubin 1er cru Sous Roche Dumay blanc 2023"
+   ],
+   [
+    "FDCSTNVCGERB22",
+    30,
+    14.5,
+    "CLAIR Santenay Clos Genet rouge 2022"
+   ],
+   [
+    "FDCSTNVCCORB22",
+    30,
+    20,
+    "CLAIR Santenay 1er cru Clos de la Comme rouge 2022"
+   ]
+  ]
+ },
+ {
+  "date": "2025-05-06",
+  "recu": "2025-05-07",
+  "fournisseur": "LECHENEAUT PERE ET FILS",
+  "facture": "24250260",
+  "pl_id": 2031851872,
+  "lignes": [
+   [
+    "LCNBPNRXXXRB23",
+    30,
+    13,
+    "LECHENEAUT Bourgogne Pinot Noir rouge 2023"
+   ],
+   [
+    "LCNMLSVLSARB23",
+    30,
+    19.5,
+    "LECHENEAUT Marsannay La Côte Les Sampagny rouge 2023"
+   ],
+   [
+    "LCNGECVXXXRB23",
+    30,
+    27.8,
+    "LECHENEAUT Gevrey-Chambertin rouge 2023"
+   ]
+  ]
+ },
+ {
+  "date": "2025-05-07",
+  "recu": "2025-07-07",
+  "fournisseur": "DOMAINE BACHELET-MONNOT",
+  "facture": "24250205",
+  "pl_id": 2099444857,
+  "lignes": [
+   [
+    "BAMMRGPLFUBB23",
+    36,
+    21,
+    "BACHELET Maranges 1er cru La Fussière blanc 2023"
+   ],
+   [
+    "BAMMRGPLFURB23",
+    36,
+    19,
+    "BACHELET Maranges 1er cru La Fussière rouge 2023"
+   ]
+  ]
+ },
+ {
+  "date": "2026-03-03",
+  "recu": "2026-03-12",
+  "fournisseur": "PIERRE YVES COLIN MOREY",
+  "facture": "260756 (proforma)",
+  "pl_id": 4484880543,
+  "lignes": [
+   [
+    "DPYCM-SA-B23",
+    6,
+    23,
+    "PYCM Saint-Aubin blanc 2023"
+   ],
+   [
+    "DPYCM-SA1CC-B23",
+    36,
+    37,
+    "PYCM Saint-Aubin 1er cru Champlots blanc 2023"
+   ],
+   [
+    "DPYCM-CM1CC-B23",
+    6,
+    65,
+    "PYCM Chassagne-Montrachet 1er cru Maltroie blanc 2023"
+   ],
+   [
+    "DPYCM-CM1CCC-B23",
+    60,
+    65,
+    "PYCM Chassagne-Montrachet 1er cru Chenevottes blanc 2023"
+   ],
+   [
+    "DPYCM-CM1MO-B23",
+    12,
+    65,
+    "PYCM Chassagne-Montrachet 1er cru Morgeot blanc 2023"
+   ],
+   [
+    "DPYCM-CCGC-B23",
+    3,
+    195,
+    "PYCM Corton-Charlemagne grand cru blanc 2023"
+   ],
+   [
+    "DPYCM-BM-B23",
+    3,
+    410,
+    "PYCM Bâtard-Montrachet grand cru blanc 2023"
+   ],
+   [
+    "DPYCM-CM1B-R23",
+    6,
+    48,
+    "PYCM Chassagne-Montrachet 1er cru La Boudriotte rouge 2023"
+   ]
+  ]
+ },
+ {
+  "date": "2026-03-03",
+  "recu": "2026-03-12",
+  "fournisseur": "CAROLINE MOREY (PYCM)",
+  "facture": "260757 (offre, saisie « 2023 »)",
+  "pl_id": 4484880544,
+  "lignes": [
+   [
+    "DCM-CMCV-B23",
+    12,
+    40,
+    "CAROLINE Chassagne-Montrachet Chambrées blanc 2023"
+   ],
+   [
+    "CAMCSMPCHMBB23",
+    30,
+    62,
+    "CAROLINE Chassagne-Montrachet 1er cru Les Chaumées blanc 2023"
+   ],
+   [
+    "DCM-CM1CV-B23",
+    24,
+    62,
+    "CAROLINE Chassagne-Montrachet 1er cru Vergers blanc 2023"
+   ],
+   [
+    "DCM-SV-R23",
+    24,
+    19,
+    "CAROLINE Santenay rouge 2023"
+   ]
+  ]
+ }
+]
