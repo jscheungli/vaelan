@@ -123,7 +123,7 @@ def _order_ctx(request, company, o, msg=""):
     return _base(request, company, o=o, lines=lines, cartons=cs, carton_lines=service.carton_lines, proposal=proposal, sheet=sheet, msg=msg, editor=json.dumps(editor, ensure_ascii=False),
                  missing=docs.missing_vars(o, cs) if cs else [], invoice=invoice,
                  email_alix=docs.email_alix(o, cs) if cs else None, email_client=docs.email_client(o, cs) if cs else None,
-                 gmail_ok=gmail_imap.configured(CODE), tasks=[t for t in service.tasks("open") if t.ref == o.name], moves=service.moves(ref=o.name))
+                 tasks=[t for t in service.tasks("open") if t.ref == o.name], moves=service.moves(ref=o.name))
 
 
 @router.get("/c/{code}/owine/commandes/{name}", response_class=HTMLResponse)
@@ -299,7 +299,7 @@ async def owine_order_labels(request: Request, code: str, name: str):
 
 
 def _store_labels(o, files):
-    """PDF d'étiquettes stockés en base (Setting) pour les documents et brouillons."""
+    """PDF d'étiquettes stockés en base (Setting) pour les documents et les e-mails."""
     import base64
     cs = service.cartons(o.id)
     by_num = {c.tracking: c.ref for c in cs if c.tracking}
@@ -433,22 +433,6 @@ def owine_order_label(request: Request, code: str, name: str, idx: int):
         return Response("Étiquette introuvable", status_code=404)
     n, d = labels[idx]
     return Response(d, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{n.encode("ascii", "ignore").decode()}"'})
-
-
-@router.post("/c/{code}/owine/commandes/{name}/brouillons")
-def owine_order_drafts(request: Request, code: str, name: str):
-    company, redir = _guard(request, code)
-    if redir:
-        return redir
-    o = service.get_order(name); cs = service.cartons(o.id)
-    pl = docs.packing_list_pdf(o, cs); xl = docs.alix_xlsx(o, cs); labels = _labels(o)
-    ea, ec = docs.email_alix(o, cs), docs.email_client(o, cs)
-    logo = [("logo", open(docs.LOGO, "rb").read(), "image/png")]
-    att_alix = [(f"Détail {o.name}.pdf", pl, "application/pdf"), (f"{o.name}.xlsx", xl, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] + [(n, d, "application/pdf") for n, d in labels]
-    ok1, m1 = gmail_imap.create_draft(CODE, ea["to"], ea["subject"], ea["body"] + "\n\n" + _signature(), cc=ea["cc"], attachments=att_alix, html=docs.email_alix_html(o, cs), inline=logo)
-    att_cli = [(f"Détail {o.name}.pdf", pl, "application/pdf")] + [(n, d, "application/pdf") for n, d in labels]
-    ok2, m2 = gmail_imap.create_draft(CODE, ec["to"], ec["subject"], ec["body"] + "\n\n" + _signature(), cc=ec["cc"], attachments=att_cli, html=docs.email_client_html(o, cs), inline=logo)
-    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Brouillon Alix : {m1} · brouillon client : {m2}", status_code=303)
 
 
 def _signature() -> str:

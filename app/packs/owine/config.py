@@ -45,12 +45,12 @@ TASK_KINDS = {
 }
 ALIX_EMAIL = "beaune@transportsalix.com"
 ALIX_CC = ["remi.sery@gmail.com"]
-CLIENT_CC = ["remi.sery@gmail.com"]         # Rémi en copie de chaque e-mail client (aperçu modifiable, envoi, brouillons, zip)
+CLIENT_CC = ["remi.sery@gmail.com"]         # Rémi en copie de chaque e-mail client (aperçu modifiable, envoi, zip)
 ALIX_ADDRESS = "OWINE chez ALIX TRANSPORT, 6 Rue JF Champollion, 21200 BEAUNE"
 DIGEST_TO = ["js@owine.co"]
 
 OWINE_ADDRESS = {"name": "OWINE SAS", "address1": "Parc d'activité", "address2": "14 E rue Coubertin", "zip": "21000", "city": "DIJON", "country": "FR", "email": "contact@owine.co"}
 CONTACT_EMAIL = "contact@owine.co"            # adresse affichée aux clients (documents, e-mails)
 MOTTO = "L'amitié & l'émotion"
-GMAIL_USER = "js@owine.co"                    # boîte dans laquelle les brouillons sont déposés
+GMAIL_USER = "js@owine.co"                    # compte d'envoi SMTP des e-mails Alix / client
 GMAIL_PASSWORD_ENV = "GMAIL_JS_AT_OWINE_CO_APPPWD"   # variable Render créée par JS (mot de passe d'application)
