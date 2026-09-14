@@ -18,6 +18,12 @@
     <div class="small text-muted">{{ lab }}</div><div class="h5 mb-0" style="color:#0A2540">{{ val }}</div><div class="small text-muted">{{ sub }}</div></div></div></div>
   {% endfor %}
 </div>
+{% if res.conclusion %}
+<div class="card border-0 mb-3" style="background:#f4f5f7;border-left:4px solid #0A2540 !important"><div class="card-body py-2">
+  <div class="small fw-semibold text-uppercase" style="color:#0A2540">Conclusion — funding need</div>
+  <ul class="small mb-0 mt-1">{% for c in res.conclusion %}<li>{{ c }}</li>{% endfor %}</ul>
+</div></div>
+{% endif %}
 {% if res.alerts %}
 <div class="mb-3">{% for a in res.alerts %}<div class="alert alert-{{ 'danger' if a.level == 'danger' else ('warning' if a.level == 'warn' else 'light border') }} py-1 px-2 small mb-1">{{ a.text }}</div>{% endfor %}</div>
 {% endif %}

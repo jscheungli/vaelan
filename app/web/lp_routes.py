@@ -168,8 +168,11 @@ async def lp_hypotheses_save(request: Request, code: str):
     g = cfg["general"]
     for key in ("horizon", "calib_months", "season_years"):
         g[key] = int(_num(f.get("g_" + key), g.get(key)) or g.get(key))
-    for key in ("bank_fees_pct", "tax_ops_pct", "cit_rate_pct", "wage_inflation_pct", "cost_inflation_pct", "alert_group", "alert_entity"):
+    for key in ("bank_fees_pct", "tax_ops_pct", "cit_rate_pct", "wage_inflation_pct", "cost_inflation_pct", "alert_group", "contribution_round"):
         g[key] = _num(f.get("g_" + key), g.get(key))
+    g["partners"] = int(_num(f.get("g_partners"), 3) or 3)
+    g["repay_lead"] = int(_num(f.get("g_repay_lead"), 1) if _num(f.get("g_repay_lead")) is not None else 1)
+    g["auto_funding"] = bool(f.get("g_auto_funding"))
     g["ho_monthly"] = _num(f.get("g_ho_monthly"))
     g["ho_entity"] = (f.get("g_ho_entity") or "JZ").strip()
     g["friction"] = {e: _num(f.get(f"g_friction_{e}"), 0) or 0 for e in lpcfg.ENTITIES}

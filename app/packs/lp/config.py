@@ -32,8 +32,11 @@ GENERAL = {
     "cit_rate_pct": 5.0,           # impôt sur les sociétés (régime small & micro) sur le résultat trimestriel positif
     "wage_inflation_pct": 3.0,     # dérive annuelle de la masse salariale
     "cost_inflation_pct": 1.0,     # dérive annuelle des coûts fixes (loyers, siège)
-    "alert_group": 500000,         # seuil d'alerte trésorerie groupe
-    "alert_entity": 100000,        # seuil d'alerte trésorerie par entité
+    "alert_group": 300000,         # trésorerie groupe minimale à conserver (ligne du graphique, alerte, plan de financement)
+    "auto_funding": True,          # plan de financement automatique : apports d'associés quand la trésorerie passe sous le minimum, remboursés dès que possible
+    "contribution_round": 300000,  # arrondi des apports (multiple divisible par le nombre d'associés : 3 × 100 k)
+    "partners": 3,                 # nombre d'associés qui apportent à parts égales
+    "repay_lead": 1,               # le remboursement d'un prêt est affiché N mois avant le renouvellement (la banque veut être remboursée avant)
     "ho_entity": "JZ",             # le siège (5502) est porté par JIANZAN
     "ho_monthly": None,            # G&A siège mensuel (None = médiane des N derniers mois)
     "friction": {"JZ": 0, "LBL": 0},   # écart structurel P&L -> trésorerie (RMB/mois, négatif = fuite) ; voir Historique

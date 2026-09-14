@@ -155,6 +155,21 @@ class Pdf:
         self.hline(yy + 4, width=0.7, color=GREY)
         self.y = yy + 24
 
+    def box(self, title, lines, size=9):
+        """Encadré pâle : titre marine + phrases (retour à la ligne), pour la conclusion."""
+        wrapped = [(t, self.wrap(t, self.W - 2 * self.M - 24, size)) for t in lines]
+        h = 22 + sum(len(w) for _, w in wrapped) * size * 1.32 + 8
+        self.ensure(h + 6)
+        self.page.draw_rect(fitz.Rect(self.M, self.y - 12, self.W - self.M, self.y - 12 + h), color=None, fill=PALE)
+        self.page.draw_rect(fitz.Rect(self.M, self.y - 12, self.M + 3, self.y - 12 + h), color=None, fill=NAVY)
+        self.text(self.M + 12, self.y + 2, title.upper(), 9, "geb", NAVY)
+        yy = self.y + 18
+        for t, w in wrapped:
+            for j, line in enumerate(w):
+                self.text(self.M + 12 + (0 if j == 0 else 8), yy, ("· " if j == 0 else "") + line, size, "ge", BLACK)
+                yy += size * 1.32
+        self.y = self.y - 12 + h + 14
+
     def section(self, title):
         self.ensure(30)
         self.text(self.M, self.y, title.upper(), 9.5, "geb", NAVY)
@@ -174,8 +189,11 @@ class Pdf:
                 else:
                     self.text(xs[j] + 2, y, str(v), size, font, color)
         if header:
-            self.ensure(lh * 2)
-            draw_row(cols, "geb", GREY, self.y)
+            nl = max(len(str(c).split("\n")) for c in cols)
+            self.ensure(lh * (nl + 1))
+            for li in range(nl):
+                draw_row([(str(c).split("\n") + [""] * nl)[li] if nl - len(str(c).split("\n")) <= li or True else "" for c in cols], "geb", GREY, self.y + li * (lh - 2))
+            self.y += (nl - 1) * (lh - 2)
             self.hline(self.y + 4, width=0.5, color=GREY)
             self.y += lh
         for i, r in enumerate(rows):
@@ -224,7 +242,7 @@ class Pdf:
         if threshold is not None and vmin <= threshold <= vmax:
             self.hline(sy(threshold), x0, x1, 0.6, RED, dashes="[3 3] 0")
             self.right(x0 - 4, sy(threshold) + 2.5, f"{threshold/1000:,.0f} k".replace(",", " "), 6.3, "gei", RED)
-            self.right(x0 - 4, sy(threshold) + 9.5, "alert", 5.8, "gei", RED)
+            self.right(x0 - 4, sy(threshold) + 9.5, "minimum", 5.8, "gei", RED)
         self.y = y1 + 30
 
 
@@ -272,9 +290,10 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
     ov = res.get("overrides") or {}
     if ov and engine.describe_overrides(ov):
         pdf.para("Simulation — changes versus the base case: " + engine.describe_overrides(ov) + ".", 8.5, "gei", NAVY)
+    pdf.box("Conclusion — funding need", res.get("conclusion") or [])
 
     pdf.section("Loan maturities and alerts")
-    shown = [a for a in res.get("alerts") or [] if a.get("scope") in ("group", "loan") or (a.get("scope") == "entity" and a.get("level") == "danger")]
+    shown = [a for a in res.get("alerts") or [] if a.get("scope") in ("group", "loan")]
     if shown:
         for a in shown:
             col = RED if a["level"] == "danger" else (NAVY if a["level"] == "warn" else BLACK)
@@ -283,39 +302,45 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
         pdf.para("No alert over the horizon.", 9, "ge", GREY)
     pdf.y += 4
 
-    pdf.section("Key assumptions")
-    rows = []
+    pdf.section("Key assumptions — existing stores")
+    rows, projects = [], []
     for code, c in res["calibration"].items():
         e = c["effective"]
+        if e.get("opened") and e["opened"] > res["as_of"]:
+            projects.append((code, c))
+            continue
         name = f"{code} · {e.get('name') or ''}"
         rows.append([name if len(name) <= 24 else name[:23] + "…", e.get("entity") or "", mio(e["runrate_annual"]), pct(e["growth_pct"] / 100, 1, True),
                      pct(e["food_pct"] / 100), f"{k(e['labor'])} k ({pct(c['labor_pct_equiv'], 0)})", f"{k(e['rent'])} k", pct(e["other_pct"] / 100),
                      f"{k(e['da'])} k", pct(c["ebitda_pct_equiv"], 0)])
-    pdf.table(["Store", "Entity", "Annual income", "Trend", "Food", "Labor / month", "Rent / month", "Other opex", "D&A / mo.", "EBITDA"], rows,
-              [104, 30, 52, 38, 34, 68, 46, 42, 42, 36], size=7.4)
+    pdf.table(["Store", "Entity", "Annual\nincome", "Trend\nper year", "Food\ncost", "Labor cost\nper month", "Rent\nper month", "Other\nopex", "D&A\nper month", "EBITDA\nmargin"],
+              rows, [104, 30, 52, 40, 36, 68, 44, 40, 42, 36], size=7.4)
     if res.get("loans"):
         pdf.para("Bank loans: " + " ".join(
-            f"{l['label']} ({l['entity']}) {mio(l['principal'])} at {pct((l.get('rate_pct') or 0)/100)}, maturing {ML(l['maturity'], True)}"
-            + (f" and assumed renewed every {l.get('term_months', 12)} months for {mio(l.get('renew_amount') or l['principal'])}"
-               + (f" with a {l.get('renew_gap')}-month gap" if l.get("renew_gap") else " the same month") if l.get("renew") else ", not renewed") + "."
+            f"{l['label']} ({l['entity']}) {mio(l['principal'])} at {pct((l.get('rate_pct') or 0)/100)}, repaid {ML(engine.month_add(l['maturity'], -int(g.get('repay_lead', 1) or 0)), True)}"
+            + (f" and renewed in {ML(engine.month_add(l['maturity'], int(l.get('renew_gap') or 0)), True)} for {mio(l.get('renew_amount') or l['principal'])} (rolled every {l.get('term_months', 12)} months)" if l.get("renew") else ", not renewed") + "."
             for l in res["loans"]), 8, "ge", GREY)
-    for code, c in res["calibration"].items():
+    for code, c in projects:
         e = c["effective"]
-        if e.get("opened") and e["opened"] > res["as_of"]:
-            evs = [x for x in res.get("events_applied") or [] if x.get("store") == code]
-            txt = (f"{e.get('name') or code} ({e.get('entity')}): opens {ML(e['opened'], True)}; year-1 income {mio(e['runrate_annual'])} ex-VAT with the projected monthly profile"
-                   + (f", ramp-up from {e['ramp_start_pct']:.0f} % over {e['ramp_months']} months" if e.get("ramp_months") else "")
-                   + f"; food cost {pct(e['food_pct']/100)}, labor {k(e['labor'])} k/month, rent {k(e['rent'])} k/month paid "
-                   + ("monthly" if e.get("rent_period", 1) == 1 else f"every {e['rent_period']} months")
-                   + f", other opex {pct(e['other_pct']/100)}, D&A {k(e['da'])} k/month"
-                   + (f"; {e['preopening_months']} month(s) of pre-opening rent and payroll before opening" if e.get("preopening_months") else "")
-                   + "; no additional head-office cost.")
-            if evs:
-                txt += " Cash events: " + "; ".join(f"{x['label']} {k(x['amount'], True)} k in {ML(x['month'], True)}" for x in evs) + "."
-            pdf.para(txt, 8, "ge", NAVY)
+        pdf.ensure(230)          # le bloc projet (deux tableaux) reste entier sur une page
+        pdf.section(f"Project — {e.get('name') or code} ({config.ENTITIES.get(e.get('entity'), {}).get('latin', e.get('entity')).split(' (')[0]})")
+        left = [["Opening", ML(e["opened"], True)], ["Year-1 income", f"{mio(e['runrate_annual'])} ex-VAT, projected monthly profile"
+                + (f", ramp-up from {e['ramp_start_pct']:.0f} % over {e['ramp_months']} months" if e.get("ramp_months") else "")],
+                ["Food cost", pct(e["food_pct"] / 100)], ["Labor cost", f"{k(e['labor'])} k per month"],
+                ["Rent", f"{k(e['rent'])} k per month, paid " + ("monthly" if e.get("rent_period", 1) == 1 else f"every {e['rent_period']} months")],
+                ["Other opex", pct(e["other_pct"] / 100) + " of income"], ["D&A", f"{k(e['da'])} k per month"],
+                ["Pre-opening", f"{e['preopening_months']} month(s) of rent and payroll before opening" if e.get("preopening_months") else "none"],
+                ["Head office", "no additional cost"], ["EBITDA margin (steady state)", pct(c["ebitda_pct_equiv"], 0)]]
+        pdf.table(["Operating assumptions", ""], left, [150, 342], aligns=["l", "l"], size=8, header=True)
+        evs = [x for x in res.get("events_applied") or [] if x.get("store") == code]
+        if evs:
+            cats = {"capex": "Capital expenditure", "other": "Deposit / other", "cca": "Shareholder account", "loan": "Bank loan", "interco": "Intercompany"}
+            erows = [[ML(x["month"], True), cats.get(x["category"], x["category"]), x["label"].split(": ", 1)[-1][:58], k(x["amount"], True) + " k"] for x in evs]
+            erows.append(["", "", "Total cash out before opening", k(sum(x["amount"] for x in evs), True) + " k"])
+            pdf.table(["Cash events", "Type", "Description", "Amount"], erows, [90, 110, 226, 66], aligns=["l", "l", "l", "r"], size=8, bold_rows=(len(erows) - 1,))
 
     # ---- tableaux mensuels (paysage, 12 mois par page)
-    rows_all = engine.pl_rows(res)
+    rows_all = engine.pl_rows(res, with_entities=False)
     for start in range(0, H, 12):
         idx = list(range(start, min(start + 12, H)))
         pdf.finish_page()
@@ -339,7 +364,7 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
     pdf.finish_page()
     pdf.new_page(top=50)
     pdf.section("Cash events included in the forecast")
-    items = [(x["month"], x["entity"], {"capex": "Capital expenditure", "cca": "Shareholder account", "loan": "Bank loan", "interco": "Intercompany", "other": "Deposit / other"}.get(x["category"], x["category"]),
+    items = [(x["month"], x["entity"], {"capex": "Capital expenditure", "cca": "Shareholder contribution" if x["amount"] > 0 else "Shareholder repayment", "loan": "Bank loan", "interco": "Intercompany", "other": "Deposit / other"}.get(x["category"], x["category"]),
               x["label"], x["amount"]) for x in res.get("events_applied") or []]
     items += [(x["month"], x["entity"], "Bank loan " + x["type"], x["loan"], x["amount"]) for x in res.get("loan_schedule") or []]
     items.sort(key=lambda t: t[0])
@@ -348,7 +373,7 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
                   [60, 40, 110, 216, 66], aligns=["l", "l", "l", "l", "r"], size=8)
     else:
         pdf.para("No cash event over the horizon.", 9, "ge", GREY)
-    pdf.para("Shareholder current accounts: module under development — not included in this report.", 8, "gei", GREY)
+    pdf.para("Shareholder contributions above come from the funding plan (round amounts, equal shares); the shareholder current-account register is a module under development.", 8, "gei", GREY)
     pdf.y += 4
     pdf.section("Methodology (summary)")
     for t in METHOD_SHORT:

@@ -182,8 +182,10 @@ def calibrate_ho(actuals: dict, general: dict, as_of: str) -> (float, str):
 
 
 # ----------------------------------------------------------------- prêts
-def loan_schedule(loan: dict, as_of: str, months: List[str], gap_override=None, renew_override=None) -> dict:
-    """-> {"repay": {mois: −montant}, "draw": {mois: +montant}, "outstanding": {mois: encours en début de mois}, "events": [...]}"""
+def loan_schedule(loan: dict, as_of: str, months: List[str], gap_override=None, renew_override=None, repay_lead: int = 1) -> dict:
+    """-> {"repay": {mois: −montant}, "draw": {mois: +montant}, "outstanding": {mois: encours en début de mois}, "events": [...]}
+    Le remboursement est affiché `repay_lead` mois AVANT le mois de renouvellement (maturity) : la banque veut être remboursée
+    avant de renouveler ; le nouveau tirage tombe le mois du renouvellement (+ renew_gap)."""
     principal = float(loan.get("principal") or 0)
     term = int(loan.get("term_months") or 12)
     renew = bool(loan.get("renew")) if renew_override is None else bool(renew_override)
@@ -199,27 +201,30 @@ def loan_schedule(loan: dict, as_of: str, months: List[str], gap_override=None, 
         maturity = month_add(maturity, term)
     repay, draw, outs, evs = {}, {}, {}, []
     pending = []
+    lead = max(0, int(repay_lead or 0))
+    repay_month = max(month_add(maturity, -lead), months[0])
     for m in months:
         outs[m] = outstanding
         for pm, pa in list(pending):
             if pm == m:
                 draw[m] = draw.get(m, 0) + pa
                 outstanding = pa
-                evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "drawdown", "amount": pa})
+                evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "drawdown", "amount": pa, "renewal_of": maturity})
                 pending.remove((pm, pa))
-        if m == maturity and outstanding > 0:
+        if m == repay_month and outstanding > 0:
             repay[m] = repay.get(m, 0) - outstanding
-            evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "repayment", "amount": -outstanding})
+            evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "repayment", "amount": -outstanding,
+                        "renewal": month_add(maturity, gap) if renew else None})
             outstanding = 0.0
             if renew:
-                if gap == 0:
-                    draw[m] = draw.get(m, 0) + amt_renew
-                    outstanding = amt_renew
-                    evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "drawdown", "amount": amt_renew})
-                else:
-                    pending.append((month_add(m, gap), amt_renew))
+                pending.append((month_add(maturity, gap), amt_renew))
             maturity = month_add(maturity, term)
+            repay_month = month_add(maturity, -lead)
     return {"repay": repay, "draw": draw, "outstanding": outs, "events": evs}
+
+
+def loan_events_pre(sched, loans):
+    return [x for l in loans for x in sched[l["id"]]["events"]]
 
 
 # ----------------------------------------------------------------- prévisionnel
@@ -313,7 +318,7 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
     ho_monthly += float(ov.get("ga_delta") or 0)
     ho_entity = g.get("ho_entity") or "JZ"
     loans = [dict(l) for l in (cfg.get("loans") or []) if l.get("active")]
-    sched = {l["id"]: loan_schedule(l, as_of, months, ov.get("loan_gap"), ov.get("loan_renew")) for l in loans}
+    sched = {l["id"]: loan_schedule(l, as_of, months, ov.get("loan_gap"), ov.get("loan_renew"), int(g.get("repay_lead", 1) or 0)) for l in loans}
     ev = {e: {m: {"capex": 0.0, "cca": 0.0, "loan": 0.0, "interco": 0.0, "other": 0.0} for m in months} for e in entities}
     applied = []
     capex_scale = float(ov.get("capex_scale", 1.0))
@@ -374,6 +379,51 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
             r["cash"][i] = (r["cash"][i - 1] if i else opening) + delta
         res_ent[e] = r
 
+    # ---- plan de financement automatique (apports d'associés en comptes ronds, remboursés dès que possible)
+    floor = float(g.get("alert_group") or 0)
+    rnd = float(g.get("contribution_round") or 300000) or 300000.0
+    partners = int(g.get("partners") or 3)
+    plan = []
+    if g.get("auto_funding", True) and not ov.get("no_funding"):
+        import math
+        cash_g = sum(res_ent[e]["opening"] for e in entities)
+        outstanding_by = {e: 0.0 for e in entities}
+        for i, m in enumerate(months):
+            cash_g += sum(res_ent[e]["delta"][i] for e in entities)
+            if cash_g < floor:
+                need = math.ceil((floor - cash_g) / rnd) * rnd
+                # l'apport va à l'entité qui rembourse un prêt ce mois-ci (ou le suivant), sinon à la plus basse
+                reason = next((x for x in loan_events_pre(sched, loans) if x["type"] == "repayment" and x["month"] in (m, month_add(m, 1))), None)
+                ent = reason["entity"] if reason and reason.get("entity") in entities else min(entities, key=lambda e: res_ent[e]["cash"][i])
+                plan.append({"month": m, "entity": ent, "amount": need, "type": "contribution",
+                             "reason": (f"to repay the {reason['loan']} ahead of its renewal" if reason else "to keep the minimum cash position")})
+                outstanding_by[ent] += need
+                cash_g += need
+            elif any(v > 0 for v in outstanding_by.values()):
+                avail = cash_g - floor
+                for ent in sorted(entities, key=lambda e: -outstanding_by[e]):
+                    if outstanding_by[ent] <= 0 or avail <= 0:
+                        continue
+                    rep = min(outstanding_by[ent], math.floor(avail / rnd) * rnd)
+                    if rep > 0:
+                        plan.append({"month": m, "entity": ent, "amount": -rep, "type": "repayment", "reason": "cash position restored"})
+                        outstanding_by[ent] -= rep
+                        cash_g -= rep
+                        avail -= rep
+        for x in plan:
+            r = res_ent[x["entity"]]
+            i = months.index(x["month"])
+            r["cca"][i] += x["amount"]
+            r["delta"][i] += x["amount"]
+            applied.append({"month": x["month"], "entity": x["entity"], "category": "cca", "amount": x["amount"], "store": "",
+                            "label": (f"Shareholder contribution — funding plan ({partners} × {x['amount']/partners/1000:,.0f} k)" if x["amount"] > 0
+                                      else "Repayment of shareholder contribution — funding plan")})
+        for e in entities:
+            r = res_ent[e]
+            for i in range(horizon):
+                r["cash"][i] = (r["cash"][i - 1] if i else r["opening"]) + r["delta"][i]
+        applied.sort(key=lambda x: x["month"])
+
     # ---- groupe & indicateurs
     grp = {k: [sum(res_ent[e][k][i] for e in entities) for i in range(horizon)] for k in ENTITY_KEYS}
     grp["opening"] = sum(res_ent[e]["opening"] for e in entities)
@@ -381,25 +431,33 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
     grp["op_cash"] = [grp["pat"][i] + grp["da"][i] + grp["rent_adj"][i] + grp["friction"][i] for i in range(horizon)]
     imin = min(range(horizon), key=lambda i: grp["cash"][i])
     alerts = []
-    thr_g, thr_e = float(g.get("alert_group") or 0), float(g.get("alert_entity") or 0)
-    low_g = [months[i] for i in range(horizon) if grp["cash"][i] < thr_g]
+    thr_g = floor
+    low_g = [months[i] for i in range(horizon) if grp["cash"][i] < thr_g - 0.5]
     if low_g:
         alerts.append({"level": "warn" if min(grp["cash"]) >= 0 else "danger", "scope": "group",
-                       "text": f"Group cash below the {thr_g/1000:,.0f} k threshold for {len(low_g)} month(s) — low point {grp['cash'][imin]/1000:,.0f} k in {mlabel_en(months[imin], True)}."})
-    for e in entities:
-        low = [months[i] for i in range(horizon) if res_ent[e]["cash"][i] < thr_e]
-        if low:
-            j = min(range(horizon), key=lambda i: res_ent[e]["cash"][i])
-            alerts.append({"level": "warn" if res_ent[e]["cash"][j] >= 0 else "danger", "scope": "entity",
-                           "text": f"{config.ENTITIES.get(e, {}).get('latin', e)}: cash below {thr_e/1000:,.0f} k for {len(low)} month(s) — low point {res_ent[e]['cash'][j]/1000:,.0f} k in {mlabel_en(months[j], True)}"
-                                   + (" — the entity needs funding (intercompany transfer, shareholder loan or bank loan)." if res_ent[e]["cash"][j] < 0 else ".")})
+                       "text": f"Group cash below the {thr_g/1000:,.0f} k minimum for {len(low_g)} month(s) — low point {grp['cash'][imin]/1000:,.0f} k in {mlabel_en(months[imin], True)}."})
     loan_events = sorted([x for l in loans for x in sched[l["id"]]["events"]], key=lambda x: x["month"])
     for x in loan_events:
         if x["type"] == "repayment":
-            redrawn = any(y["month"] == x["month"] and y["type"] == "drawdown" and y["loan"] == x["loan"] for y in loan_events)
             alerts.append({"level": "info", "scope": "loan",
                            "text": f"{mlabel_en(x['month'], True)}: {x['loan']} ({x['entity']}) — {-x['amount']/1000:,.0f} k to repay"
-                                   + (", renewal assumed the same month." if redrawn else ", no renewal assumed the same month.")})
+                                   + (f"; renewal expected in {mlabel_en(x['renewal'], True)}." if x.get("renewal") else "; no renewal assumed.")})
+    conclusion = []
+    if plan:
+        for x in plan:
+            if x["type"] == "contribution":
+                conclusion.append(f"Shareholder contribution of {x['amount']/1000:,.0f} k ({partners} × {x['amount']/partners/1000:,.0f} k) in {mlabel_en(x['month'], True)} {x['reason']}.")
+            else:
+                conclusion.append(f"Repayment of {-x['amount']/1000:,.0f} k to the shareholders in {mlabel_en(x['month'], True)} ({x['reason']}).")
+        tot_c = sum(x["amount"] for x in plan if x["amount"] > 0)
+        tot_r = -sum(x["amount"] for x in plan if x["amount"] < 0)
+        if tot_c > tot_r + 0.5:
+            conclusion.append(f"{(tot_c - tot_r)/1000:,.0f} k of contributions remain outstanding at the end of the horizon.")
+    else:
+        conclusion.append(f"No shareholder contribution needed over the horizon: group cash stays above the {floor/1000:,.0f} k minimum "
+                          f"(low point {grp['cash'][imin]/1000:,.0f} k in {mlabel_en(months[imin], True)}).")
+    conclusion.append(f"Basis: minimum cash position of {floor/1000:,.0f} k, contributions in round amounts of {rnd/1000:,.0f} k ({partners} equal shares), "
+                      f"repaid as soon as the cash position allows.")
     n12 = min(12, horizon)
     kpis = {"cash_open": grp["opening"], "cash_min": grp["cash"][imin], "cash_min_month": months[imin], "cash_end": grp["cash"][-1],
             "revenue_12m": sum(grp["revenue"][:n12]), "ebitda_12m": sum(grp["ebitda_after_ga"][:n12]), "pat_12m": sum(grp["pat"][:n12]),
@@ -408,10 +466,10 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
     return {"label": label or "", "as_of": as_of, "horizon": horizon, "months": months, "stores": res_stores, "entities": res_ent,
             "group": grp, "calibration": calib, "ho_monthly": ho_monthly, "ho_src": ho_src, "loan_schedule": loan_events,
             "loans": loans, "events_applied": sorted(applied, key=lambda x: x["month"]), "kpis": kpis, "alerts": alerts, "overrides": ov,
-            "general": g, "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
+            "funding_plan": plan, "conclusion": conclusion, "general": g, "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
 
 
-def pl_rows(res: dict) -> List[dict]:
+def pl_rows(res: dict, with_entities: bool = True) -> List[dict]:
     """Lignes du tableau mensuel (libellés du Management Report) partagées par le PDF et la page web.
     Chaque ligne : label, values (signe d'affichage : charges en négatif), kind (store / total / line / grey), total (bool)."""
     grp, ents, H = res["group"], res["entities"], res["horizon"]
@@ -444,8 +502,9 @@ def pl_rows(res: dict) -> List[dict]:
     other = add(grp["interco"], grp["other"])
     rows.append({"label": "Deposits & Other Cash Items", "values": other, "kind": "line", "total": True})
     rows.append({"label": "Net Cash Flow", "values": grp["delta"], "kind": "total", "total": True})
-    for e, r in ents.items():
-        rows.append({"label": f"Cash — {config.ENTITIES.get(e, {}).get('latin', e).split(' — ')[0]}", "values": r["cash"], "kind": "grey", "total": False})
+    if with_entities:
+        for e, r in ents.items():
+            rows.append({"label": f"Cash — {config.ENTITIES.get(e, {}).get('latin', e).split(' — ')[0]}", "values": r["cash"], "kind": "grey", "total": False})
     rows.append({"label": "Cash (Group, End of Month)", "values": grp["cash"], "kind": "total", "total": False})
     return rows
 
