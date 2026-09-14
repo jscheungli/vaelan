@@ -21,48 +21,33 @@
 {% if res.alerts %}
 <div class="mb-3">{% for a in res.alerts %}<div class="alert alert-{{ 'danger' if a.level == 'danger' else ('warning' if a.level == 'warn' else 'light border') }} py-1 px-2 small mb-1">{{ a.text }}</div>{% endfor %}</div>
 {% endif %}
-<div class="card shadow-sm mb-3"><div class="card-body"><canvas id="cash" height="90"></canvas></div></div>
+<div class="card shadow-sm mb-3"><div class="card-body"><canvas id="cash" height="80"></canvas></div></div>
 
-<h3 class="h6 text-uppercase text-muted">Tableau mensuel (k RMB)</h3>
+<h3 class="h6 text-uppercase text-muted">Monthly forecast (k RMB) — libellés du Management Report</h3>
 <div class="table-responsive mb-3"><table class="table table-sm table-hover" style="font-size:.76rem;white-space:nowrap">
-  <thead class="table-light"><tr><th></th>{% for m in res.months %}<th class="text-end">{{ ml(m) }}</th>{% endfor %}<th class="text-end">Total</th></tr></thead>
+  <thead class="table-light"><tr><th></th>{% for m in res.months %}<th class="text-end">{{ mle(m, False, True) }}</th>{% endfor %}<th class="text-end">Total</th></tr></thead>
   <tbody>
-  {% macro line(label, vals, bold=False, total=True, muted=False) %}
-    <tr class="{{ 'fw-semibold' if bold }} {{ 'text-muted' if muted }}"><td>{{ label }}</td>{% for v in vals %}<td class="text-end {{ 'text-danger' if v < -0.5 }}">{{ k(v) }}</td>{% endfor %}<td class="text-end">{{ k(vals|sum) if total else '' }}</td></tr>
-  {% endmacro %}
-  {% for c, s in res.stores.items() %}{{ line("CA " ~ c, s.revenue) }}{% endfor %}
-  {{ line("Chiffre d'affaires", res.group.revenue, True) }}
-  {% for c, s in res.stores.items() %}{{ line("EBITDA " ~ c, s.ebitda) }}{% endfor %}
-  {{ line("EBITDA magasins", res.group.ebitda_stores, True) }}
-  {% set neg = [] %}{% for v in res.group.ga %}{% set _ = neg.append(-v) %}{% endfor %}{{ line("Siège (G&A)", neg) }}
-  {% set fin = [] %}{% for i in range(res.horizon) %}{% set _ = fin.append(-(res.group.interest[i] + res.group.fees[i])) %}{% endfor %}{{ line("Intérêts et frais bancaires", fin) }}
-  {% set tx = [] %}{% for i in range(res.horizon) %}{% set _ = tx.append(-(res.group.tax_ops[i] + res.group.cit[i])) %}{% endfor %}{{ line("Impôts et taxes", tx) }}
-  {% set ra = [] %}{% for i in range(res.horizon) %}{% set _ = ra.append(res.group.rent_adj[i] + res.group.friction[i]) %}{% endfor %}{{ line("Décalage loyers / friction", ra, muted=True) }}
-  {{ line("Flux d'exploitation", res.group.op_cash, True) }}
-  {{ line("Investissements", res.group.capex) }}
-  {{ line("Prêts (échéances / tirages)", res.group.loans) }}
-  {{ line("Comptes courants d'associés", res.group.cca) }}
-  {% set io = [] %}{% for i in range(res.horizon) %}{% set _ = io.append(res.group.interco[i] + res.group.other[i]) %}{% endfor %}{{ line("Intercos et autres", io) }}
-  {{ line("Variation de trésorerie", res.group.delta, True) }}
-  {% for e, r in res.entities.items() %}{{ line("Trésorerie " ~ e, r.cash, total=False, muted=True) }}{% endfor %}
-  {{ line("Trésorerie groupe", res.group.cash, True, False) }}
+  {% for r in rows %}
+    <tr class="{{ 'fw-semibold' if r.kind == 'total' }} {{ 'text-muted' if r.kind == 'grey' }} {{ 'border-top' if r.section == 'cash' }}"><td>{{ r.label }}</td>
+      {% for v in r['values'] %}<td class="text-end {{ 'text-danger' if v < -0.5 }}">{{ k(v) }}</td>{% endfor %}<td class="text-end">{{ k(r['values']|sum) if r.total else '' }}</td></tr>
+  {% endfor %}
   </tbody></table></div>
 
 <div class="row g-3">
   <div class="col-lg-7">
     <h3 class="h6 text-uppercase text-muted">Hypothèses utilisées</h3>
     <div class="table-responsive"><table class="table table-sm" style="font-size:.8rem">
-      <thead class="table-light"><tr><th>Magasin</th><th>Entité</th><th class="text-end">CA annuel</th><th class="text-end">Tendance</th><th class="text-end">Food</th><th class="text-end">Masse sal./mois</th><th class="text-end">Loyer/mois</th><th class="text-end">Autres</th><th class="text-end">EBITDA %</th></tr></thead>
+      <thead class="table-light"><tr><th>Magasin</th><th>Entité</th><th class="text-end">CA annuel</th><th class="text-end">Tendance</th><th class="text-end">Food</th><th class="text-end">Masse sal./mois</th><th class="text-end">Loyer/mois</th><th class="text-end">Autres</th><th class="text-end">D&A/mois</th><th class="text-end">EBITDA %</th></tr></thead>
       <tbody>{% for c, cal in res.calibration.items() %}{% set e = cal.effective %}
         <tr><td>{{ c }} <span class="text-muted">{{ e.name }}</span></td><td>{{ e.entity }}</td><td class="text-end">{{ mio(e.runrate_annual) }}</td><td class="text-end">{{ pct(e.growth_pct/100, 1, True) }}</td>
-          <td class="text-end">{{ pct(e.food_pct/100) }}</td><td class="text-end">{{ k(e.labor) }} k ({{ pct(cal.labor_pct_equiv, 0) }})</td><td class="text-end">{{ k(e.rent) }} k</td><td class="text-end">{{ pct(e.other_pct/100) }}</td><td class="text-end">{{ pct(cal.ebitda_pct_equiv, 0) }}</td></tr>
-        <tr class="text-muted"><td colspan="9" class="small ps-3">run-rate : {{ cal.runrate_src }} · saisonnalité : {{ cal.season_src }} · food {{ cal.food_src }} · masse salariale {{ cal.labor_src }} · loyer {{ cal.rent_src }} · autres {{ cal.other_src }}</td></tr>
+          <td class="text-end">{{ pct(e.food_pct/100) }}</td><td class="text-end">{{ k(e.labor) }} k ({{ pct(cal.labor_pct_equiv, 0) }})</td><td class="text-end">{{ k(e.rent) }} k</td><td class="text-end">{{ pct(e.other_pct/100) }}</td><td class="text-end">{{ k(e.da) }} k</td><td class="text-end">{{ pct(cal.ebitda_pct_equiv, 0) }}</td></tr>
+        <tr class="text-muted"><td colspan="10" class="small ps-3">run-rate : {{ cal.runrate_src }} · saisonnalité : {{ cal.season_src }} · food {{ cal.food_src }} · masse salariale {{ cal.labor_src }} · loyer {{ cal.rent_src }} · autres {{ cal.other_src }}</td></tr>
       {% endfor %}</tbody></table></div>
     <p class="small text-muted">Siège {{ k(res.ho_monthly) }} k/mois ({{ res.ho_src }}) · frais bancaires {{ pct(res.general.bank_fees_pct/100) }} du CA · IS {{ pct(res.general.cit_rate_pct/100, 0) }} du résultat trimestriel positif · dérive salaires {{ pct(res.general.wage_inflation_pct/100) }}/an.
       {% if ov_text %}<br><strong>Simulation :</strong> {{ ov_text }}{% endif %}</p>
   </div>
   <div class="col-lg-5">
-    <h3 class="h6 text-uppercase text-muted">Événements et prêts</h3>
+    <h3 class="h6 text-uppercase text-muted">Événements et mouvements de prêts</h3>
     <table class="table table-sm" style="font-size:.8rem"><tbody>
       {% for e in res.events_applied %}<tr><td>{{ ml(e.month) }}</td><td>{{ e.entity }}</td><td>{{ e.label }}</td><td class="text-end">{{ k(e.amount, True) }} k</td></tr>{% endfor %}
       {% for x in res.loan_schedule %}<tr class="text-muted"><td>{{ ml(x.month) }}</td><td>{{ x.loan }}</td><td>{{ x.type }}</td><td class="text-end">{{ k(x.amount, True) }} k</td></tr>{% endfor %}
@@ -73,10 +58,10 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 const D = {{ chart|safe }};
-const ds = [{label: 'Groupe', data: D.group, borderColor: '#0A2540', backgroundColor: '#0A2540', borderWidth: 2, pointRadius: 2, tension: .2}];
-for (const [e, v] of Object.entries(D.entities)) ds.push({label: e, data: v, borderColor: '#8a8f98', borderWidth: 1, pointRadius: 0, borderDash: e === 'LBL' ? [4, 3] : [], tension: .2});
-new Chart(document.getElementById('cash'), {type: 'line', data: {labels: D.labels, datasets: ds},
-  options: {plugins: {legend: {position: 'bottom'}, title: {display: true, text: 'Trésorerie de fin de mois (k RMB)'}},
+const ds = [{type: 'bar', label: 'Group cash (end of month)', data: D.group, backgroundColor: D.group.map(v => v < 0 ? '#b82a2a' : '#0A2540'), order: 2}];
+for (const [e, v] of Object.entries(D.entities)) ds.push({type: 'line', label: e, data: v, borderColor: '#8a8f98', borderWidth: 1, pointRadius: 0, borderDash: e === 'LBL' ? [4, 3] : [], tension: .2, order: 1});
+new Chart(document.getElementById('cash'), {data: {labels: D.labels, datasets: ds},
+  options: {plugins: {legend: {position: 'bottom'}, title: {display: true, text: 'Group cash position — end of month (k RMB)'}},
             scales: {y: {ticks: {callback: v => v.toLocaleString('fr-FR')}}}}});
 </script>
 {% endblock %}

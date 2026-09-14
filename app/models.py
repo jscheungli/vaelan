@@ -647,6 +647,8 @@ class LpStoreMonth(SQLModel, table=True):
     income_tax: float = 0.0                        # 5701
     ebitda_report: float = 0.0                     # « EBITDA (Store) » du rapport
     ebitda_after_ga: float = 0.0                   # « EBITDA (After G&A) » du rapport
+    profit_before_tax: float = 0.0                 # « PROFIT (After G&A / Before Tax) » du rapport
+    profit_after_tax: float = 0.0                  # « PROFIT (After Tax) » du rapport
     source: Optional[str] = None                   # fichier importé
     imported_at: datetime = Field(default_factory=datetime.utcnow)
 

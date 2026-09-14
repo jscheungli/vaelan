@@ -2,44 +2,13 @@
 {% block title %}Comptes courants · {{ company.name }}{% endblock %}
 {% block content %}
 {% set active = "/cca" %}{% set crumb = "Comptes courants d'associés" %}{% include "_lp_nav.html" %}
-<h1 class="h4">Comptes courants d'associés</h1>
-<p class="small text-muted">Registre par associé et par entité (saisi, à rapprocher des comptes 2181.14 « Shareholder Transactions » et 2181.03 « Other » des balances importées). Les apports et remboursements <em>à venir</em> se saisissent dans les <a href="/c/{{ company.code }}/previsionnel/hypotheses">événements</a> (nature « compte courant d'associé »).</p>
-{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
-<div class="row g-3">
-  <div class="col-lg-7">
-    <form method="post" class="small">
-      <table class="table table-sm align-middle"><thead><tr class="text-muted"><th>Associé</th><th>Entité</th><th>Montant</th><th>Source / note</th><th></th></tr></thead><tbody>
-      {% for p in c.registry.positions %}{% set i = loop.index0 %}
-      <tr><td><input class="form-control form-control-sm" name="p{{ i }}_shareholder" value="{{ p.shareholder }}"></td>
-        <td><select class="form-select form-select-sm" name="p{{ i }}_entity">{% for e in ['JZ', 'LBL', 'MIYI', 'GHHL'] %}<option value="{{ e }}" {{ 'selected' if e == p.entity }}>{{ e }}</option>{% endfor %}</select></td>
-        <td><input class="form-control form-control-sm" name="p{{ i }}_amount" value="{{ p.amount|int }}"></td><td><input class="form-control form-control-sm" name="p{{ i }}_source" value="{{ p.source or '' }}"></td>
-        <td><input type="checkbox" class="form-check-input" name="p{{ i }}_delete" value="1" title="supprimer"></td></tr>
-      {% endfor %}
-      {% for j in range(2) %}{% set i = c.registry.positions|length + j %}
-      <tr class="table-light"><td><input class="form-control form-control-sm" name="p{{ i }}_shareholder" placeholder="Nouvel associé"></td>
-        <td><select class="form-select form-select-sm" name="p{{ i }}_entity">{% for e in ['JZ', 'LBL', 'MIYI', 'GHHL'] %}<option value="{{ e }}">{{ e }}</option>{% endfor %}</select></td>
-        <td><input class="form-control form-control-sm" name="p{{ i }}_amount"></td><td><input class="form-control form-control-sm" name="p{{ i }}_source"></td><td></td></tr>
-      {% endfor %}
-      </tbody></table>
-      <button class="btn btn-sm btn-dark">Enregistrer le registre</button>
-    </form>
-  </div>
-  <div class="col-lg-5">
-    <h3 class="h6 text-uppercase text-muted">Rapprochement avec la comptabilité ({{ ml(c.as_of, True) if c.as_of else '—' }})</h3>
-    <table class="table table-sm small"><thead class="table-light"><tr><th>Entité</th><th class="text-end">Registre</th><th class="text-end">2181.14 associés</th><th class="text-end">2181.03 autres</th><th class="text-end">Écart</th></tr></thead><tbody>
-      {% for e, acc in c.accounts.items() %}{% set reg = c.by_entity.get(e, 0) %}
-      <tr><td>{{ e }}</td><td class="text-end">{{ k(reg) }} k</td><td class="text-end">{{ k(acc.cca_14) }} k</td><td class="text-end">{{ k(acc.other_03) }} k</td><td class="text-end {{ 'text-danger' if (reg - acc.cca_14 - acc.other_03)|abs > 1000 }}">{{ k(reg - acc.cca_14 - acc.other_03, True) }} k</td></tr>
-      {% endfor %}
-      {% for e, reg in c.by_entity.items() if e not in c.accounts %}<tr><td>{{ e }}</td><td class="text-end">{{ k(reg) }} k{{ ' USD' if e == 'GHHL' }}</td><td colspan="3" class="text-muted text-end">hors balances importées</td></tr>{% endfor %}
-    </tbody></table>
-    <p class="small text-muted">Le compte 2181.03 mélange les anciens comptes courants et d'autres dettes : l'écart signale ce qui reste à ventiler par la comptable (sous-comptes par associé).</p>
-    {% if c.planned %}<h3 class="h6 text-uppercase text-muted mt-3">Mouvements prévus</h3><ul class="small">{% for e in c.planned %}<li>{{ ml(e.month) }} · {{ e.entity }} · {{ e.label }} : {{ k(e.amount, True) }} k{{ '' if e.active else ' (inactif)' }}</li>{% endfor %}</ul>{% endif %}
-    <h3 class="h6 text-uppercase text-muted mt-3">Évolution des comptes (k RMB, créditeur)</h3>
-    <div class="table-responsive"><table class="table table-sm" style="font-size:.74rem"><thead class="table-light"><tr><th>Mois</th>{% for e in c.series %}<th class="text-end">{{ e }} 2181.14</th><th class="text-end">{{ e }} 2181.03</th>{% endfor %}</tr></thead><tbody>
-      {% set months = [] %}{% for e, rows in c.series.items() %}{% for r in rows %}{% if r.month not in months %}{% set _ = months.append(r.month) %}{% endif %}{% endfor %}{% endfor %}
-      {% for m in months|sort(reverse=True) %}{% if loop.index <= 15 %}
-      <tr><td>{{ ml(m) }}</td>{% for e, rows in c.series.items() %}{% set r = (rows|selectattr('month', 'equalto', m)|list|first) %}<td class="text-end">{{ k(r.cca_14) if r else '' }}</td><td class="text-end">{{ k(r.other_03) if r else '' }}</td>{% endfor %}</tr>
-      {% endif %}{% endfor %}</tbody></table></div>
-  </div>
-</div>
+<h1 class="h4">Comptes courants d'associés <span class="badge text-bg-secondary align-middle">À venir</span></h1>
+<div class="card shadow-sm" style="max-width:720px"><div class="card-body">
+  <p class="mb-2"><strong>Module en cours de développement.</strong></p>
+  <p class="small text-muted mb-2">Il tiendra le registre des comptes courants par associé et par entité (JIANZAN, LEBLANC, GHHL), rapproché des comptes
+    2181.14 « Shareholder Transactions » et 2181.03 « Other » des balances importées, avec les apports et remboursements prévus.</p>
+  <p class="small text-muted mb-0">En attendant, un apport ou un remboursement d'associé à venir se saisit dans les
+    <a href="/c/{{ company.code }}/previsionnel/hypotheses">événements</a> (nature « compte courant d'associé ») : il est alors pris en compte dans la trésorerie.
+    Soldes comptables au {{ ml(c.as_of, True) if c.as_of else '—' }} : {% for e, acc in c.accounts.items() %}{{ e }} 2181.14 {{ k(acc.cca_14) }} k · 2181.03 {{ k(acc.other_03) }} k{{ ' — ' if not loop.last }}{% endfor %}.</p>
+</div></div>
 {% endblock %}

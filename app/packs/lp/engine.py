@@ -2,16 +2,14 @@
 
 Entrées : cfg (dict, voir config.py) et actuals = {"stores": {code: {mois: {...}}}, "entities": {code: {mois: {...}}}}.
 
-Modèle (volontairement court) :
-  CA magasin[m]   = run-rate désaisonnalisé × coefficient saisonnier[m] × (1 + tendance)^(k/12)
-                    (run-rate = moyenne désaisonnalisée des 12 derniers mois hors extrêmes, ou CA annuel saisi / 12)
-  Food, autres    = ratios (% CA) — médiane des N derniers mois, ou valeur saisie
-  Masse salariale = montant mensuel (médiane des N derniers mois, ou saisi) + dérive annuelle — lissé, pas saisonnier
-  Loyer           = montant mensuel (médiane / saisi) + dérive ; option de paiement trimestriel/semestriel
-  EBITDA magasin  = CA − food − masse salariale − loyer − autres charges
-  Siège (G&A)     = montant mensuel (médiane / saisi) porté par JZ
-  Trésorerie[m]   = trésorerie[m−1] + Σ EBITDA magasins − G&A − intérêts − frais bancaires − taxes − IS
-                    ± prêts (échéances / renouvellements) ± événements (capex, CCA, interco, autres) ± décalage loyer ± friction
+Modèle :
+  Main Business Income[m] = run-rate désaisonnalisé × coefficient saisonnier[m] × (1 + tendance)^(k/12)
+  Food, other opex        = ratios (% CA) ; Labor, Rent = montants mensuels lissés ; D&A = montant mensuel
+  EBITDA (Store)          = income − food − labor − rent − other opex
+  EBITDA (After G&A)      = Σ EBITDA (Store) − G&A ; Profit before tax = EBITDA (After G&A) − D&A − financial − operation taxes
+  Corporate income tax    = taux × résultat trimestriel positif (le mois suivant la fin du trimestre) ; Profit after tax
+  Cash[m]                 = Cash[m−1] + profit after tax + D&A ± prêts (remboursement / tirage) ± événements ± décalage loyers ± friction
+Textes produits (alertes, diagnostics) en anglais : ils alimentent les livrables destinés aux associés.
 """
 import statistics as st
 from datetime import datetime
@@ -41,6 +39,13 @@ def mlabel(m: str, long: bool = False) -> str:
     return f"{names[int(m[5:7]) - 1]} {m[:4]}"
 
 
+def mlabel_en(m: str, long: bool = False, short_year: bool = False) -> str:
+    if not m:
+        return ""
+    names = config.MONTHS_EN_LONG if long else config.MONTHS_EN
+    return f"{names[int(m[5:7]) - 1]} {m[2:4] if short_year else m[:4]}"
+
+
 def median(xs: List[float], default: float = 0.0) -> float:
     xs = [x for x in xs if x is not None]
     return st.median(xs) if xs else default
@@ -49,6 +54,10 @@ def median(xs: List[float], default: float = 0.0) -> float:
 def other_of(v: dict) -> float:
     """Autres charges d'exploitation (hors loyer et amortissements) = 5501 − 5501.09 − 5501.14 − 5501.15."""
     return (v.get("opex_5501") or 0) - (v.get("rent") or 0) - (v.get("amort") or 0) - (v.get("depr") or 0)
+
+
+def da_of(v: dict) -> float:
+    return (v.get("amort") or 0) + (v.get("depr") or 0)
 
 
 def ebitda_of(v: dict) -> float:
@@ -109,17 +118,17 @@ def resolve_season(store: dict, hist: dict, general: dict, group_hist: dict, as_
     mode = store.get("season") or "auto"
     years = int(general.get("season_years") or 2)
     if mode == "custom" and store.get("season_custom") and len(store["season_custom"]) == 12:
-        return _normalize([float(x) for x in store["season_custom"]]), "personnalisée"
+        return _normalize([float(x) for x in store["season_custom"]]), "custom monthly profile"
     if mode in config.SEASON_PROFILES:
-        return list(config.SEASON_PROFILES[mode]), config.SEASON_LABELS.get(mode, mode).lower()
+        return list(config.SEASON_PROFILES[mode]), {"school": "school-calendar profile", "flat": "no seasonality"}.get(mode, mode)
     if mode == "auto":
         s = season_from_history(hist, years, as_of)
         if s:
-            return s, f"auto ({years} dernières années civiles complètes)"
+            return s, f"store history ({years} full calendar years)"
     s = season_from_history(group_hist, years, as_of)
     if s:
-        return s, "groupe (ZHY + BFC)" + ("" if mode == "group" else " — historique du magasin insuffisant")
-    return list(config.SEASON_PROFILES["school"]), "calendrier scolaire (repli)"
+        return s, "group profile (ZHY + BFC)" + ("" if mode == "group" else " — store history too short")
+    return list(config.SEASON_PROFILES["school"]), "school-calendar profile (fallback)"
 
 
 # ----------------------------------------------------------------- calibrage
@@ -129,35 +138,35 @@ def calibrate_store(store: dict, hist: dict, general: dict, as_of: str, group_hi
     n = int(general.get("calib_months") or 6)
     recent = months[-n:]
     c = {"season": season, "season_src": season_src, "months_used": recent, "n_history": len(months)}
-    # run-rate (CA mensuel désaisonnalisé)
     if store.get("runrate_annual"):
-        c["runrate"], c["runrate_src"] = float(store["runrate_annual"]) / 12, "saisi (CA annuel)"
+        c["runrate"], c["runrate_src"] = float(store["runrate_annual"]) / 12, "entered (annual revenue)"
     elif months:
         last12 = months[-12:]
         sa = sorted((hist[m]["revenue"] or 0) / season[int(m[5:7]) - 1] for m in last12)
         used = sa[1:-1] if len(sa) >= 6 else sa
         c["runrate"] = st.mean(used)
-        c["runrate_src"] = f"auto : moyenne désaisonnalisée des {len(last12)} derniers mois" + (" hors extrêmes" if len(sa) >= 6 else "")
+        c["runrate_src"] = f"auto: seasonally-adjusted average of the last {len(last12)} months" + (", excluding extremes" if len(sa) >= 6 else "")
     else:
-        c["runrate"], c["runrate_src"] = 0.0, "aucun historique — saisir un CA annuel"
+        c["runrate"], c["runrate_src"] = 0.0, "no history — enter an annual revenue"
     c["last12_revenue"] = sum(hist[m]["revenue"] or 0 for m in months[-12:]) if months else 0.0
 
     def ratio(key, fn):
         if store.get(key) is not None and store.get(key) != "":
-            return float(store[key]) / 100, "saisi"
+            return float(store[key]) / 100, "entered"
         vals = [fn(hist[m]) / hist[m]["revenue"] for m in recent if (hist[m].get("revenue") or 0) > 0]
-        return (median(vals), f"auto : médiane {len(vals)} mois") if vals else (0.0, "aucun historique")
+        return (median(vals), f"auto: median of {len(vals)} months") if vals else (0.0, "no history")
 
     def amount(key, fn):
         if store.get(key) is not None and store.get(key) != "":
-            return float(store[key]), "saisi"
+            return float(store[key]), "entered"
         vals = [fn(hist[m]) for m in recent]
-        return (median(vals), f"auto : médiane {len(vals)} mois") if vals else (0.0, "aucun historique")
+        return (median(vals), f"auto: median of {len(vals)} months") if vals else (0.0, "no history")
 
     c["food_pct"], c["food_src"] = ratio("food_pct", lambda v: v.get("food") or 0)
     c["other_pct"], c["other_src"] = ratio("other_pct", other_of)
     c["labor"], c["labor_src"] = amount("labor", lambda v: v.get("labor") or 0)
     c["rent"], c["rent_src"] = amount("rent", lambda v: v.get("rent") or 0)
+    c["da"], c["da_src"] = amount("da_monthly", da_of)
     c["labor_pct_equiv"] = c["labor"] / c["runrate"] if c["runrate"] else 0.0
     c["ebitda_pct_equiv"] = (1 - c["food_pct"] - c["other_pct"] - (c["labor"] + c["rent"]) / c["runrate"]) if c["runrate"] else 0.0
     return c
@@ -165,16 +174,16 @@ def calibrate_store(store: dict, hist: dict, general: dict, as_of: str, group_hi
 
 def calibrate_ho(actuals: dict, general: dict, as_of: str) -> (float, str):
     if general.get("ho_monthly"):
-        return float(general["ho_monthly"]), "saisi"
+        return float(general["ho_monthly"]), "entered"
     hist = actuals.get("stores", {}).get("HO") or {}
     months = sorted(m for m in hist if m <= as_of)[-int(general.get("calib_months") or 6):]
     vals = [hist[m].get("ga") or 0 for m in months]
-    return (median(vals), f"auto : médiane {len(vals)} mois") if vals else (0.0, "aucun historique")
+    return (median(vals), f"auto: median of the last {len(vals)} months") if vals else (0.0, "no history")
 
 
 # ----------------------------------------------------------------- prêts
 def loan_schedule(loan: dict, as_of: str, months: List[str], gap_override=None, renew_override=None) -> dict:
-    """-> {"flows": {mois: montant}, "outstanding": {mois: encours en début de mois}, "events": [...]}"""
+    """-> {"repay": {mois: −montant}, "draw": {mois: +montant}, "outstanding": {mois: encours en début de mois}, "events": [...]}"""
     principal = float(loan.get("principal") or 0)
     term = int(loan.get("term_months") or 12)
     renew = bool(loan.get("renew")) if renew_override is None else bool(renew_override)
@@ -182,40 +191,42 @@ def loan_schedule(loan: dict, as_of: str, months: List[str], gap_override=None, 
     amt_renew = float(loan.get("renew_amount") or principal)
     maturity = loan.get("maturity") or months[0]
     outstanding = principal
-    # échéances déjà passées à la date d'arrêté : on suppose le prêt roulé (sinon remboursé)
-    while maturity <= as_of:
+    while maturity <= as_of:          # échéance déjà passée : prêt supposé roulé (sinon remboursé)
         if not renew:
             outstanding = 0.0
             break
         outstanding = amt_renew
         maturity = month_add(maturity, term)
-    flows, outs, evs = {}, {}, []
-    pending = []          # tirages programmés (mois, montant)
+    repay, draw, outs, evs = {}, {}, {}, []
+    pending = []
     for m in months:
         outs[m] = outstanding
         for pm, pa in list(pending):
             if pm == m:
-                flows[m] = flows.get(m, 0) + pa
+                draw[m] = draw.get(m, 0) + pa
                 outstanding = pa
-                evs.append({"loan": loan.get("label"), "month": m, "type": "tirage", "amount": pa})
+                evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "drawdown", "amount": pa})
                 pending.remove((pm, pa))
         if m == maturity and outstanding > 0:
-            flows[m] = flows.get(m, 0) - outstanding
-            evs.append({"loan": loan.get("label"), "month": m, "type": "remboursement", "amount": -outstanding})
+            repay[m] = repay.get(m, 0) - outstanding
+            evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "repayment", "amount": -outstanding})
             outstanding = 0.0
             if renew:
-                rm = month_add(m, gap)
                 if gap == 0:
-                    flows[m] += amt_renew
+                    draw[m] = draw.get(m, 0) + amt_renew
                     outstanding = amt_renew
-                    evs.append({"loan": loan.get("label"), "month": m, "type": "renouvellement", "amount": amt_renew})
+                    evs.append({"loan": loan.get("label"), "entity": loan.get("entity"), "month": m, "type": "drawdown", "amount": amt_renew})
                 else:
-                    pending.append((rm, amt_renew))
+                    pending.append((month_add(m, gap), amt_renew))
             maturity = month_add(maturity, term)
-    return {"flows": flows, "outstanding": outs, "events": evs}
+    return {"repay": repay, "draw": draw, "outstanding": outs, "events": evs}
 
 
 # ----------------------------------------------------------------- prévisionnel
+ENTITY_KEYS = ("revenue", "ebitda_stores", "ga", "ebitda_after_ga", "da", "fees", "interest", "fin", "tax_ops", "pbt", "cit", "pat",
+               "rent_adj", "friction", "capex", "loan_repay", "loan_draw", "loans", "cca", "interco", "other", "delta", "cash")
+
+
 def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, overrides: dict = None, label: str = None) -> dict:
     g = dict(cfg.get("general") or {})
     ov = dict(overrides or {})
@@ -250,10 +261,12 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
         food = c["food_pct"] + float(ov.get("food_pp") or 0) / 100
         other = c["other_pct"] + float(ov.get("other_pp") or 0) / 100
         labor0 = c["labor"] * (1 + float(ov.get("labor_pct") or 0) / 100)
-        rent0 = c["rent"]
-        c["effective"] = {"runrate": rr, "runrate_annual": rr * 12, "growth_pct": growth * 100, "food_pct": food * 100,
-                          "other_pct": other * 100, "labor": labor0, "rent": rent0, "entity": s.get("entity"), "name": s.get("name")}
-        rows = {k: [0.0] * horizon for k in ("revenue", "food", "labor", "rent", "other", "ebitda", "rent_cash")}
+        rent0, da0 = c["rent"], c["da"]
+        c["effective"] = {"runrate": rr, "runrate_annual": rr * 12, "growth_pct": growth * 100, "food_pct": food * 100, "other_pct": other * 100,
+                          "labor": labor0, "rent": rent0, "da": da0, "entity": s.get("entity"), "name": s.get("name"), "opened": s.get("opened"),
+                          "preopening_months": int(s.get("preopening_months") or 0), "ramp_months": int(s.get("ramp_months") or 0),
+                          "ramp_start_pct": float(s.get("ramp_start_pct") or 100), "rent_period": int(s.get("rent_period") or 1), "note": s.get("note") or ""}
+        rows = {k: [0.0] * horizon for k in ("revenue", "food", "labor", "rent", "other", "ebitda", "da", "rent_cash")}
         opened, closed = s.get("opened"), s.get("closed")
         pre_n = int(s.get("preopening_months") or 0)
         ramp_n = int(s.get("ramp_months") or 0)
@@ -285,6 +298,7 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
             rent_v = rent0 * (1 + cost_infl) ** (k / 12) if carry else 0.0
             rows["revenue"][i], rows["food"][i], rows["labor"][i], rows["rent"][i], rows["other"][i] = rev, food_v, labor_v, rent_v, other_v
             rows["ebitda"][i] = rev - food_v - labor_v - rent_v - other_v
+            rows["da"][i] = da0 if is_open else 0.0
             if period > 1 and rent_v and first_pay:
                 rows["rent_cash"][i] = rent_v * period if month_diff(first_pay, m) % period == 0 else 0.0
             else:
@@ -315,104 +329,153 @@ def forecast(cfg: dict, actuals: dict, as_of: str = None, horizon: int = None, o
     if ov.get("cca_amount") and ov.get("cca_month") in ev.get(ov.get("cca_entity") or "JZ", {}):
         ent = ov.get("cca_entity") or "JZ"
         ev[ent][ov["cca_month"]]["cca"] += float(ov["cca_amount"])
-        applied.append({"month": ov["cca_month"], "entity": ent, "category": "cca", "amount": float(ov["cca_amount"]), "label": "Apport CCA (simulation)", "store": ""})
+        applied.append({"month": ov["cca_month"], "entity": ent, "category": "cca", "amount": float(ov["cca_amount"]), "label": "Shareholder contribution (simulation)", "store": ""})
 
     # ---- entités
     res_ent = {}
-    keys = ("revenue", "ebitda_stores", "ga", "fees", "tax_ops", "interest", "cit", "rent_adj", "friction", "capex", "cca", "loans", "interco", "other", "delta", "cash")
     for e in entities:
         bal = (actuals.get("entities", {}).get(e) or {}).get(as_of) or {}
         opening = (bal.get("cash") or 0) + (bal.get("cash_on_hand") or 0)
-        r = {k: [0.0] * horizon for k in keys}
+        r = {k: [0.0] * horizon for k in ENTITY_KEYS}
         r["opening"] = opening
-        r["opening_src"] = f"balance {as_of}" if bal else "balance absente à la date d'arrêté (0)"
+        r["opening_src"] = f"trial balance {as_of}" if bal else "no trial balance at the closing month (0)"
         fric = float((g.get("friction") or {}).get(e) or 0)
         q_acc = 0.0
         for i, m in enumerate(months):
             k = i + 1
-            rev = sum(rows["revenue"][i] for rows in res_stores.values() if rows["entity"] == e)
-            eb = sum(rows["ebitda"][i] for rows in res_stores.values() if rows["entity"] == e)
-            rent_adj = sum(rows["rent"][i] - rows["rent_cash"][i] for rows in res_stores.values() if rows["entity"] == e)
+            mine = [rows for rows in res_stores.values() if rows["entity"] == e]
+            rev = sum(rows["revenue"][i] for rows in mine)
+            eb = sum(rows["ebitda"][i] for rows in mine)
+            da = sum(rows["da"][i] for rows in mine)
+            rent_adj = sum(rows["rent"][i] - rows["rent_cash"][i] for rows in mine)
             ga = ho_monthly * (1 + cost_infl) ** (k / 12) if e == ho_entity else 0.0
             fees = rev * float(g.get("bank_fees_pct") or 0) / 100
             tax_ops = rev * float(g.get("tax_ops_pct") or 0) / 100
             interest = sum(sched[l["id"]]["outstanding"][m] * float(l.get("rate_pct") or 0) / 100 / 12 for l in loans if l.get("entity") == e)
-            loan_flow = sum(sched[l["id"]]["flows"].get(m, 0.0) for l in loans if l.get("entity") == e)
-            q_acc += eb - ga - fees - tax_ops - interest
+            repay = sum(sched[l["id"]]["repay"].get(m, 0.0) for l in loans if l.get("entity") == e)
+            drawn = sum(sched[l["id"]]["draw"].get(m, 0.0) for l in loans if l.get("entity") == e)
+            ebitda_after = eb - ga
+            pbt = ebitda_after - da - fees - interest - tax_ops
+            q_acc += pbt
             cit = 0.0
-            if int(m[5:7]) in (1, 4, 7, 10):     # paiement le mois suivant la fin de trimestre
+            if int(m[5:7]) in (1, 4, 7, 10):     # impôt du trimestre écoulé, comptabilisé et payé le mois suivant
                 cit = max(0.0, q_acc) * float(g.get("cit_rate_pct") or 0) / 100
                 q_acc = 0.0
+            pat = pbt - cit
             evm = ev[e][m]
-            delta = eb - ga - fees - tax_ops - interest - cit + rent_adj + fric + evm["capex"] + evm["cca"] + loan_flow + evm["loan"] + evm["interco"] + evm["other"]
-            vals = {"revenue": rev, "ebitda_stores": eb, "ga": ga, "fees": fees, "tax_ops": tax_ops, "interest": interest, "cit": cit,
-                    "rent_adj": rent_adj, "friction": fric, "capex": evm["capex"], "cca": evm["cca"], "loans": loan_flow + evm["loan"],
-                    "interco": evm["interco"], "other": evm["other"], "delta": delta}
+            loans_total = repay + drawn + evm["loan"]
+            delta = pat + da + rent_adj + fric + evm["capex"] + evm["cca"] + loans_total + evm["interco"] + evm["other"]
+            vals = {"revenue": rev, "ebitda_stores": eb, "ga": ga, "ebitda_after_ga": ebitda_after, "da": da, "fees": fees, "interest": interest,
+                    "fin": fees + interest, "tax_ops": tax_ops, "pbt": pbt, "cit": cit, "pat": pat, "rent_adj": rent_adj, "friction": fric,
+                    "capex": evm["capex"], "loan_repay": repay + min(evm["loan"], 0.0), "loan_draw": drawn + max(evm["loan"], 0.0), "loans": loans_total,
+                    "cca": evm["cca"], "interco": evm["interco"], "other": evm["other"], "delta": delta}
             for kk, v in vals.items():
                 r[kk][i] = v
             r["cash"][i] = (r["cash"][i - 1] if i else opening) + delta
         res_ent[e] = r
 
     # ---- groupe & indicateurs
-    grp = {k: [sum(res_ent[e][k][i] for e in entities) for i in range(horizon)] for k in keys}
+    grp = {k: [sum(res_ent[e][k][i] for e in entities) for i in range(horizon)] for k in ENTITY_KEYS}
     grp["opening"] = sum(res_ent[e]["opening"] for e in entities)
-    grp["ebitda"] = [grp["ebitda_stores"][i] - grp["ga"][i] for i in range(horizon)]
-    grp["op_cash"] = [grp["ebitda"][i] - grp["fees"][i] - grp["tax_ops"][i] - grp["interest"][i] - grp["cit"][i] + grp["rent_adj"][i] + grp["friction"][i] for i in range(horizon)]
+    grp["ebitda"] = list(grp["ebitda_after_ga"])
+    grp["op_cash"] = [grp["pat"][i] + grp["da"][i] + grp["rent_adj"][i] + grp["friction"][i] for i in range(horizon)]
     imin = min(range(horizon), key=lambda i: grp["cash"][i])
     alerts = []
     thr_g, thr_e = float(g.get("alert_group") or 0), float(g.get("alert_entity") or 0)
     low_g = [months[i] for i in range(horizon) if grp["cash"][i] < thr_g]
     if low_g:
-        alerts.append({"level": "warn" if min(grp["cash"]) >= 0 else "danger",
-                       "text": f"Trésorerie groupe sous le seuil de {thr_g/1000:,.0f} k sur {len(low_g)} mois (point bas {grp['cash'][imin]/1000:,.0f} k en {mlabel(months[imin])})."})
+        alerts.append({"level": "warn" if min(grp["cash"]) >= 0 else "danger", "scope": "group",
+                       "text": f"Group cash below the {thr_g/1000:,.0f} k threshold for {len(low_g)} month(s) — low point {grp['cash'][imin]/1000:,.0f} k in {mlabel_en(months[imin], True)}."})
     for e in entities:
         low = [months[i] for i in range(horizon) if res_ent[e]["cash"][i] < thr_e]
         if low:
             j = min(range(horizon), key=lambda i: res_ent[e]["cash"][i])
-            alerts.append({"level": "warn" if res_ent[e]["cash"][j] >= 0 else "danger",
-                           "text": f"{e} : trésorerie sous {thr_e/1000:,.0f} k sur {len(low)} mois (point bas {res_ent[e]['cash'][j]/1000:,.0f} k en {mlabel(months[j])})."})
-    loan_events = [x for l in loans for x in sched[l["id"]]["events"]]
-    for x in sorted(loan_events, key=lambda x: x["month"]):
-        if x["type"] == "remboursement":
-            alerts.append({"level": "info", "text": f"{mlabel(x['month'])} : échéance {x['loan']} — {-x['amount']/1000:,.0f} k à rembourser" +
-                           (" (renouvellement supposé le même mois)" if any(y["month"] == x["month"] and y["type"] == "renouvellement" and y["loan"] == x["loan"] for y in loan_events) else " (pas de renouvellement le même mois)")})
+            alerts.append({"level": "warn" if res_ent[e]["cash"][j] >= 0 else "danger", "scope": "entity",
+                           "text": f"{config.ENTITIES.get(e, {}).get('latin', e)}: cash below {thr_e/1000:,.0f} k for {len(low)} month(s) — low point {res_ent[e]['cash'][j]/1000:,.0f} k in {mlabel_en(months[j], True)}"
+                                   + (" — the entity needs funding (intercompany transfer, shareholder loan or bank loan)." if res_ent[e]["cash"][j] < 0 else ".")})
+    loan_events = sorted([x for l in loans for x in sched[l["id"]]["events"]], key=lambda x: x["month"])
+    for x in loan_events:
+        if x["type"] == "repayment":
+            redrawn = any(y["month"] == x["month"] and y["type"] == "drawdown" and y["loan"] == x["loan"] for y in loan_events)
+            alerts.append({"level": "info", "scope": "loan",
+                           "text": f"{mlabel_en(x['month'], True)}: {x['loan']} ({x['entity']}) — {-x['amount']/1000:,.0f} k to repay"
+                                   + (", renewal assumed the same month." if redrawn else ", no renewal assumed the same month.")})
     n12 = min(12, horizon)
     kpis = {"cash_open": grp["opening"], "cash_min": grp["cash"][imin], "cash_min_month": months[imin], "cash_end": grp["cash"][-1],
-            "revenue_12m": sum(grp["revenue"][:n12]), "ebitda_12m": sum(grp["ebitda"][:n12]), "op_cash_12m": sum(grp["op_cash"][:n12]),
-            "capex_total": sum(grp["capex"]), "cca_total": sum(grp["cca"]),
+            "revenue_12m": sum(grp["revenue"][:n12]), "ebitda_12m": sum(grp["ebitda_after_ga"][:n12]), "pat_12m": sum(grp["pat"][:n12]),
+            "op_cash_12m": sum(grp["op_cash"][:n12]), "capex_total": sum(grp["capex"]), "cca_total": sum(grp["cca"]),
             "entity_end": {e: res_ent[e]["cash"][-1] for e in entities}, "entity_min": {e: min(res_ent[e]["cash"]) for e in entities}}
     return {"label": label or "", "as_of": as_of, "horizon": horizon, "months": months, "stores": res_stores, "entities": res_ent,
-            "group": grp, "calibration": calib, "ho_monthly": ho_monthly, "ho_src": ho_src, "loan_schedule": sorted(loan_events, key=lambda x: x["month"]),
+            "group": grp, "calibration": calib, "ho_monthly": ho_monthly, "ho_src": ho_src, "loan_schedule": loan_events,
             "loans": loans, "events_applied": sorted(applied, key=lambda x: x["month"]), "kpis": kpis, "alerts": alerts, "overrides": ov,
             "general": g, "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
 
 
-_OV = [("revenue_pct", "CA tous magasins {:+.0f} %"), ("growth_pp", "tendance {:+.1f} pt/an"), ("food_pp", "food cost {:+.1f} pt"),
-       ("other_pp", "autres charges {:+.1f} pt"), ("labor_pct", "masse salariale {:+.0f} %"), ("ga_delta", "siège {:+,.0f} RMB/mois"),
-       ("loan_gap", "renouvellement des prêts décalé de {:.0f} mois"), ("horizon", "horizon {:.0f} mois")]
+def pl_rows(res: dict) -> List[dict]:
+    """Lignes du tableau mensuel (libellés du Management Report) partagées par le PDF et la page web.
+    Chaque ligne : label, values (signe d'affichage : charges en négatif), kind (store / total / line / grey), total (bool)."""
+    grp, ents, H = res["group"], res["entities"], res["horizon"]
+    neg = lambda xs: [-v for v in xs]
+    add = lambda a, b: [a[i] + b[i] for i in range(H)]
+    rows = []
+    for c, s in res["stores"].items():
+        rows.append({"label": f"Main Business Income — {c}", "values": s["revenue"], "kind": "store", "total": True})
+    rows.append({"label": "Main Business Income (All Stores)", "values": grp["revenue"], "kind": "total", "total": True})
+    for c, s in res["stores"].items():
+        rows.append({"label": f"EBITDA (Store) — {c}", "values": s["ebitda"], "kind": "store", "total": True})
+    rows.append({"label": "EBITDA (All Stores)", "values": grp["ebitda_stores"], "kind": "total", "total": True})
+    rows.append({"label": "G&A Expenses", "values": neg(grp["ga"]), "kind": "line", "total": True})
+    rows.append({"label": "EBITDA (After G&A)", "values": grp["ebitda_after_ga"], "kind": "total", "total": True})
+    rows.append({"label": "Amortization & Depreciation", "values": neg(grp["da"]), "kind": "line", "total": True})
+    rows.append({"label": "Financial Expenses", "values": neg(grp["fin"]), "kind": "line", "total": True})
+    rows.append({"label": "Operation Taxes & Surcharges", "values": neg(grp["tax_ops"]), "kind": "line", "total": True})
+    rows.append({"label": "Profit (After G&A, Before Tax)", "values": grp["pbt"], "kind": "total", "total": True})
+    rows.append({"label": "Corporate Income Tax", "values": neg(grp["cit"]), "kind": "line", "total": True})
+    rows.append({"label": "Company Profit (After Tax)", "values": grp["pat"], "kind": "total", "total": True})
+    rows.append({"label": "Add back: Amortization & Depreciation", "values": grp["da"], "kind": "line", "total": True, "section": "cash"})
+    adj = add(grp["rent_adj"], grp["friction"])
+    if any(abs(v) > 0.5 for v in adj):
+        rows.append({"label": "Rent payment timing / other adjustments", "values": adj, "kind": "line", "total": True})
+    rows.append({"label": "Capital Expenditure", "values": grp["capex"], "kind": "line", "total": True})
+    rows.append({"label": "Bank Loan Repayment", "values": grp["loan_repay"], "kind": "line", "total": True})
+    rows.append({"label": "Bank Loan Drawdown", "values": grp["loan_draw"], "kind": "line", "total": True})
+    if any(abs(v) > 0.5 for v in grp["cca"]):
+        rows.append({"label": "Shareholder Contributions / Repayments", "values": grp["cca"], "kind": "line", "total": True})
+    other = add(grp["interco"], grp["other"])
+    rows.append({"label": "Deposits & Other Cash Items", "values": other, "kind": "line", "total": True})
+    rows.append({"label": "Net Cash Flow", "values": grp["delta"], "kind": "total", "total": True})
+    for e, r in ents.items():
+        rows.append({"label": f"Cash — {config.ENTITIES.get(e, {}).get('latin', e).split(' — ')[0]}", "values": r["cash"], "kind": "grey", "total": False})
+    rows.append({"label": "Cash (Group, End of Month)", "values": grp["cash"], "kind": "total", "total": False})
+    return rows
+
+
+_OV = [("revenue_pct", "revenue all stores {:+.0f} %"), ("growth_pp", "trend {:+.1f} pt/yr"), ("food_pp", "food cost {:+.1f} pt"),
+       ("other_pp", "other opex {:+.1f} pt"), ("labor_pct", "labor cost {:+.0f} %"), ("ga_delta", "G&A {:+,.0f} RMB/month"),
+       ("loan_gap", "loan renewal delayed by {:.0f} month(s)"), ("horizon", "horizon {:.0f} months")]
 
 
 def describe_overrides(ov: dict) -> str:
-    """Variantes d'une simulation en français lisible (vide si aucune)."""
+    """Variantes d'une simulation, lisibles (vide si aucune)."""
     if not ov:
         return ""
     parts = []
     for key, fmt in _OV:
         v = ov.get(key)
         if v not in (None, "", 0, 0.0):
-            parts.append(fmt.format(float(v)).replace(",", " "))
+            parts.append(fmt.format(float(v)))
     if ov.get("capex_scale") not in (None, "", 1, 1.0):
-        parts.append(f"investissements × {float(ov['capex_scale']):.2f}".replace(".", ","))
+        parts.append(f"capital expenditure × {float(ov['capex_scale']):.2f}")
     if ov.get("loan_renew") is True:
-        parts.append("tous les prêts renouvelés")
+        parts.append("all bank loans renewed")
     elif ov.get("loan_renew") is False:
-        parts.append("aucun prêt renouvelé (stress)")
+        parts.append("no bank loan renewed (stress case)")
     sa = ov.get("stores_active") or {}
     if sa:
         on = [c for c, v in sa.items() if v]
-        parts.append("magasins projetés : " + ", ".join(on) if on else "aucun magasin projeté")
+        parts.append("stores included: " + ", ".join(on) if on else "no store included")
     if ov.get("cca_amount"):
-        parts.append(f"apport CCA {float(ov['cca_amount'])/1000:,.0f} k en {mlabel(ov.get('cca_month', ''))} ({ov.get('cca_entity', 'JZ')})".replace(",", " "))
+        parts.append(f"shareholder contribution {float(ov['cca_amount'])/1000:,.0f} k in {mlabel_en(ov.get('cca_month', ''))} ({ov.get('cca_entity', 'JZ')})")
     return " · ".join(parts)
 
 
@@ -424,7 +487,7 @@ def truncate(actuals: dict, upto: str) -> dict:
 
 def backtest_reference(cfg: dict, actuals: dict, month: str, horizon: int = 3) -> dict:
     prev = month_add(month, -1)
-    ref = forecast(cfg, truncate(actuals, prev), as_of=prev, horizon=horizon, label=f"modèle recalculé au {mlabel(prev)} (données ≤ {prev})")
+    ref = forecast(cfg, truncate(actuals, prev), as_of=prev, horizon=horizon, label=f"model recomputed at end of {mlabel_en(prev, True)} (data up to {prev})")
     ref["backtest"] = True
     return ref
 
@@ -435,83 +498,87 @@ def _pct(a, b):
 
 def variance(cfg: dict, actuals: dict, month: str, ref: dict) -> dict:
     if month not in ref.get("months", []):
-        raise ValueError(f"Le mois {month} n'est pas couvert par le prévisionnel de référence.")
+        raise ValueError(f"Month {month} is not covered by the reference forecast.")
     i = ref["months"].index(month)
     prev = month_add(month, -1)
     g = cfg.get("general") or {}
+    ho_entity = g.get("ho_entity") or "JZ"
     out = {"month": month, "reference": ref.get("label") or "", "backtest": bool(ref.get("backtest")), "as_of": ref.get("as_of"),
            "stores": [], "entities": {}, "group": {}, "proposals": [], "diagnostic": []}
     group_hist = group_history(actuals)
     stores_cfg = {s["code"]: s for s in cfg.get("stores") or []}
-    totF = {"revenue": 0.0, "ebitda": 0.0}
-    totA = {"revenue": 0.0, "ebitda": 0.0}
+    tot = {"revenue_F": 0.0, "revenue_A": 0.0, "ebitda_stores_F": 0.0, "ebitda_stores_A": 0.0, "da_F": 0.0, "da_A": 0.0, "fin_F": 0.0, "fin_A": 0.0, "tax_F": 0.0, "tax_A": 0.0}
     for code, rows in ref["stores"].items():
         a = (actuals.get("stores", {}).get(code) or {}).get(month)
-        F = {k: rows[k][i] for k in ("revenue", "food", "labor", "rent", "other", "ebitda")}
+        F = {k: rows[k][i] for k in ("revenue", "food", "labor", "rent", "other", "ebitda", "da")}
         row = {"code": code, "name": rows.get("name") or code, "entity": rows.get("entity"), "F": F, "A": None, "D": None}
+        tot["revenue_F"] += F["revenue"]; tot["ebitda_stores_F"] += F["ebitda"]; tot["da_F"] += F["da"]
         if a:
             A = {"revenue": a.get("revenue") or 0, "food": a.get("food") or 0, "labor": a.get("labor") or 0, "rent": a.get("rent") or 0,
-                 "other": other_of(a), "ebitda": ebitda_of(a)}
+                 "other": other_of(a), "ebitda": ebitda_of(a), "da": da_of(a)}
             row["A"] = A
             row["D"] = {k: A[k] - F[k] for k in F}
             row["Dpct"] = {k: _pct(A[k], F[k]) for k in F}
             row["ratios"] = {"food_F": F["food"] / F["revenue"] if F["revenue"] else None, "food_A": A["food"] / A["revenue"] if A["revenue"] else None,
                              "other_F": F["other"] / F["revenue"] if F["revenue"] else None, "other_A": A["other"] / A["revenue"] if A["revenue"] else None}
-            # contributions à l'écart d'EBITDA : CA (à ratios prévus), food (effet ratio), autres (effet ratio), salaires, loyer
             margin_F = 1 - (row["ratios"]["food_F"] or 0) - (row["ratios"]["other_F"] or 0)
             row["bridge"] = {"ca": row["D"]["revenue"] * margin_F,
                              "food": -((row["ratios"]["food_A"] or 0) - (row["ratios"]["food_F"] or 0)) * A["revenue"],
                              "other": -((row["ratios"]["other_A"] or 0) - (row["ratios"]["other_F"] or 0)) * A["revenue"],
                              "labor": -row["D"]["labor"], "rent": -row["D"]["rent"]}
-            # cumul 3 mois (CA)
             c3F = c3A = 0.0
             n3 = 0
             for j in range(max(0, i - 2), i + 1):
-                mj = ref["months"][j]
-                aj = (actuals.get("stores", {}).get(code) or {}).get(mj)
+                aj = (actuals.get("stores", {}).get(code) or {}).get(ref["months"][j])
                 if aj:
-                    c3F += rows["revenue"][j]
-                    c3A += aj.get("revenue") or 0
-                    n3 += 1
+                    c3F += rows["revenue"][j]; c3A += aj.get("revenue") or 0; n3 += 1
             row["cum3"] = {"n": n3, "F": c3F, "A": c3A, "pct": _pct(c3A, c3F)}
-            totF["revenue"] += F["revenue"]; totA["revenue"] += A["revenue"]
-            totF["ebitda"] += F["ebitda"]; totA["ebitda"] += A["ebitda"]
+            tot["revenue_A"] += A["revenue"]; tot["ebitda_stores_A"] += A["ebitda"]; tot["da_A"] += A["da"]
+            tot["fin_A"] += a.get("fin") or 0; tot["tax_A"] += a.get("tax_ops") or 0
         out["stores"].append(row)
-    # siège
     ho = (actuals.get("stores", {}).get("HO") or {}).get(month) or {}
-    gaF = sum(ref["entities"][e]["ga"][i] for e in ref["entities"])
-    gaA = ho.get("ga") or 0
-    finF = sum(ref["entities"][e]["interest"][i] + ref["entities"][e]["fees"][i] for e in ref["entities"])
-    finA = sum(((actuals.get("stores", {}).get(c) or {}).get(month) or {}).get("fin") or 0 for c in list(ref["stores"]) + ["HO"])
-    out["group"] = {"revenue_F": totF["revenue"], "revenue_A": totA["revenue"], "ebitda_stores_F": totF["ebitda"], "ebitda_stores_A": totA["ebitda"],
-                    "ga_F": gaF, "ga_A": gaA, "fin_F": finF, "fin_A": finA,
-                    "ebitda_F": totF["ebitda"] - gaF, "ebitda_A": totA["ebitda"] - gaA,
-                    "cash_F": ref["group"]["cash"][i], "cash_prev_F": ref["group"]["cash"][i - 1] if i else ref["group"]["opening"]}
-    # entités : trésorerie et pont
+    G = dict(tot)
+    G["ga_F"] = sum(ref["entities"][e]["ga"][i] for e in ref["entities"])
+    G["ga_A"] = ho.get("ga") or 0
+    G["fin_F"] = sum(ref["entities"][e]["fin"][i] for e in ref["entities"])
+    G["fin_A"] += ho.get("fin") or 0
+    G["tax_F"] = sum(ref["entities"][e]["tax_ops"][i] for e in ref["entities"])
+    G["cit_F"] = sum(ref["entities"][e]["cit"][i] for e in ref["entities"])
+    G["cit_A"] = sum((((actuals.get("stores", {}).get(c) or {}).get(month) or {}).get("income_tax") or 0) for c in list(ref["stores"]) + ["HO"])
+    G["ebitda_F"] = G["ebitda_stores_F"] - G["ga_F"]
+    G["ebitda_A"] = G["ebitda_stores_A"] - G["ga_A"]
+    G["pbt_F"] = G["ebitda_F"] - G["da_F"] - G["fin_F"] - G["tax_F"]
+    G["pbt_A"] = G["ebitda_A"] - G["da_A"] - G["fin_A"] - G["tax_A"]
+    G["pat_F"] = G["pbt_F"] - G["cit_F"]
+    G["pat_A"] = G["pbt_A"] - G["cit_A"]
+    G["cash_F"] = ref["group"]["cash"][i]
+    G["cash_prev_F"] = ref["group"]["cash"][i - 1] if i else ref["group"]["opening"]
+    out["group"] = G
     cashA_tot = cashPrev_tot = 0.0
     have_cash = True
     for e, r in ref["entities"].items():
         b = (actuals.get("entities", {}).get(e) or {}).get(month)
         bp = (actuals.get("entities", {}).get(e) or {}).get(prev)
-        ent = {"cash_F": r["cash"][i], "delta_F": r["delta"][i], "cash_prev_F": r["cash"][i - 1] if i else r["opening"]}
+        ent = {"cash_F": r["cash"][i], "delta_F": r["delta"][i], "cash_prev_F": r["cash"][i - 1] if i else r["opening"],
+               "op_F": r["pat"][i] + r["da"][i] + r["rent_adj"][i] + r["friction"][i]}
         if b and bp:
             cashA = (b.get("cash") or 0) + (b.get("cash_on_hand") or 0)
             cashP = (bp.get("cash") or 0) + (bp.get("cash_on_hand") or 0)
-            ebA = sum(ebitda_of((actuals["stores"].get(c) or {}).get(month) or {}) for c, rows in ref["stores"].items() if rows.get("entity") == e)
-            gaAe = gaA if e == (g.get("ho_entity") or "JZ") else 0.0
-            finAe = sum((((actuals["stores"].get(c) or {}).get(month) or {}).get("fin") or 0) for c, rows in ref["stores"].items() if rows.get("entity") == e) \
-                + ((ho.get("fin") or 0) if e == (g.get("ho_entity") or "JZ") else 0.0)
+            mine = [c for c, rows in ref["stores"].items() if rows.get("entity") == e]
+            ebA = sum(ebitda_of((actuals["stores"].get(c) or {}).get(month) or {}) for c in mine)
+            gaAe = G["ga_A"] if e == ho_entity else 0.0
+            finAe = sum((((actuals["stores"].get(c) or {}).get(month) or {}).get("fin") or 0) for c in mine) + ((ho.get("fin") or 0) if e == ho_entity else 0.0)
+            taxAe = sum((((actuals["stores"].get(c) or {}).get(month) or {}).get("tax_ops") or 0) + (((actuals["stores"].get(c) or {}).get(month) or {}).get("income_tax") or 0) for c in mine)
+            amortA = sum((((actuals["stores"].get(c) or {}).get(month) or {}).get("amort") or 0) for c in mine)
             d = lambda k: (b.get(k) or 0) - (bp.get(k) or 0)
-            d_loans = -d("loans")
-            d_cca = -(d("cca_14") + d("other_03"))
-            d_interco = -(d("interco_recv") - d("interco_pay"))
-            amortA = sum((((actuals["stores"].get(c) or {}).get(month) or {}).get("amort") or 0) for c, rows in ref["stores"].items() if rows.get("entity") == e)
-            capexA = -(d("fixed_assets") + amortA)      # Δ(1501 + 1901) + dotation 5501.14 = investissements décaissés (approx.)
-            explained = ebA - gaAe - finAe + d_loans + d_cca + d_interco + capexA
-            wc = {"Fournisseurs (2121)": -d("ap"), "Salaires à payer (2151)": -d("wages_payable"), "Taxes à payer (2171)": -d("tax_payable"),
-                  "Clients (1131)": -d("ar"), "Stocks (1211+1243)": -(d("inventory_food") + d("inventory_other")), "Dépôts (1133.01)": -d("deposits"),
-                  "Charges payées d'avance (1133.06)": -d("prepaid"), "Avances clients (2181.13)": -d("advances")}
-            ent.update({"cash_A": cashA, "cash_prev_A": cashP, "delta_A": cashA - cashP, "ebitda_A": ebA, "ga_A": gaAe, "fin_A": finAe,
+            d_loans, d_cca, d_interco = -d("loans"), -(d("cca_14") + d("other_03")), -(d("interco_recv") - d("interco_pay"))
+            capexA = -(d("fixed_assets") + amortA)
+            opA = ebA - gaAe - finAe - taxAe
+            explained = opA + d_loans + d_cca + d_interco + capexA
+            wc = {"Accounts payable (2121)": -d("ap"), "Accrued salaries (2151)": -d("wages_payable"), "Tax payable (2171)": -d("tax_payable"),
+                  "Accounts receivable (1131)": -d("ar"), "Inventory (1211+1243)": -(d("inventory_food") + d("inventory_other")), "Deposits (1133.01)": -d("deposits"),
+                  "Prepayments (1133.06)": -d("prepaid"), "Advance receipts (2181.13)": -d("advances")}
+            ent.update({"cash_A": cashA, "cash_prev_A": cashP, "delta_A": cashA - cashP, "op_A": opA, "ebitda_A": ebA, "ga_A": gaAe, "fin_A": finAe,
                         "d_loans": d_loans, "d_cca": d_cca, "d_interco": d_interco, "capex_A": capexA, "residual": cashA - cashP - explained, "wc": wc,
                         "wc_total": sum(wc.values()), "loans_F": r["loans"][i], "cca_F": r["cca"][i], "interco_F": r["interco"][i],
                         "capex_F": r["capex"][i], "other_F": r["other"][i]})
@@ -520,48 +587,45 @@ def variance(cfg: dict, actuals: dict, month: str, ref: dict) -> dict:
             have_cash = False
         out["entities"][e] = ent
     if have_cash:
-        out["group"]["cash_A"] = cashA_tot
-        out["group"]["cash_prev_A"] = cashPrev_tot
+        G["cash_A"] = cashA_tot
+        G["cash_prev_A"] = cashPrev_tot
 
-    # ---- diagnostic & propositions
+    # ---- diagnostic (anglais, destiné aux associés)
     diag = out["diagnostic"]
     for row in out["stores"]:
         if not row["A"]:
-            diag.append({"level": "info", "text": f"{row['name']} : pas de réalisé importé pour {mlabel(month)}."})
+            diag.append({"level": "info", "text": f"{row['name']}: no actuals imported for {mlabel_en(month, True)}."})
             continue
         dp = row["Dpct"]["revenue"]
         if dp is not None and abs(dp) >= 0.05:
-            sens = "au-dessus" if dp > 0 else "en dessous"
-            txt = f"{row['name']} : CA {sens} du prévu de {abs(dp):.0%} ({row['A']['revenue']/1000:,.0f} k contre {row['F']['revenue']/1000:,.0f} k)."
+            txt = f"{row['name']}: revenue {abs(dp):.0%} {'above' if dp > 0 else 'below'} forecast ({row['A']['revenue']/1000:,.0f} k vs {row['F']['revenue']/1000:,.0f} k)."
             if row["cum3"]["n"] >= 2 and row["cum3"]["pct"] is not None:
-                txt += f" Sur {row['cum3']['n']} mois cumulés : {row['cum3']['pct']:+.0%}."
-                if abs(row["cum3"]["pct"]) >= 0.05:
-                    txt += " Écart persistant : le niveau d'activité (run-rate) est à revoir, pas seulement la saisonnalité."
-                else:
-                    txt += " Écart ponctuel (le cumul reste proche du prévu) : plutôt un décalage de saisonnalité."
+                txt += f" Cumulative over {row['cum3']['n']} months: {row['cum3']['pct']:+.0%}."
+                txt += (" Persistent gap: the activity level (run-rate) needs revisiting, not only the seasonality." if abs(row["cum3"]["pct"]) >= 0.05
+                        else " One-off gap (the cumulative stays close to forecast): mostly a timing / seasonality effect.")
             diag.append({"level": "warn" if abs(dp) >= 0.10 else "info", "text": txt})
         rf, ra = row["ratios"]["food_F"], row["ratios"]["food_A"]
         if rf is not None and ra is not None and abs(ra - rf) >= 0.015:
-            diag.append({"level": "warn", "text": f"{row['name']} : food cost à {ra:.1%} contre {rf:.1%} prévu ({row['bridge']['food']/1000:+,.0f} k d'EBITDA)."})
+            diag.append({"level": "warn", "text": f"{row['name']}: food cost at {ra:.1%} vs {rf:.1%} forecast ({row['bridge']['food']/1000:+,.0f} k EBITDA)."})
         of_, oa = row["ratios"]["other_F"], row["ratios"]["other_A"]
         if of_ is not None and oa is not None and abs(oa - of_) >= 0.02:
-            diag.append({"level": "info", "text": f"{row['name']} : autres charges à {oa:.1%} du CA contre {of_:.1%} prévu ({row['bridge']['other']/1000:+,.0f} k)."})
+            diag.append({"level": "info", "text": f"{row['name']}: other operation expenses at {oa:.1%} of income vs {of_:.1%} forecast ({row['bridge']['other']/1000:+,.0f} k)."})
         if row["F"]["labor"] and abs(row["D"]["labor"] / row["F"]["labor"]) >= 0.10:
-            diag.append({"level": "info", "text": f"{row['name']} : masse salariale {row['A']['labor']/1000:,.0f} k contre {row['F']['labor']/1000:,.0f} k prévu ({row['D']['labor']/row['F']['labor']:+.0%})."})
+            diag.append({"level": "info", "text": f"{row['name']}: labor cost {row['A']['labor']/1000:,.0f} k vs {row['F']['labor']/1000:,.0f} k forecast ({row['D']['labor']/row['F']['labor']:+.0%})."})
         if row["F"]["rent"] and abs(row["D"]["rent"] / row["F"]["rent"]) >= 0.05:
-            diag.append({"level": "info", "text": f"{row['name']} : loyer {row['A']['rent']/1000:,.0f} k contre {row['F']['rent']/1000:,.0f} k prévu."})
-    if gaF and abs(gaA / gaF - 1) >= 0.05:
-        diag.append({"level": "info", "text": f"Siège : G&A {gaA/1000:,.0f} k contre {gaF/1000:,.0f} k prévu ({gaA/gaF-1:+.0%})."})
+            diag.append({"level": "info", "text": f"{row['name']}: rent {row['A']['rent']/1000:,.0f} k vs {row['F']['rent']/1000:,.0f} k forecast."})
+    if G["ga_F"] and abs(G["ga_A"] / G["ga_F"] - 1) >= 0.05:
+        diag.append({"level": "info", "text": f"Head office: G&A expenses {G['ga_A']/1000:,.0f} k vs {G['ga_F']/1000:,.0f} k forecast ({G['ga_A']/G['ga_F']-1:+.0%})."})
     for e, ent in out["entities"].items():
+        name = config.ENTITIES.get(e, {}).get("latin", e).split(" — ")[0]
         if "residual" in ent:
             if abs(ent["residual"]) >= 100000:
                 top = sorted(ent["wc"].items(), key=lambda kv: -abs(kv[1]))[:3]
-                diag.append({"level": "warn", "text": f"{e} : {ent['residual']/1000:+,.0f} k de variation de trésorerie non expliqués par le P&L, les investissements, les prêts, les CCA et les intercos. "
-                             "Principaux mouvements de bilan : " + ", ".join(f"{k} {v/1000:+,.0f} k" for k, v in top) + "."})
+                diag.append({"level": "warn", "text": f"{name}: {ent['residual']/1000:+,.0f} k of cash movement not explained by the P&L, capital expenditure, bank loans, "
+                             "shareholder accounts and intercompany flows. Main balance-sheet movements: " + ", ".join(f"{k} {v/1000:+,.0f} k" for k, v in top) + "."})
             dv = ent["delta_A"] - ent["delta_F"]
             if abs(dv) >= 100000:
-                diag.append({"level": "info", "text": f"{e} : variation de trésorerie réelle {ent['delta_A']/1000:+,.0f} k contre {ent['delta_F']/1000:+,.0f} k prévue (écart {dv/1000:+,.0f} k)."})
-    # propositions de recalibrage
+                diag.append({"level": "info", "text": f"{name}: actual cash movement {ent['delta_A']/1000:+,.0f} k vs {ent['delta_F']/1000:+,.0f} k forecast (gap {dv/1000:+,.0f} k)."})
     trunc = truncate(actuals, month)
     for code, rows in ref["stores"].items():
         s = stores_cfg.get(code)
@@ -569,23 +633,24 @@ def variance(cfg: dict, actuals: dict, month: str, ref: dict) -> dict:
         if not s or not eff or not (trunc["stores"].get(code) or {}).get(month):
             continue
         rec = calibrate_store(s, trunc["stores"].get(code) or {}, g, month, group_hist)
+
         def prop(param, label, used, new, fmt, thr, manual):
             if used and abs(new / used - 1) >= thr:
                 out["proposals"].append({"store": code, "name": rows.get("name") or code, "param": param, "label": label, "used": used, "new": new,
-                                         "setting": "saisi" if manual else "auto",
-                                         "text": (f"{label} utilisé : {fmt(used)} → recalibré sur les derniers mois : {fmt(new)}. "
-                                                  + ("Paramètre saisi à la main : appliquer la nouvelle valeur ou repasser en auto." if manual
-                                                     else "Paramètre en auto : le prochain prévisionnel utilisera cette valeur ; fixer une valeur pour s'en écarter."))})
-        prop("runrate_annual", "CA annuel", eff["runrate_annual"], rec["runrate"] * 12, lambda v: f"{v/1e6:,.2f} M", 0.03, s.get("runrate_annual") is not None)
+                                         "setting": "entered" if manual else "auto",
+                                         "text": (f"{label} used: {fmt(used)} → recalibrated on recent months: {fmt(new)}. "
+                                                  + ("Entered value: apply the new one or switch back to auto." if manual
+                                                     else "Auto parameter: the next forecast will use the recalibrated value unless a value is entered."))})
+        prop("runrate_annual", "Annual revenue", eff["runrate_annual"], rec["runrate"] * 12, lambda v: f"{v/1e6:,.2f} M", 0.03, s.get("runrate_annual") is not None)
         prop("food_pct", "Food cost", eff["food_pct"], rec["food_pct"] * 100, lambda v: f"{v:.1f} %", 0.04, s.get("food_pct") is not None)
-        prop("other_pct", "Autres charges (% CA)", eff["other_pct"], rec["other_pct"] * 100, lambda v: f"{v:.1f} %", 0.08, s.get("other_pct") is not None)
-        prop("labor", "Masse salariale (RMB/mois)", eff["labor"], rec["labor"], lambda v: f"{v/1000:,.0f} k", 0.06, s.get("labor") is not None)
-        prop("rent", "Loyer (RMB/mois)", eff["rent"], rec["rent"], lambda v: f"{v/1000:,.0f} k", 0.04, s.get("rent") is not None)
+        prop("other_pct", "Other opex (% income)", eff["other_pct"], rec["other_pct"] * 100, lambda v: f"{v:.1f} %", 0.08, s.get("other_pct") is not None)
+        prop("labor", "Labor cost (RMB/month)", eff["labor"], rec["labor"], lambda v: f"{v/1000:,.0f} k", 0.06, s.get("labor") is not None)
+        prop("rent", "Rent (RMB/month)", eff["rent"], rec["rent"], lambda v: f"{v/1000:,.0f} k", 0.04, s.get("rent") is not None)
     ho_new, _ = calibrate_ho(trunc, g, month)
-    if gaF and ho_new and abs(ho_new / gaF - 1) >= 0.05:
-        out["proposals"].append({"store": "HO", "name": "Siège", "param": "ho_monthly", "label": "G&A siège (RMB/mois)", "used": gaF, "new": ho_new,
-                                 "setting": "saisi" if g.get("ho_monthly") else "auto",
-                                 "text": f"G&A siège utilisé : {gaF/1000:,.0f} k/mois → médiane récente : {ho_new/1000:,.0f} k/mois."})
+    if G["ga_F"] and ho_new and abs(ho_new / G["ga_F"] - 1) >= 0.05:
+        out["proposals"].append({"store": "HO", "name": "Head office", "param": "ho_monthly", "label": "G&A expenses (RMB/month)", "used": G["ga_F"], "new": ho_new,
+                                 "setting": "entered" if g.get("ho_monthly") else "auto",
+                                 "text": f"G&A used: {G['ga_F']/1000:,.0f} k/month → recent median: {ho_new/1000:,.0f} k/month."})
     if not diag:
-        diag.append({"level": "ok", "text": "Aucun écart significatif : le mois est conforme au modèle."})
+        diag.append({"level": "ok", "text": "No significant variance: the month is in line with the model."})
     return out

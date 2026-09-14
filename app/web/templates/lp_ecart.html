@@ -9,14 +9,20 @@
 </div>
 {% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
 {% set G = v.group %}
-<div class="row g-2 mb-3">
-  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Chiffre d'affaires</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.revenue_A) }} k</div><div class="small text-muted">prévu {{ k(G.revenue_F) }} k · {{ pct((G.revenue_A / G.revenue_F - 1) if G.revenue_F else None, 1, True) }}</div></div></div></div>
-  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">EBITDA après siège</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.ebitda_A) }} k</div><div class="small text-muted">prévu {{ k(G.ebitda_F) }} k · {{ k(G.ebitda_A - G.ebitda_F, True) }} k</div></div></div></div>
+<div class="card shadow-sm mb-3"><div class="card-body py-2">
+  <table class="table table-sm mb-0" style="font-size:.8rem;max-width:720px"><thead class="table-light"><tr><th></th><th class="text-end">Forecast</th><th class="text-end">Actual</th><th class="text-end">Variance</th></tr></thead><tbody>
+  {% for lab, f, a, bold in [("Main Business Income (All Stores)", G.revenue_F, G.revenue_A, False), ("EBITDA (All Stores)", G.ebitda_stores_F, G.ebitda_stores_A, True),
+                             ("G&A Expenses", -G.ga_F, -G.ga_A, False), ("EBITDA (After G&A)", G.ebitda_F, G.ebitda_A, True), ("Amortization & Depreciation", -G.da_F, -G.da_A, False),
+                             ("Financial Expenses", -G.fin_F, -G.fin_A, False), ("Operation Taxes & Surcharges", -G.tax_F, -G.tax_A, False), ("Profit (After G&A, Before Tax)", G.pbt_F, G.pbt_A, True),
+                             ("Corporate Income Tax", -G.cit_F, -G.cit_A, False), ("Company Profit (After Tax)", G.pat_F, G.pat_A, True)] %}
+    <tr class="{{ 'fw-semibold' if bold }}"><td>{{ lab }}</td><td class="text-end">{{ k(f) }}</td><td class="text-end">{{ k(a) }}</td><td class="text-end {{ 'text-danger' if a - f < -500 else ('text-success' if a - f > 500) }}">{{ k(a - f, True) }}</td></tr>
+  {% endfor %}
   {% if G.cash_A is defined %}
-  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Trésorerie fin de mois</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.cash_A) }} k</div><div class="small text-muted">prévue {{ k(G.cash_F) }} k · {{ k(G.cash_A - G.cash_F, True) }} k</div></div></div></div>
-  <div class="col-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Variation du mois</div><div class="h5 mb-0" style="color:#0A2540">{{ k(G.cash_A - G.cash_prev_A, True) }} k</div><div class="small text-muted">prévue {{ k(G.cash_F - G.cash_prev_F, True) }} k</div></div></div></div>
+    <tr><td>Net cash flow of the month</td><td class="text-end">{{ k(G.cash_F - G.cash_prev_F, True) }}</td><td class="text-end">{{ k(G.cash_A - G.cash_prev_A, True) }}</td><td class="text-end">{{ k((G.cash_A - G.cash_prev_A) - (G.cash_F - G.cash_prev_F), True) }}</td></tr>
+    <tr class="fw-semibold"><td>Cash (Group, End of Month)</td><td class="text-end">{{ k(G.cash_F) }}</td><td class="text-end">{{ k(G.cash_A) }}</td><td class="text-end">{{ k(G.cash_A - G.cash_F, True) }}</td></tr>
   {% endif %}
-</div>
+  </tbody></table>
+</div></div>
 <div class="row g-3">
   <div class="col-lg-7">
     <h3 class="h6 text-uppercase text-muted">Par magasin (k RMB)</h3>
@@ -42,7 +48,7 @@
         {% if ent.cash_A is defined %}
         <table class="table table-sm mb-1" style="font-size:.76rem"><thead><tr class="text-muted"><th></th><th class="text-end">Prévu</th><th class="text-end">Réel</th></tr></thead><tbody>
           <tr><td>Début de mois</td><td class="text-end">{{ k(ent.cash_prev_F) }}</td><td class="text-end">{{ k(ent.cash_prev_A) }}</td></tr>
-          <tr><td>EBITDA − siège − financier</td><td class="text-end">{{ k(ent.delta_F - ent.loans_F - ent.cca_F - ent.interco_F - ent.capex_F - ent.other_F) }}</td><td class="text-end">{{ k(ent.ebitda_A - ent.ga_A - ent.fin_A) }}</td></tr>
+          <tr><td>Flux d'exploitation (résultat après impôt + D&A)</td><td class="text-end">{{ k(ent.op_F) }}</td><td class="text-end">{{ k(ent.op_A) }}</td></tr>
           <tr><td>Investissements</td><td class="text-end">{{ k(ent.capex_F) }}</td><td class="text-end">{{ k(ent.capex_A) }}</td></tr>
           <tr><td>Prêts</td><td class="text-end">{{ k(ent.loans_F) }}</td><td class="text-end">{{ k(ent.d_loans) }}</td></tr>
           <tr><td>Comptes courants</td><td class="text-end">{{ k(ent.cca_F) }}</td><td class="text-end">{{ k(ent.d_cca) }}</td></tr>

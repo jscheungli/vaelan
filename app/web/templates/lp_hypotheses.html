@@ -49,6 +49,7 @@
       <div class="col-md-2"><label class="form-label mb-0">Masse salariale RMB/mois</label><input class="form-control form-control-sm" name="s{{ i }}_labor" value="{{ s.labor|int if s.labor else '' }}" placeholder="{{ 'auto ' ~ k(c.labor) ~ ' k (' ~ pct(c.labor_pct_equiv, 0) ~ ' du CA)' if c.get('labor') else '' }}"></div>
       <div class="col-md-1"><label class="form-label mb-0">Loyer RMB/mois</label><input class="form-control form-control-sm" name="s{{ i }}_rent" value="{{ s.rent|int if s.rent else '' }}" placeholder="{{ 'auto ' ~ k(c.rent) ~ ' k' if c.get('rent') else '' }}"></div>
       <div class="col-md-1"><label class="form-label mb-0">Autres % CA</label><input class="form-control form-control-sm" name="s{{ i }}_other_pct" value="{{ s.other_pct if s.other_pct is not none else '' }}" placeholder="{{ 'auto ' ~ pct(c.other_pct) if c.get('other_pct') is not none and c.get('runrate') else '' }}"></div>
+      <div class="col-md-1"><label class="form-label mb-0">D&A RMB/mois</label><input class="form-control form-control-sm" name="s{{ i }}_da_monthly" value="{{ s.da_monthly|int if s.da_monthly else '' }}" placeholder="{{ 'auto ' ~ k(c.da) ~ ' k' if c.get('da') is not none and c.get('runrate') else '' }}"></div>
       <div class="col-md-1"><label class="form-label mb-0">Loyer payé tous les</label><select class="form-select form-select-sm" name="s{{ i }}_rent_period">{% for p, lab in [(1, 'mois'), (3, '3 mois'), (6, '6 mois'), (12, '12 mois')] %}<option value="{{ p }}" {{ 'selected' if p == s.rent_period }}>{{ lab }}</option>{% endfor %}</select></div>
       <div class="col-md-1"><label class="form-label mb-0">1er paiement</label><input class="form-control form-control-sm" name="s{{ i }}_rent_first_month" value="{{ s.rent_first_month or '' }}" placeholder="AAAA-MM"></div>
       <div class="col-md-1"><label class="form-label mb-0">Montée en charge (mois)</label><input class="form-control form-control-sm" name="s{{ i }}_ramp_months" value="{{ s.ramp_months or 0 }}"></div>
@@ -74,6 +75,7 @@
       <div class="col-md-1"><label class="form-label mb-0">Salaires/mois</label><input class="form-control form-control-sm" name="s{{ i }}_labor"></div>
       <div class="col-md-1"><label class="form-label mb-0">Loyer/mois</label><input class="form-control form-control-sm" name="s{{ i }}_rent"></div>
       <div class="col-md-1"><label class="form-label mb-0">Autres %</label><input class="form-control form-control-sm" name="s{{ i }}_other_pct"></div>
+      <div class="col-md-1"><label class="form-label mb-0">D&A/mois</label><input class="form-control form-control-sm" name="s{{ i }}_da_monthly"></div>
     </div>
     <div class="row g-2 mt-0">
       <div class="col-md-2"><label class="form-label mb-0">Saisonnalité</label><select class="form-select form-select-sm" name="s{{ i }}_season">{% for kk, lab in season_labels.items() %}<option value="{{ kk }}" {{ 'selected' if kk == 'school' }}>{{ lab }}</option>{% endfor %}</select></div>

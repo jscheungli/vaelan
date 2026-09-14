@@ -13,7 +13,7 @@ from . import config, engine, importer, report
 
 CODE = config.COMPANY_CODE
 STORE_FIELDS = ["revenue", "food", "labor", "rent", "opex_5501", "marketing", "utilities", "delivery", "amort", "depr", "ga", "fin",
-                "tax_ops", "income_tax", "ebitda_report", "ebitda_after_ga"]
+                "tax_ops", "income_tax", "ebitda_report", "ebitda_after_ga", "profit_before_tax", "profit_after_tax"]
 ENTITY_FIELDS = ["cash", "cash_on_hand", "ar", "deposits", "interco_recv", "prepaid", "inventory_food", "inventory_other", "fixed_assets",
                  "loans", "ap", "wages_payable", "tax_payable", "other_03", "interco_pay", "advances", "cca_14"]
 

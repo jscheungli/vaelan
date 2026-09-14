@@ -5,6 +5,8 @@ COMPANY_CODE = "LAPARISIENNE"
 
 MONTHS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 MONTHS_FR_LONG = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MONTHS_EN_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
 ENTITIES = {
     "JZ": {"name": "JIANZAN 健赞餐饮", "short": "JZ", "latin": "JIANZAN (JZ) — ZHY, BFC + Jingqiao, siège"},
@@ -44,43 +46,44 @@ _FP_SEASON = [0.75, 0.72, 1.10, 1.19, 1.19, 1.19, 0.69, 0.75, 0.94, 1.19, 1.19, 
 STORES = [
     {"code": "ZHY", "name": "Zhangyang Road", "entity": "JZ", "active": True, "opened": "2014-04", "closed": None,
      "season": "auto", "season_custom": None, "runrate_annual": None, "growth_pct": 0.0,
-     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "rent_period": 1, "rent_first_month": None,
+     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "da_monthly": None, "rent_period": 1, "rent_first_month": None,
      "ramp_months": 0, "ramp_start_pct": 100, "preopening_months": 0, "note": "Magasin mature (2014)."},
     {"code": "BFC", "name": "BFC + kiosque Jingqiao", "entity": "JZ", "active": True, "opened": "2018-10", "closed": None,
      "season": "auto", "season_custom": None, "runrate_annual": None, "growth_pct": 0.0,
-     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "rent_period": 1, "rent_first_month": None,
+     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "da_monthly": None, "rent_period": 1, "rent_first_month": None,
      "ramp_months": 0, "ramp_start_pct": 100, "preopening_months": 0,
      "note": "Jingqiao intégré depuis juin 2025 ; fermé en mai 2026 (travaux), rouvert en juin avec cuisine chaude."},
     {"code": "QPLFS", "name": "Qingpu (kiosque école française)", "entity": "LBL", "active": True, "opened": "2025-09", "closed": None,
      "season": "school", "season_custom": None, "runrate_annual": None, "growth_pct": 0.0,
-     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "rent_period": 1, "rent_first_month": None,
+     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "da_monthly": None, "rent_period": 1, "rent_first_month": None,
      "ramp_months": 0, "ramp_start_pct": 100, "preopening_months": 0, "note": "Kiosque depuis septembre 2025 (historique < 24 mois : profil scolaire)."},
-    {"code": "FP", "name": "Fashion Park (Minhang)", "entity": "LBL", "active": False, "opened": "2027-01", "closed": None,
+    {"code": "FP", "name": "Fashion Park (Minhang)", "entity": "LBL", "active": True, "opened": "2027-01", "closed": None,
      "season": "custom", "season_custom": _FP_SEASON, "runrate_annual": 3070000, "growth_pct": 0.0,
-     "food_pct": 30.5, "labor": 60800, "rent": 19889, "other_pct": 18.0, "rent_period": 1, "rent_first_month": None,
-     "ramp_months": 3, "ramp_start_pct": 70, "preopening_months": 1,
-     "note": "Projet (P&L année 1 de Raphaël, sept. 2026, calé sur Qingpu) : CA 3,07 M HT/an, food 30,5 %, "
-             "masse salariale 60,8 k/mois, loyer ~20 k/mois. Le G&A 13 % du P&L n'est pas repris (siège existant). "
-             "Activer le magasin pour l'inclure dans le prévisionnel."},
+     "food_pct": 30.5, "labor": 60800, "rent": 19889, "other_pct": 18.0, "da_monthly": 22855, "rent_period": 1, "rent_first_month": None,
+     "ramp_months": 0, "ramp_start_pct": 100, "preopening_months": 1,
+     "note": "Raphaël's year-1 P&L (Sept. 2026, Qingpu-based): revenue 3.07 M ex-VAT with his monthly profile, food 30.5 %, "
+             "labor 60.8 k/month, rent 19.9 k/month paid monthly, other opex 18 %, D&A 22.9 k/month. The 13 % G&A of his P&L is not added "
+             "(existing head office). Operated by LEBLANC."},
     {"code": "TLQ", "name": "Taikoo Li Qiantan (fermé sept. 2025)", "entity": "LBL", "active": False, "opened": "2021-10", "closed": "2025-09",
      "season": "auto", "season_custom": None, "runrate_annual": None, "growth_pct": 0.0,
-     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "rent_period": 1, "rent_first_month": None,
+     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "da_monthly": None, "rent_period": 1, "rent_first_month": None,
      "ramp_months": 0, "ramp_start_pct": 100, "preopening_months": 0, "note": "Historique seulement."},
     {"code": "HSF", "name": "HSF (fermé mai 2025)", "entity": "LBL", "active": False, "opened": "2023-09", "closed": "2025-05",
      "season": "auto", "season_custom": None, "runrate_annual": None, "growth_pct": 0.0,
-     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "rent_period": 1, "rent_first_month": None,
+     "food_pct": None, "labor": None, "rent": None, "other_pct": None, "da_monthly": None, "rent_period": 1, "rent_first_month": None,
      "ramp_months": 0, "ramp_start_pct": 100, "preopening_months": 0, "note": "Historique seulement."},
 ]
 
 # Prêts bancaires : bullet à 1 an, roulés (renouvelés) chaque année. renew_gap = mois entre le
 # remboursement et le nouveau tirage (0 = même mois, pas de trou de trésorerie en fin de mois).
 LOANS = [
-    {"id": "cmbc", "label": "CMBC — prêt court terme", "entity": "JZ", "principal": 2000000, "rate_pct": 4.2,
+    {"id": "cmbc", "label": "CMBC short-term loan", "entity": "JZ", "principal": 2000000, "rate_pct": 4.2,
      "maturity": "2027-06", "term_months": 12, "renew": True, "renew_gap": 0, "renew_amount": None, "active": True,
-     "note": "2,3 M jusqu'en 2025, 2,0 M depuis juin 2025 ; remboursé et retiré en juin 2026 (balance 2101)."},
-    {"id": "abc", "label": "ABC Bank — prêt 500 k (LBL)", "entity": "LBL", "principal": 500000, "rate_pct": 4.0,
+     "note": "Balances 2101.01 : 2,3 M remboursé mai 2024 / retiré juin 2024 ; 2,3 M remboursé juin 2025 et nouveau prêt 2,0 M juin 2025 ; "
+             "2,0 M remboursé et retiré en juin 2026 -> échéance juin 2027 (bullet 12 mois), renouvellement supposé le même mois."},
+    {"id": "abc", "label": "ABC Bank loan 500 k (LBL)", "entity": "LBL", "principal": 500000, "rate_pct": 4.0,
      "maturity": "2026-05", "term_months": 12, "renew": False, "renew_gap": 0, "renew_amount": None, "active": False,
-     "note": "Tiré en mai 2025, remboursé en mai 2026, non renouvelé (relayé par un apport de 500 k en 2181.03 LBL en juin 2026)."},
+     "note": "Tiré en mai 2025, remboursé en mai 2026 (balance 2101.01 LBL), non renouvelé à fin juillet 2026 ; 500 k reçus en 2181.03 LBL en juin 2026."},
 ]
 
 EVENT_CATEGORIES = {
@@ -94,13 +97,14 @@ EVENT_CATEGORIES = {
 }
 
 EVENTS = [
+    {"id": "fp_deposit", "month": "2026-10", "entity": "LBL", "store": "FP", "category": "other", "amount": -40000, "pct": 0,
+     "permanent": False, "counterparty": "", "active": True, "label": "Fashion Park: rent deposit, 2 months of rent at lease signing",
+     "note": "Hypothèse JS (14/09/2026) : dépôt de garantie de 2 mois de loyer (2 × 19 889) à la signature."},
     {"id": "fp_capex1", "month": "2026-11", "entity": "LBL", "store": "FP", "category": "capex", "amount": -700000, "pct": 0,
-     "permanent": False, "counterparty": "", "active": True, "label": "Fashion Park : travaux et matériel (1/2)",
-     "note": "CAPEX brut ~1,2 M (Raphaël) ; matériel réutilisable à déduire une fois le plan capex établi."},
+     "permanent": False, "counterparty": "", "active": True, "label": "Fashion Park: fit-out and equipment (1/2)",
+     "note": "CAPEX brut ~1,2 M (Raphaël) réparti nov.–déc. 2026 ; matériel réutilisable à déduire une fois le plan capex établi."},
     {"id": "fp_capex2", "month": "2026-12", "entity": "LBL", "store": "FP", "category": "capex", "amount": -500000, "pct": 0,
-     "permanent": False, "counterparty": "", "active": True, "label": "Fashion Park : travaux et matériel (2/2)", "note": ""},
-    {"id": "fp_deposit", "month": "2026-11", "entity": "LBL", "store": "FP", "category": "other", "amount": -60000, "pct": 0,
-     "permanent": False, "counterparty": "", "active": True, "label": "Fashion Park : dépôt de garantie (hypothèse 3 mois de loyer)", "note": ""},
+     "permanent": False, "counterparty": "", "active": True, "label": "Fashion Park: fit-out and equipment (2/2)", "note": ""},
 ]
 
 # Comptes courants d'associés : registre par associé et par entité (détail à confirmer par JS).

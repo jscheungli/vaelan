@@ -29,6 +29,8 @@ PL_ROWS = [
     ("income_tax",      lambda a, b: a.startswith("5701")),
     ("ebitda_report",   lambda a, b: a.startswith("EBITDA (Store)") or a.startswith("EBITDA (Office)")),
     ("ebitda_after_ga", lambda a, b: a.startswith("EBITDA (After G&A)")),
+    ("profit_before_tax", lambda a, b: a.startswith("PROFIT (After G&A")),
+    ("profit_after_tax", lambda a, b: a.startswith("PROFIT (After Tax)")),
 ]
 
 BS_CODES = {"1001": "cash_on_hand", "1002": "cash", "1131": "ar", "1133.01": "deposits", "1133.04": "interco_recv",

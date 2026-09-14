@@ -25,7 +25,7 @@ def _who(request: Request) -> str:
 
 def _fx():
     """Helpers de formatage passés aux templates."""
-    return {"k": lambda v, s=False: report.k(v, s), "mio": report.mio, "pct": report.pct, "ml": engine.mlabel,
+    return {"k": lambda v, s=False: report.k(v, s), "mio": report.mio, "pct": report.pct, "ml": engine.mlabel, "mle": engine.mlabel_en,
             "cat": lambda c: lpcfg.EVENT_CATEGORIES.get(c, c), "season_labels": lpcfg.SEASON_LABELS, "entities": lpcfg.ENTITIES,
             "categories": lpcfg.EVENT_CATEGORIES, "months_fr": lpcfg.MONTHS_FR}
 
@@ -106,11 +106,11 @@ def lp_forecast_view(request: Request, code: str, fid: int):
         return RedirectResponse(f"{P.format(code=code)}?msg=Prévisionnel introuvable.", status_code=303)
     cfg = service.get_config(code)
     return templates.TemplateResponse(request, "lp_forecast.html", _ctx(request, company=company, row=row, res=res, cfg=cfg, chart=json.dumps(_chart_data(res)),
-                                                                        ov_text=engine.describe_overrides(res.get("overrides") or {}), **_fx()))
+                                                                        rows=engine.pl_rows(res), ov_text=engine.describe_overrides(res.get("overrides") or {}), **_fx()))
 
 
 def _chart_data(res: dict) -> dict:
-    return {"labels": [engine.mlabel(m) for m in res["months"]], "group": [round(v / 1000) for v in res["group"]["cash"]],
+    return {"labels": [engine.mlabel_en(m, short_year=True) for m in res["months"]], "group": [round(v / 1000) for v in res["group"]["cash"]],
             "entities": {e: [round(v / 1000) for v in r["cash"]] for e, r in res["entities"].items()},
             "ebitda": [round(v / 1000) for v in res["group"]["ebitda"]], "revenue": [round(v / 1000) for v in res["group"]["revenue"]]}
 
@@ -186,7 +186,7 @@ async def lp_hypotheses_save(request: Request, code: str):
                            "season": (f.get(f"s{i}_season") or "auto").strip(), "season_custom": custom if len(custom) == 12 else None,
                            "runrate_annual": _num(f.get(f"s{i}_runrate_annual")), "growth_pct": _num(f.get(f"s{i}_growth_pct"), 0) or 0,
                            "food_pct": _num(f.get(f"s{i}_food_pct")), "labor": _num(f.get(f"s{i}_labor")), "rent": _num(f.get(f"s{i}_rent")),
-                           "other_pct": _num(f.get(f"s{i}_other_pct")), "rent_period": int(_num(f.get(f"s{i}_rent_period"), 1) or 1),
+                           "other_pct": _num(f.get(f"s{i}_other_pct")), "da_monthly": _num(f.get(f"s{i}_da_monthly")), "rent_period": int(_num(f.get(f"s{i}_rent_period"), 1) or 1),
                            "rent_first_month": _ym(f.get(f"s{i}_rent_first_month")), "ramp_months": int(_num(f.get(f"s{i}_ramp_months"), 0) or 0),
                            "ramp_start_pct": _num(f.get(f"s{i}_ramp_start_pct"), 100) or 100, "preopening_months": int(_num(f.get(f"s{i}_preopening_months"), 0) or 0),
                            "note": (f.get(f"s{i}_note") or "").strip()})

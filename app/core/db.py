@@ -45,6 +45,8 @@ _COLUMN_ADDS = [
     "ALTER TABLE vds_messages ADD COLUMN IF NOT EXISTS by_user VARCHAR",
     "ALTER TABLE tiers_matches ADD COLUMN IF NOT EXISTS siren_src_detail VARCHAR",
     "ALTER TABLE tiers_matches ADD COLUMN IF NOT EXISTS candidates VARCHAR",
+    "ALTER TABLE lp_store_months ADD COLUMN IF NOT EXISTS profit_before_tax FLOAT DEFAULT 0",
+    "ALTER TABLE lp_store_months ADD COLUMN IF NOT EXISTS profit_after_tax FLOAT DEFAULT 0",
 ]
 
 
