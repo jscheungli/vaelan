@@ -273,7 +273,7 @@ def _closing(as_of):
 
 
 # =============================================================== PRÉVISIONNEL
-def _chart_and_conclusion(pdf, cfg, res, title=None):
+def _chart_and_conclusion(pdf, cfg, res, title=None, show_overrides=False):
     g = cfg.get("general") or {}
     if title:
         pdf.section(title)
@@ -281,7 +281,7 @@ def _chart_and_conclusion(pdf, cfg, res, title=None):
         pdf.section("Group cash position — end of month (k RMB)")
     pdf.bar_chart(res["months"], res["group"]["cash"], h=176, threshold=float(g.get("alert_group") or 0) or None)
     ov = res.get("overrides") or {}
-    if ov and engine.describe_overrides(ov) and not res.get("scenario"):
+    if show_overrides and ov and engine.describe_overrides(ov):
         pdf.para("Simulation — changes versus the base case: " + engine.describe_overrides(ov) + ".", 8.5, "gei", NAVY)
     pdf.box("Conclusion — funding need", res.get("conclusion") or [])
     shown = [a for a in res.get("alerts") or [] if a.get("scope") == "loan"]
@@ -405,9 +405,8 @@ def forecast_pdf(cfg: dict, res: dict, kind: str = "previsionnel") -> bytes:
     lines = _header_lines(res, res["horizon"])
     if res.get("scenario"):
         lines.append(f"Scenario: {res['scenario']}")
-    res = dict(res, scenario=None)      # titre de section standard pour un scénario seul
     pdf.header(title, "LA PARISIENNE — SHANGHAI (JIANZAN · LEBLANC)", lines, branding)
-    _chart_and_conclusion(pdf, cfg, res)
+    _chart_and_conclusion(pdf, cfg, res, show_overrides=(kind == "simulation"))
     _assumptions(pdf, cfg, res)
     _monthly_tables(pdf, res)
     _events_and_method(pdf, cfg, res)
