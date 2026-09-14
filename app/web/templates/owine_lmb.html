@@ -3,21 +3,74 @@
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Dépôt-vente LMB</li></ol></nav>
 <h1 class="h4">Dépôt-vente La Mémoire de Bourgogne → OWINE</h1>
-<p class="small text-muted">Contrat-cadre du 11/03/2025. Les bouteilles déposées chez Alix restent la propriété de LMB jusqu'à la vente ; chaque vente doit être facturée par LMB à OWINE au prix de cession du bon de livraison valorisé.</p>
-<div class="row g-3">
-<div class="col-lg-5">
-  <div class="card shadow-sm mb-3"><div class="card-header py-2 small fw-semibold">Bons de livraison valorisés</div><table class="table table-sm mb-0 small"><tbody>
-  {% for ref, b in blvs %}<tr><td>{{ ref }}</td><td>{{ b.date.strftime('%d/%m/%Y') if b.date else '' }}</td><td class="text-end">{{ b.qty|int }} btl</td><td class="text-end">{{ eur(b.ht) }} HT</td></tr>{% endfor %}</tbody></table></div>
-  <div class="card shadow-sm border-warning"><div class="card-header py-2 small fw-semibold">Ventes à facturer par LMB à OWINE — {{ eur(total_to_invoice) }} HT en attente</div><table class="table table-sm mb-0 small"><tbody>
-  {% for x in to_invoice %}{% set d = drafts.get(x.ref) %}<tr id="{{ x.ref }}" class="{{ '' if x.open else 'text-muted' }}"><td><a href="/c/{{ company.code }}/owine/commandes/{{ x.ref }}">{{ x.ref }}</a></td><td>{% for s, q, t, p in x.lines %}{{ q|int }} × {{ t }} <span class="text-muted">({{ eur(p) if p else 'prix ?' }})</span><br>{% endfor %}
+<p class="small text-muted mb-2">Contrat-cadre du 11/03/2025. Les bouteilles déposées chez Alix restent la propriété de LMB jusqu'à la vente ; chaque vente est facturée par LMB à OWINE au prix de cession du bon de livraison valorisé (le plus élevé des BLV pour un même vin).</p>
+{% if msg %}<div class="alert alert-info small py-2">{{ msg }}</div>{% endif %}
+{% set n_open = to_invoice|selectattr('open')|list|length %}
+<ul class="nav nav-tabs small" id="lmbTabs" role="tablist">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#t-facturer" type="button">Ventes à facturer <span class="badge text-bg-{{ 'warning' if n_open else 'secondary' }}">{{ n_open }}</span></button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-depot" type="button">Stock en dépôt <span class="badge text-bg-light border">{{ (dep|map(attribute='1.in')|sum - dep|map(attribute='1.sold')|sum)|int }} btl</span></button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-blv" type="button">Bons de livraison valorisés <span class="badge text-bg-light border">{{ blvs|length }}</span></button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-ventes" type="button">Historique des ventes <span class="badge text-bg-light border">{{ totals.btl|int }} btl</span></button></li>
+</ul>
+<div class="tab-content border border-top-0 rounded-bottom bg-white p-3">
+
+<div class="tab-pane fade show active" id="t-facturer">
+  <div class="d-flex align-items-center mb-2"><div class="fw-semibold small">Ventes en dépôt-vente à facturer par LMB à OWINE — <span class="text-warning-emphasis">{{ eur(total_to_invoice) }} HT en attente</span></div></div>
+  <div class="table-responsive"><table class="table table-sm align-middle small mb-2"><thead><tr class="text-muted"><th>Commande</th><th>Date</th><th>Client</th><th>Bouteilles · prix de vente net HT (catalogue TTC du jour) · cession LMB au prix du lot · marge / btl</th><th class="text-end">Vente HT</th><th class="text-end">Cession HT<br><span class="fw-normal">(facture LMB)</span></th><th class="text-end">Marge HT</th><th>Facture LMB</th></tr></thead><tbody>
+  {% for x in to_invoice %}{% set d = drafts.get(x.ref) %}<tr id="{{ x.ref }}" class="{{ '' if x.open else 'text-muted' }}"><td><a href="/c/{{ company.code }}/owine/commandes/{{ x.ref }}">{{ x.ref }}</a>{% if x.loss %}<br><span class="badge text-bg-danger">vente à perte</span>{% endif %}</td><td class="text-nowrap">{{ x.date.strftime('%d/%m/%Y') }}</td><td>{{ x.customer }}</td>
+      <td>{% for s in x.lines %}<div class="{{ 'text-danger' if s.margin <= 0 else '' }}">{{ s.qty|int }} × {{ s.title }} — vendu <strong>{{ eur(s.pv_ht) }}</strong> HT <span class="text-muted">({{ eur(s.list_ttc) }} TTC{% if s.pv_ttc != s.list_ttc %}, net {{ eur(s.pv_ttc) }} TTC{% endif %})</span> · cession <strong>{{ eur(s.dep) }}</strong> <span class="text-muted">(BLV {{ s.lot }})</span> · marge <strong>{{ '%+.2f'|format(s.margin) }} €</strong>/btl</div>{% endfor %}
       {% if d %}<div class="mt-1"><i class="bi bi-receipt"></i> Brouillon Pennylane <span class="badge text-bg-{{ 'success' if d.number else 'warning' }}">{{ d.number or 'brouillon' }}</span> {{ eur(d.amount|float) }} TTC · créé le {{ d.created_at[:10] }}{% if d.pdf %} · <a href="{{ d.pdf }}" target="_blank">PDF</a>{% endif %}</div>{% endif %}</td>
-      <td class="text-end">{{ eur(x.ht) }}</td><td class="text-nowrap">{% if x.open %}<form method="post" action="/c/{{ company.code }}/owine/lmb/{{ x.ref }}/brouillon" class="d-inline">
-        <button class="btn btn-sm {{ 'btn-outline-secondary' if d else 'btn-dark' }} py-0" {% if d %}onclick="return confirm('Recréer le brouillon ? L\'ancien brouillon {{ d.id }} sera retiré de Pennylane.')"{% endif %}><i class="bi bi-receipt"></i> {{ 'Recréer le brouillon' if d else 'Créer le brouillon dans Pennylane' }}</button></form>{% else %}facturé{% endif %}</td></tr>{% endfor %}</tbody></table>
-  <div class="card-body py-2 small text-muted">Le brouillon est créé dans Pennylane <strong>La Mémoire de Bourgogne</strong> (client « OWINE SAS », TVA 20 %, une ligne par vin au prix de dépôt le plus élevé des BLV). Vérifiez-le et finalisez-le dans Pennylane ; la tâche « facture LMB » se ferme automatiquement à la synchronisation suivante. Le logo et les mentions de la facture se règlent dans Pennylane (Paramètres → Facturation) <em>avant</em> de créer le brouillon : le PDF d'un brouillon n'est généré qu'à sa création.</div></div>
-  {% if msg %}<div class="alert alert-info small py-2 mt-3">{{ msg }}</div>{% endif %}
+      <td class="text-end text-nowrap">{{ eur(x.sales_ht) }}</td><td class="text-end text-nowrap fw-semibold">{{ eur(x.ht) }}</td><td class="text-end text-nowrap {{ 'text-danger fw-semibold' if x.margin <= 0 else 'text-success' }}">{{ '%+.2f'|format(x.margin) }} €</td>
+      <td class="text-nowrap">{% if x.open %}<form method="post" action="/c/{{ company.code }}/owine/lmb/{{ x.ref }}/brouillon" class="d-inline">
+        <button class="btn btn-sm {{ 'btn-outline-secondary' if d else ('btn-outline-danger' if x.loss else 'btn-dark') }} py-0" onclick="return confirm('{% if x.loss %}Attention : cette commande est vendue à perte au prix de cession du lot. {% endif %}{% if d %}Recréer le brouillon ? L\'ancien brouillon {{ d.id }} sera retiré de Pennylane.{% else %}Créer le brouillon de facture LMB → OWINE ({{ eur(x.ht) }} HT) dans Pennylane ?{% endif %}')"><i class="bi bi-receipt"></i> {{ 'Recréer le brouillon' if d else 'Créer le brouillon dans Pennylane' }}</button></form>{% else %}<span class="badge text-bg-success">facturée</span>{% endif %}</td></tr>{% endfor %}
+  <tr class="fw-semibold table-light"><td colspan="4">Total des commandes à facturer ({{ n_open }})</td><td class="text-end">{{ eur(to_invoice|selectattr('open')|map(attribute='sales_ht')|sum) }}</td><td class="text-end">{{ eur(total_to_invoice) }}</td><td class="text-end">{{ '%+.2f'|format(to_invoice|selectattr('open')|map(attribute='margin')|sum) }} €</td><td></td></tr>
+  </tbody></table></div>
+  <div class="small text-muted">Règle de prix : chaque vente est imputée au lot le plus ancien encore disponible (premier déposé, premier vendu) et facturée au prix de cession de ce lot, tel qu'il figure sur le bon de livraison valorisé. Le prix de vente est celui réellement encaissé (remises déduites), hors TVA. Le brouillon est créé dans Pennylane <strong>La Mémoire de Bourgogne</strong> (client « OWINE SAS », TVA 20 %, une ligne par vin et par lot). Vérifiez-le et finalisez-le dans Pennylane ; la tâche « facture LMB » se ferme automatiquement à la synchronisation suivante. Le logo et les mentions de la facture se règlent dans Pennylane (Paramètres → Facturation) <em>avant</em> de créer le brouillon : le PDF d'un brouillon n'est généré qu'à sa création.</div>
 </div>
-<div class="col-lg-7"><div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Bouteilles en dépôt chez Alix</div><div class="table-responsive"><table class="table table-sm mb-0 small"><thead><tr class="text-muted"><th>Vin</th><th class="text-end">Cession HT</th><th class="text-end">Déposées</th><th class="text-end">Vendues</th><th class="text-end">Restantes</th></tr></thead><tbody>
-{% for sku, d in dep %}<tr><td><a class="text-decoration-none" href="/c/{{ company.code }}/owine/stock/{{ sku }}">{{ d.title }}</a></td><td class="text-end">{{ eur(d.price) if d.price else '' }}</td><td class="text-end">{{ d.in|int }}</td><td class="text-end">{{ d.sold|int }}</td><td class="text-end fw-semibold">{{ (d.in - d.sold)|int }}</td></tr>{% endfor %}
-</tbody></table></div></div></div>
+
+<div class="tab-pane fade" id="t-depot">
+  <div class="table-responsive"><table class="table table-sm small mb-0"><thead><tr class="text-muted"><th>Vin</th><th class="text-end">Cession HT</th><th class="text-end">Déposées</th><th class="text-end">Vendues</th><th class="text-end">Restantes</th><th class="text-end">Valeur restante HT</th></tr></thead><tbody>
+  {% for sku, d in dep %}<tr><td><a class="text-decoration-none" href="/c/{{ company.code }}/owine/stock/{{ sku }}">{{ d.title }}</a>{% if d.lots %}<div class="text-muted" style="font-size:.7rem">lots : {{ d.lots }}</div>{% endif %}</td><td class="text-end">{{ eur(d.price) if d.price else '' }}</td><td class="text-end">{{ d.in|int }}</td><td class="text-end">{{ d.sold|int }}</td><td class="text-end fw-semibold">{{ (d.in - d.sold)|int }}</td><td class="text-end">{{ eur((d.in - d.sold) * (d.price or 0)) }}</td></tr>{% endfor %}
+  <tr class="fw-semibold table-light"><td>Total</td><td></td><td class="text-end">{{ dep|map(attribute='1.in')|sum|int }}</td><td class="text-end">{{ dep|map(attribute='1.sold')|sum|int }}</td><td class="text-end">{{ (dep|map(attribute='1.in')|sum - dep|map(attribute='1.sold')|sum)|int }}</td><td class="text-end">{% set ns = namespace(v=0) %}{% for sku, d in dep %}{% set ns.v = ns.v + (d.in - d.sold) * (d.price or 0) %}{% endfor %}{{ eur(ns.v) }}</td></tr>
+  </tbody></table></div>
 </div>
+
+<div class="tab-pane fade" id="t-blv">
+  <div class="table-responsive"><table class="table table-sm align-middle small mb-2"><thead><tr class="text-muted"><th>N° de bon</th><th>Date du bon</th><th>Reçu chez Alix</th><th class="text-end">Bouteilles</th><th class="text-end">Valeur HT</th><th class="text-end">Valeur TTC</th><th>Bon signé</th><th></th></tr></thead><tbody>
+  {% for b in blvs %}<tr><td><a href="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}">{{ b.no }}</a></td><td>{{ b.date.strftime('%d/%m/%Y') }}</td><td>{{ b.meta.received or '' }}</td><td class="text-end">{{ b.qty|int }}</td><td class="text-end">{{ eur(b.ht) }}</td><td class="text-end">{{ eur(b.ht * 1.2) }}</td>
+      <td>{% if b.has_pdf %}<a href="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> PDF signé</a>{% else %}<span class="text-muted">à joindre</span>{% endif %}</td>
+      <td><a class="btn btn-sm btn-outline-dark py-0" href="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}">Détail</a></td></tr>{% endfor %}
+  <tr class="fw-semibold table-light"><td colspan="3">Total déposé</td><td class="text-end">{{ blvs|map(attribute='qty')|sum|int }}</td><td class="text-end">{{ eur(blvs|map(attribute='ht')|sum) }}</td><td class="text-end">{{ eur(blvs|map(attribute='ht')|sum * 1.2) }}</td><td colspan="2"></td></tr>
+  </tbody></table></div>
+  <div class="small text-muted">Chaque bon est reconstitué depuis le livre des mouvements (entrées « Dépôt-vente : entrée chez Alix »). Le détail montre, par vin, les bouteilles vendues imputées au lot (premier déposé, premier vendu) et les restantes, et permet de consulter ou joindre le bon signé par LMB, OWINE et Alix.</div>
+</div>
+
+<div class="tab-pane fade" id="t-ventes">
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="fw-semibold small mb-1">Mois par mois</div>
+      <div class="table-responsive"><table class="table table-sm small mb-0"><thead><tr class="text-muted"><th>Mois</th><th class="text-end">Cmd</th><th class="text-end">Btl</th><th class="text-end">Ventes HT</th><th class="text-end">Cession LMB HT</th><th class="text-end">Marge HT</th></tr></thead><tbody>
+      {% for m in months %}<tr><td>{{ m.label }}</td><td class="text-end">{{ m.orders }}</td><td class="text-end">{{ m.btl|int }}</td><td class="text-end">{{ eur(m.pv_ht) }}</td><td class="text-end">{{ eur(m.dep) }}</td><td class="text-end {{ 'text-danger' if m.margin < 0 else '' }}">{{ eur(m.margin) }}</td></tr>{% endfor %}
+      <tr class="fw-semibold table-light"><td>Total</td><td></td><td class="text-end">{{ totals.btl|int }}</td><td class="text-end">{{ eur(totals.pv_ht) }}</td><td class="text-end">{{ eur(totals.dep) }}</td><td class="text-end">{{ eur(totals.pv_ht - totals.dep) }}</td></tr>
+      </tbody></table></div>
+      <div class="small text-muted mt-1">Ventes HT = prix de vente Shopify hors TVA (÷ 1,2). Cession LMB = prix du bon de livraison valorisé (le plus élevé des BLV), c'est-à-dire ce que LMB facture à OWINE.</div>
+    </div>
+    <div class="col-lg-7">
+      <div class="fw-semibold small mb-1">Détail (la plus récente en haut)</div>
+      <div class="table-responsive" style="max-height:70vh;overflow:auto"><table class="table table-sm small mb-0"><thead class="sticky-top bg-white"><tr class="text-muted"><th>Date</th><th>Commande</th><th>Client</th><th>Vin</th><th class="text-end">Qté</th><th class="text-end">PV net HT</th><th class="text-end">Cession HT (lot)</th><th class="text-end">Marge / btl</th><th>LMB</th></tr></thead><tbody>
+      {% for s in sales %}<tr class="{{ 'table-danger' if s.margin <= 0 else '' }}"><td class="text-nowrap">{{ s.date.strftime('%d/%m/%Y') }}</td><td><a href="/c/{{ company.code }}/owine/commandes/{{ s.ref }}">{{ s.ref }}</a></td><td>{{ s.customer }}</td><td>{{ s.title }}</td><td class="text-end">{{ s.qty|int }}</td><td class="text-end">{{ eur(s.pv_ht) }}</td><td class="text-end">{{ eur(s.dep) }} <span class="text-muted">{{ s.lot }}</span></td><td class="text-end">{{ '%+.2f'|format(s.margin) }}</td><td>{% if s.invoiced %}<span class="badge text-bg-success">facturée</span>{% else %}<span class="badge text-bg-warning">à facturer</span>{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </div>
+  </div>
+</div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const h = location.hash || '';
+  const show = id => { const b = document.querySelector(`[data-bs-target="${id}"]`); if (b && window.bootstrap) bootstrap.Tab.getOrCreateInstance(b).show(); };
+  if (h.startsWith('#t-')) show(h);
+  else if (h.startsWith('#OW')) { show('#t-facturer'); const el = document.getElementById(h.slice(1)); if (el) { el.classList.add('table-warning'); el.scrollIntoView({block: 'center'}); } }
+  document.querySelectorAll('#lmbTabs [data-bs-target]').forEach(b => b.addEventListener('shown.bs.tab', () => history.replaceState(null, '', b.dataset.bsTarget)));
+});
+</script>
 {% endblock %}

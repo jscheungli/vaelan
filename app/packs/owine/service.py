@@ -393,9 +393,25 @@ ORDER_Q = """query($first:Int!,$after:String){ orders(first:$first, after:$after
   id name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus note tags
   shippingLine{ title } totalPriceSet{shopMoney{amount}}
   customer{ displayName email phone } shippingAddress{ name company address1 address2 zip city countryCodeV2 phone }
-  lineItems(first:50){ edges{ node{ title quantity sku variant{ price inventoryItem{ unitCost{amount} } } } } }
+  lineItems(first:50){ edges{ node{ title quantity sku originalUnitPriceSet{shopMoney{amount}} discountedUnitPriceAfterAllDiscountsSet{shopMoney{amount}} variant{ price inventoryItem{ unitCost{amount} } } } } }
   fulfillments{ status trackingInfo{ number company } }
 } } } }"""
+
+
+def _merge_line_prices(old_json: str, new_lines: List[dict]) -> str:
+    """Reporte prix catalogue du jour (« price ») et prix net encaissé (« net ») de Shopify sur les lignes existantes, sans toucher au reste."""
+    try:
+        old = json.loads(old_json or "[]")
+    except Exception:
+        return old_json
+    by: Dict[str, List[dict]] = defaultdict(list)
+    for l in new_lines:
+        by[l.get("sku") or ""].append(l)
+    for l in old:
+        c = by.get(l.get("sku") or "")
+        if c:
+            n = c.pop(0); l["price"] = n["price"]; l["net"] = n.get("net")
+    return json.dumps(old, ensure_ascii=False)
 
 
 def sync_orders(log=None, max_orders: int = 500) -> dict:
@@ -414,7 +430,9 @@ def sync_orders(log=None, max_orders: int = 500) -> dict:
             li = e["node"]; v = li.get("variant") or {}
             sku = (li.get("sku") or "").strip()
             cost = float(((v.get("inventoryItem") or {}).get("unitCost") or {}).get("amount") or 0) or (imap[sku].cost if sku in imap and imap[sku].cost else None)
-            lines.append({"sku": sku, "title": li["title"], "qty": int(li["quantity"]), "price": float(v.get("price") or 0), "cost": cost})
+            orig = float(((li.get("originalUnitPriceSet") or {}).get("shopMoney") or {}).get("amount") or 0) or float(v.get("price") or 0)    # prix catalogue au jour de la commande
+            netp = float(((li.get("discountedUnitPriceAfterAllDiscountsSet") or {}).get("shopMoney") or {}).get("amount") or 0)                # prix réellement encaissé (toutes remises)
+            lines.append({"sku": sku, "title": li["title"], "qty": int(li["quantity"]), "price": orig, "net": netp, "cost": cost})
         existing = get_order(o["name"].lstrip("#"))
         fields = dict(shopify_id=o["id"], created_at=datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).replace(tzinfo=None),
                       customer=sa.get("name") or cu.get("displayName"), email=cu.get("email"), phone=sa.get("phone") or cu.get("phone"), company=sa.get("company"),
@@ -428,6 +446,7 @@ def sync_orders(log=None, max_orders: int = 500) -> dict:
                 existing.mode = existing.mode if existing.mode != "manuel" else mode_of(fields["shipping_title"], fields["zip"])
             else:
                 existing.financial_status, existing.fulfillment_status = fields["financial_status"], fields["fulfillment_status"]
+                existing.lines = _merge_line_prices(existing.lines, lines)   # prix historiques (catalogue du jour, net après remises) rafraîchis sur les commandes déjà traitées
             if o.get("cancelledAt") and existing.status in ("a_traiter", "cartons"):
                 existing.status = "annulee"
             save_order(existing)
@@ -634,12 +653,44 @@ def _setting_set(key: str, value) -> None:
 
 # ---------------------------------------------------------------- dépôt-vente LMB : facturation LMB → OWINE dans Pennylane
 
+def lmb_lots() -> Dict[str, List[dict]]:
+    """Lots déposés par vin, dans l'ordre des BLV : [{lot, qty, price}]."""
+    lots: Dict[str, List[dict]] = defaultdict(list)
+    for m in sorted([m for m in moves(owner="LMB", limit=100000) if m.kind == "deposit_in" and m.location == "ALIX"], key=lambda m: (m.date, m.id)):
+        lots[m.sku].append({"lot": _blv_no(m.ref), "qty": m.qty, "left": m.qty, "price": float(m.unit_cost or 0)})
+    return lots
+
+
+def lmb_allocation() -> Dict[Tuple[str, str], List[dict]]:
+    """(commande, sku) → [{qty, price, lot}] : chaque vente en dépôt-vente est imputée au lot le plus ancien encore disponible
+    (premier déposé, premier vendu) et facturée au prix de cession de CE lot — règle validée le 14/09/2026 (le prix du BLV 2 appliqué
+    aux ventes antérieures mettrait la plupart des commandes à perte)."""
+    lots = lmb_lots(); imap = item_map()
+    out: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
+    for m in sorted([m for m in moves(owner="LMB", limit=100000) if m.kind in ("sale", "pickup") and m.location == "ALIX"], key=lambda m: (m.date, m.id)):
+        q = -m.qty
+        for lot in lots.get(m.sku, []):
+            if q <= 0:
+                break
+            take = min(q, lot["left"])
+            if take > 0:
+                out[(m.ref, m.sku)].append({"qty": take, "price": lot["price"], "lot": lot["lot"]}); lot["left"] -= take; q -= take
+        if q > 0:
+            it = imap.get(m.sku); out[(m.ref, m.sku)].append({"qty": q, "price": float(it.lmb_price or 0) if it and it.lmb_price else 0.0, "lot": "?"})
+    return out
+
+
 def lmb_prices() -> Dict[str, float]:
-    """Prix de dépôt retenu par vin = le plus élevé des BLV (règle JS 14/09/2026), sinon prix LMB de la fiche."""
+    """Prix de cession courant par vin = prix du lot le plus ancien encore disponible (sinon dernier lot, sinon fiche)."""
     p: Dict[str, float] = {}
-    for m in moves(owner="LMB", limit=100000):
-        if m.kind == "deposit_in" and m.unit_cost:
-            p[m.sku] = max(p.get(m.sku, 0), float(m.unit_cost))
+    for sku, lots in lmb_lots().items():
+        sold = sum(-m.qty for m in moves(owner="LMB", limit=100000) if m.sku == sku and m.kind in ("sale", "pickup") and m.location == "ALIX")
+        cur = None
+        for lot in lots:
+            if sold < lot["qty"]:
+                cur = lot["price"]; break
+            sold -= lot["qty"]
+        p[sku] = cur if cur is not None else lots[-1]["price"]
     for it in items("wine"):
         if it.lmb_price and it.sku not in p:
             p[it.sku] = float(it.lmb_price)
@@ -647,12 +698,23 @@ def lmb_prices() -> Dict[str, float]:
 
 
 def lmb_lines(name: str) -> List[dict]:
-    """Bouteilles en dépôt-vente vendues dans une commande : [{sku, qty, title, price}]."""
-    prices = lmb_prices(); q: Dict[str, float] = defaultdict(float)
-    for m in moves(ref=name, owner="LMB", limit=500):
-        if m.kind in ("sale", "pickup") and m.location == "ALIX":
-            q[m.sku] += -m.qty
-    return [{"sku": sku, "qty": int(n), "title": wine_title(sku), "price": prices.get(sku)} for sku, n in q.items() if n > 0]
+    """Bouteilles en dépôt-vente vendues dans une commande, au prix du lot imputé : [{sku, qty, title, price, lot, list, net_ht, margin}]."""
+    alloc = lmb_allocation(); o = get_order(name)
+    sold: Dict[str, dict] = {}
+    for l in (order_lines(o) if o else []):
+        if l.get("sku"):
+            sold.setdefault(l["sku"], {"list": float(l.get("price") or 0), "net": float(l["net"]) if l.get("net") is not None else float(l.get("price") or 0)})
+    out = []
+    for (ref, sku), parts in alloc.items():
+        if ref != name:
+            continue
+        for p in parts:
+            same = next((x for x in out if x["sku"] == sku and x["price"] == p["price"] and x["lot"] == p["lot"]), None)
+            if same:
+                same["qty"] += int(p["qty"]); continue
+            s = sold.get(sku, {"list": 0.0, "net": 0.0}); net_ht = s["net"] / 1.2
+            out.append({"sku": sku, "qty": int(p["qty"]), "title": wine_title(sku), "price": p["price"], "lot": p["lot"], "list": s["list"], "net_ht": net_ht, "margin": net_ht - p["price"]})
+    return out
 
 
 def lmb_draft_info(name: str) -> Optional[dict]:
@@ -707,7 +769,7 @@ def create_lmb_draft(name: str, by: str = None) -> dict:
     d = (o.created_at.date() if o.created_at else date.today())
     body = {"customer_id": cid, "date": date.today().isoformat(), "deadline": (date.today() + timedelta(days=30)).isoformat(), "draft": True, "external_reference": f"LMB-{name}",
             "pdf_invoice_subject": f"Dépôt-vente OWINE — commande {name} du {d:%d/%m/%Y}",
-            "invoice_lines": [{"label": f"{l['title']} — réf. {l['sku']} — vendue par OWINE le {d:%d/%m/%Y} (commande {name}), dépôt-vente BLV 2025031102 / 2026012901", "quantity": l["qty"],
+            "invoice_lines": [{"label": f"{l['title']} — réf. {l['sku']} — vendue par OWINE le {d:%d/%m/%Y} (commande {name}), dépôt-vente BLV n° {l.get('lot') or '?'}", "quantity": l["qty"],
                                "unit": "piece", "raw_currency_unit_price": f"{l['price']:.2f}", "vat_rate": "FR_200"} for l in lines]}
     st, r = c.send_json("POST", "/customer_invoices", body)
     if st not in (200, 201):
@@ -835,3 +897,102 @@ def shopify_fulfill_due(log=None) -> int:
         except Exception as e:
             log(f"{o.name} : Shopify — {e}")
     return n
+
+
+# ---------------------------------------------------------------- dépôt-vente LMB : vue d'ensemble, bons de livraison valorisés, historique des ventes
+
+def blv_meta(no: str) -> dict:
+    return _setting_get(f"owine:blv:{no}") or {}
+
+
+def blv_meta_set(no: str, **kw) -> None:
+    m = blv_meta(no); m.update({k: v for k, v in kw.items() if v is not None}); _setting_set(f"owine:blv:{no}", m)
+
+
+def blv_pdf(no: str) -> Optional[Tuple[str, bytes]]:
+    import base64
+    d = _setting_get(f"owine:blv_pdf:{no}")
+    return (d.get("name") or f"BLV {no}.pdf", base64.b64decode(d["b64"])) if d and d.get("b64") else None
+
+
+def blv_pdf_set(no: str, name: str, data: bytes) -> None:
+    import base64
+    _setting_set(f"owine:blv_pdf:{no}", {"name": name, "b64": base64.b64encode(data).decode(), "size": len(data), "at": datetime.utcnow().isoformat(timespec="seconds")})
+
+
+def _blv_no(ref: str) -> str:
+    return (ref or "").replace("BLV", "").strip()
+
+
+def lmb_overview() -> dict:
+    """Tout le dépôt-vente en une passe : stock en dépôt, BLV, ventes à facturer, historique des ventes (mois et détail)."""
+    imap = item_map(); prices = lmb_prices(); alloc = lmb_allocation(); lots = lmb_lots()
+    custs = {o.name: (o.customer or "") for o in orders()}
+    pv: Dict[Tuple[str, str], Tuple[float, float]] = {}                      # (commande, sku) → (prix catalogue du jour TTC, prix net encaissé TTC)
+    for o in orders():
+        for l in order_lines(o):
+            if l.get("sku"):
+                pv[(o.name, l["sku"])] = (float(l.get("price") or 0), float(l["net"]) if l.get("net") is not None else float(l.get("price") or 0))
+    dep = defaultdict(lambda: {"in": 0.0, "sold": 0.0, "price": None, "title": ""})
+    blvs: Dict[str, dict] = {}
+    sales = []
+    for m in moves(owner="LMB", limit=100000):
+        if m.location != "ALIX":
+            continue
+        if m.kind == "deposit_in":
+            dep[m.sku]["in"] += m.qty
+            no = _blv_no(m.ref); b = blvs.setdefault(no, {"no": no, "ref": m.ref, "date": m.date, "qty": 0, "ht": 0.0, "lines": []})
+            b["qty"] += m.qty; b["ht"] += m.qty * (m.unit_cost or 0)
+            b["lines"].append({"sku": m.sku, "title": wine_title(m.sku), "qty": m.qty, "pu": m.unit_cost or 0, "total": m.qty * (m.unit_cost or 0)})
+        elif m.kind in ("sale", "pickup"):
+            dep[m.sku]["sold"] += -m.qty
+            list_ttc, net_ttc = pv.get((m.ref, m.sku), (0.0, 0.0))
+            parts = alloc.get((m.ref, m.sku)) or [{"qty": -m.qty, "price": prices.get(m.sku) or 0.0, "lot": "?"}]
+            dep_unit = sum(p["qty"] * p["price"] for p in parts) / max(sum(p["qty"] for p in parts), 1)
+            sales.append({"date": m.date, "ref": m.ref, "customer": custs.get(m.ref, ""), "sku": m.sku, "title": wine_title(m.sku), "qty": -m.qty, "pv_ht": net_ttc / 1.2, "pv_ttc": net_ttc, "list_ttc": list_ttc,
+                          "dep": dep_unit, "lot": " + ".join(sorted({p["lot"] for p in parts})), "margin": net_ttc / 1.2 - dep_unit, "kind": m.kind})
+    for sku, d in dep.items():
+        d["title"] = wine_title(sku); d["price"] = prices.get(sku) or (imap[sku].lmb_price if sku in imap else None)
+        d["lots"] = " / ".join(f"{l['price']:.0f} € (BLV {l['lot']}, {l['qty']:.0f} btl)" for l in lots.get(sku, [])) if sku in lots else ""
+    for b in blvs.values():
+        b["meta"] = blv_meta(b["no"]); b["has_pdf"] = bool(_setting_get(f"owine:blv_pdf:{b['no']}")); b["lines"].sort(key=lambda l: l["title"])
+    open_inv = {t.ref for t in tasks("open") if t.kind == "lmb_invoice"}
+    by_order: Dict[str, dict] = {}
+    for s in sales:
+        x = by_order.setdefault(s["ref"], {"ref": s["ref"], "date": s["date"], "customer": s["customer"], "lines": [], "ht": 0.0, "sales_ht": 0.0, "margin": 0.0, "loss": False, "open": s["ref"] in open_inv})
+        x["lines"].append(s); x["ht"] += s["qty"] * s["dep"]; x["sales_ht"] += s["qty"] * s["pv_ht"]; x["margin"] += s["qty"] * s["margin"]; x["loss"] = x["loss"] or s["margin"] <= 0
+        s["invoiced"] = s["ref"] not in open_inv
+    months: Dict[str, dict] = {}
+    for s in sales:
+        k = s["date"].strftime("%Y-%m"); mo = months.setdefault(k, {"month": k, "label": s["date"].strftime("%m/%Y"), "btl": 0, "pv_ht": 0.0, "dep": 0.0, "orders": set()})
+        mo["btl"] += s["qty"]; mo["pv_ht"] += s["qty"] * s["pv_ht"]; mo["dep"] += s["qty"] * s["dep"]; mo["orders"].add(s["ref"])
+    for mo in months.values():
+        mo["margin"] = mo["pv_ht"] - mo["dep"]; mo["orders"] = len(mo["orders"])
+    sales.sort(key=lambda s: (s["date"], s["ref"]), reverse=True)
+    return {"dep": sorted(dep.items(), key=lambda kv: kv[1]["title"]), "blvs": sorted(blvs.values(), key=lambda b: b["date"], reverse=True),
+            "to_invoice": sorted(by_order.values(), key=lambda x: x["ref"]), "total_to_invoice": sum(x["ht"] for x in by_order.values() if x["open"]),
+            "months": sorted(months.values(), key=lambda m: m["month"], reverse=True), "sales": sales,
+            "totals": {"btl": sum(s["qty"] for s in sales), "pv_ht": sum(s["qty"] * s["pv_ht"] for s in sales), "dep": sum(s["qty"] * s["dep"] for s in sales)}}
+
+
+def blv_detail(no: str) -> Optional[dict]:
+    """Un BLV avec, par vin, les bouteilles vendues imputées à ce lot (premier déposé, premier vendu) et les restantes."""
+    ov = lmb_overview()
+    b = next((x for x in ov["blvs"] if x["no"] == no), None)
+    if not b:
+        return None
+    lots: Dict[str, List[dict]] = defaultdict(list)
+    for x in sorted(ov["blvs"], key=lambda x: x["date"]):
+        for l in x["lines"]:
+            lots[l["sku"]].append({"no": x["no"], "left": l["qty"], "sold": 0.0})
+    for s in sorted(ov["sales"], key=lambda s: s["date"]):
+        q = s["qty"]
+        for lot in lots.get(s["sku"], []):
+            take = min(q, lot["left"]); lot["left"] -= take; lot["sold"] += take; q -= take
+            if q <= 0:
+                break
+    for l in b["lines"]:
+        lot = next((x for x in lots[l["sku"]] if x["no"] == no), None)
+        l["sold"] = lot["sold"] if lot else 0; l["left"] = lot["left"] if lot else l["qty"]
+    b["sold"] = sum(l["sold"] for l in b["lines"]); b["left"] = sum(l["left"] for l in b["lines"]); b["ttc"] = b["ht"] * 1.2
+    return b

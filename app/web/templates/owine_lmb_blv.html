@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}BLV {{ b.no }} · Dépôt-vente LMB{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine/lmb#t-blv">Dépôt-vente LMB</a></li><li class="breadcrumb-item active">BLV {{ b.no }}</li></ol></nav>
+<div class="d-flex align-items-center gap-3 mb-2"><h1 class="h4 mb-0">Bon de livraison valorisé n° {{ b.no }}</h1><span class="text-muted small">du {{ b.date.strftime('%d/%m/%Y') }} · {{ b.qty|int }} bouteilles · {{ eur(b.ht) }} HT / {{ eur(b.ttc) }} TTC</span>
+  {% if b.has_pdf %}<a class="btn btn-sm btn-outline-dark ms-auto" href="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Ouvrir le bon signé</a>{% endif %}</div>
+{% if msg %}<div class="alert alert-info small py-2">{{ msg }}</div>{% endif %}
+<div class="row g-3">
+<div class="col-lg-7">
+  <div class="card shadow-sm mb-3"><div class="card-header py-2 small fw-semibold">Contenu reconstitué (livre des mouvements)</div><div class="table-responsive"><table class="table table-sm small mb-0"><thead><tr class="text-muted"><th>Réf.</th><th>Vin</th><th class="text-end">Qté</th><th class="text-end">PU HT</th><th class="text-end">PU TTC</th><th class="text-end">Total HT</th><th class="text-end">Vendues (ce lot)</th><th class="text-end">Restantes</th></tr></thead><tbody>
+  {% for l in b.lines %}<tr><td class="text-muted" style="font-size:.7rem">{{ l.sku }}</td><td><a class="text-decoration-none" href="/c/{{ company.code }}/owine/stock/{{ l.sku }}">{{ l.title }}</a></td><td class="text-end">{{ l.qty|int }}</td><td class="text-end">{{ eur(l.pu) }}</td><td class="text-end">{{ eur(l.pu * 1.2) }}</td><td class="text-end">{{ eur(l.total) }}</td><td class="text-end">{{ l.sold|int }}</td><td class="text-end fw-semibold">{{ l.left|int }}</td></tr>{% endfor %}
+  <tr class="fw-semibold table-light"><td></td><td>Total</td><td class="text-end">{{ b.qty|int }}</td><td></td><td></td><td class="text-end">{{ eur(b.ht) }}</td><td class="text-end">{{ b.sold|int }}</td><td class="text-end">{{ b.left|int }}</td></tr>
+  </tbody></table></div><div class="card-body py-2 small text-muted">Les ventes sont imputées au lot le plus ancien pour un même vin (premier déposé, premier vendu) ; la facturation LMB → OWINE se fait au prix le plus élevé des BLV.</div></div>
+  <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Informations</div><div class="card-body py-2 small">
+    <form method="post" action="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}/infos" class="row g-2 align-items-end">
+      <div class="col-md-3"><label class="form-label mb-0 text-muted">Reçu chez Alix le</label><input class="form-control form-control-sm" name="received" value="{{ b.meta.received or '' }}" placeholder="JJ/MM/AAAA"></div>
+      <div class="col-md-3"><label class="form-label mb-0 text-muted">Contrôlé le</label><input class="form-control form-control-sm" name="controlled" value="{{ b.meta.controlled or '' }}" placeholder="JJ/MM/AAAA"></div>
+      <div class="col-md-6"><label class="form-label mb-0 text-muted">Signataires</label><input class="form-control form-control-sm" name="signed" value="{{ b.meta.signed or '' }}" placeholder="LMB, OWINE, Alix"></div>
+      <div class="col-md-10"><label class="form-label mb-0 text-muted">Note</label><input class="form-control form-control-sm" name="note" value="{{ b.meta.note or '' }}"></div>
+      <div class="col-md-2"><button class="btn btn-sm btn-dark w-100">Enregistrer</button></div>
+    </form></div></div>
+</div>
+<div class="col-lg-5">
+  <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold d-flex align-items-center">Bon signé (PDF){% if b.has_pdf %}<a class="ms-auto small" href="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}/pdf" target="_blank">ouvrir dans un onglet</a>{% endif %}</div>
+    {% if b.has_pdf %}<iframe src="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}/pdf" style="width:100%;height:75vh;border:0"></iframe>{% else %}<div class="card-body small text-muted">Aucun PDF joint pour l'instant.</div>{% endif %}
+    <div class="card-body py-2 small border-top"><form method="post" action="/c/{{ company.code }}/owine/lmb/blv/{{ b.no }}/pdf" enctype="multipart/form-data" class="d-flex gap-2 align-items-center"><input type="file" name="file" accept="application/pdf" class="form-control form-control-sm" required><button class="btn btn-sm btn-outline-dark text-nowrap">{{ 'Remplacer' if b.has_pdf else 'Joindre' }} le bon signé</button></form></div></div>
+</div>
+</div>
+{% endblock %}

@@ -12,7 +12,7 @@ from app.core.jobs import start_job
 from app.core.security import current_user
 from app.core import gmail_imap
 from app.models import Run, OwOrder, Setting
-from app.packs.owine import config as cfg, service, docs, jobs as ow_jobs
+from app.packs.owine import config as cfg, service, docs, jobs as ow_jobs, reprise
 from app.web.routes import templates, _ctx, _company_or_redirect
 
 router = APIRouter()
@@ -51,8 +51,12 @@ def owine_home(request: Request, code: str, msg: str = ""):
     pack = {sku: st.get(sku, {}).get(("ALIX", "OWINE"), 0) for sku in cfg.PACKAGING}
     with Session(engine) as s:
         runs = s.exec(select(Run).where(Run.company_id == company.id).order_by(Run.id.desc()).limit(5)).all()
+    try:
+        rep = reprise.state()
+    except Exception:
+        rep = None
     return templates.TemplateResponse(request, "owine_home.html", _base(request, company, orders=orders, tasks=tasks, pack=pack, runs=runs, msg=msg, today=date.today(),
-                                                                       cost_missing=service.cost_alerts()))
+                                                                       cost_missing=service.cost_alerts(), reprise=rep))
 
 
 @router.post("/c/{code}/owine/sync")
@@ -62,6 +66,21 @@ def owine_sync(request: Request, code: str):
         return redir
     start_job("owine_sync", ow_jobs.run_sync, company_id=company.id, pack="owine", label="OWINE — synchronisation Shopify et tâches Pennylane", user=current_user(request))
     return RedirectResponse(f"/c/{code}/owine?msg=Synchronisation lancée (quelques secondes).", status_code=303)
+
+
+@router.post("/c/{code}/owine/reprise/{what}")
+def owine_reprise(request: Request, code: str, what: str):
+    """Reprise du 14/09/2026 (tableau de bord) : « livre » = livre des mouvements reconstitué ; « shopify » = corrections Shopify validées."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    if what == "livre":
+        start_job("owine_reprise_livre", ow_jobs.run_reprise_livre, company_id=company.id, pack="owine", label="OWINE — reprise : livre des mouvements reconstitué", user=current_user(request))
+    elif what == "shopify":
+        start_job("owine_reprise_shopify", ow_jobs.run_reprise_shopify, company_id=company.id, pack="owine", label="OWINE — reprise : corrections Shopify", user=current_user(request))
+    else:
+        return RedirectResponse(f"/c/{code}/owine?msg=Reprise inconnue.", status_code=303)
+    return RedirectResponse(f"/c/{code}/owine?msg=Reprise lancée : le résultat s'affiche dans « Dernières tâches » (quelques secondes).", status_code=303)
 
 
 # ============================== commandes
@@ -629,28 +648,52 @@ def owine_lmb(request: Request, code: str, msg: str = ""):
     company, redir = _guard(request, code)
     if redir:
         return redir
-    imap = service.item_map()
-    dep = defaultdict(lambda: {"in": 0.0, "sold": 0.0, "price": None, "title": ""})
-    sales = defaultdict(lambda: defaultdict(float))                       # commande → sku → qté (propriétaire LMB)
-    blvs = defaultdict(lambda: {"date": None, "qty": 0, "ht": 0.0})
-    for m in service.moves(owner="LMB", limit=5000):
-        if m.kind == "deposit_in":
-            dep[m.sku]["in"] += m.qty; dep[m.sku]["price"] = max(dep[m.sku]["price"] or 0, m.unit_cost or 0) or None   # prix retenu = le plus élevé des BLV (règle JS)
-            blvs[m.ref]["date"] = m.date; blvs[m.ref]["qty"] += m.qty; blvs[m.ref]["ht"] += m.qty * (m.unit_cost or 0)
-        elif m.kind in ("sale", "pickup") and m.location == "ALIX":
-            dep[m.sku]["sold"] += -m.qty
-            sales[m.ref][m.sku] += -m.qty
-    for sku, d in dep.items():
-        it = imap.get(sku); d["title"] = it.title if it else sku
-        d["price"] = d["price"] or (it.lmb_price if it else None)
-    open_inv = {t.ref for t in service.tasks("open") if t.kind == "lmb_invoice"}
-    to_invoice = []
-    for ref, skus in sorted(sales.items()):
-        tot = sum(q * (dep[s]["price"] or 0) for s, q in skus.items())
-        to_invoice.append({"ref": ref, "lines": [(s, q, dep[s]["title"], dep[s]["price"]) for s, q in skus.items()], "ht": tot, "open": ref in open_inv})
-    return templates.TemplateResponse(request, "owine_lmb.html", _base(request, company, dep=sorted(dep.items(), key=lambda kv: kv[1]["title"]), blvs=sorted(blvs.items()),
-                                                                      to_invoice=to_invoice, total_to_invoice=sum(x["ht"] for x in to_invoice if x["open"]),
-                                                                      drafts={x["ref"]: service.lmb_draft_info(x["ref"]) for x in to_invoice}, msg=msg))
+    ov = service.lmb_overview()
+    return templates.TemplateResponse(request, "owine_lmb.html", _base(request, company, msg=msg, drafts={x["ref"]: service.lmb_draft_info(x["ref"]) for x in ov["to_invoice"]}, **ov))
+
+
+@router.get("/c/{code}/owine/lmb/blv/{no}", response_class=HTMLResponse)
+def owine_lmb_blv(request: Request, code: str, no: str, msg: str = ""):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    b = service.blv_detail(no)
+    if not b:
+        return RedirectResponse(f"/c/{code}/owine/lmb?msg=BLV {no} inconnu#t-blv", status_code=303)
+    return templates.TemplateResponse(request, "owine_lmb_blv.html", _base(request, company, b=b, msg=msg))
+
+
+@router.get("/c/{code}/owine/lmb/blv/{no}/pdf")
+def owine_lmb_blv_pdf(request: Request, code: str, no: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = service.blv_pdf(no)
+    if not f:
+        return RedirectResponse(f"/c/{code}/owine/lmb/blv/{no}?msg=Aucun PDF joint à ce bon.", status_code=303)
+    return Response(content=f[1], media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="BLV {no}.pdf"'})
+
+
+@router.post("/c/{code}/owine/lmb/blv/{no}/pdf")
+async def owine_lmb_blv_pdf_upload(request: Request, code: str, no: str, file: UploadFile = File(...)):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    data = await file.read()
+    if not data or not data[:5].startswith(b"%PDF"):
+        return RedirectResponse(f"/c/{code}/owine/lmb/blv/{no}?msg=Le fichier doit être un PDF.", status_code=303)
+    service.blv_pdf_set(no, file.filename or f"BLV {no}.pdf", data)
+    return RedirectResponse(f"/c/{code}/owine/lmb/blv/{no}?msg=Bon signé enregistré ({len(data) // 1024} Ko).", status_code=303)
+
+
+@router.post("/c/{code}/owine/lmb/blv/{no}/infos")
+async def owine_lmb_blv_infos(request: Request, code: str, no: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = await request.form()
+    service.blv_meta_set(no, received=(f.get("received") or "").strip() or None, controlled=(f.get("controlled") or "").strip() or None, note=(f.get("note") or "").strip() or None, signed=(f.get("signed") or "").strip() or None)
+    return RedirectResponse(f"/c/{code}/owine/lmb/blv/{no}?msg=Informations enregistrées.", status_code=303)
 
 
 @router.post("/c/{code}/owine/lmb/{name}/brouillon")

@@ -32,6 +32,18 @@ def run_sync(ctx=None) -> str:
     return f"articles {r1['items']}, commandes +{r2['created']} / {r2['updated']} mises à jour, {len(r1.get('missing_cost') or [])} coût(s) manquant(s), {n3} brouillon(s) Pennylane"
 
 
+def run_reprise_livre(ctx=None) -> str:
+    """Reprise du 14/09/2026 : livre des mouvements reconstitué (achats Pennylane, BLV, ventes)."""
+    from . import reprise
+    return reprise.apply_livre(log=ctx.log if ctx else None)
+
+
+def run_reprise_shopify(ctx=None) -> str:
+    """Reprise du 14/09/2026 : corrections Shopify validées (coûts, revalorisation BLV 2, doublon archivé)."""
+    from . import reprise
+    return reprise.apply_shopify(log=ctx.log if ctx else None)
+
+
 def weekly_digest(ctx=None) -> str:
     """Le lundi : e-mail récapitulatif des tâches ouvertes et des commandes en cours."""
     from app.core import mailer
