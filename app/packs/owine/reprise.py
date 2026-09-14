@@ -4,7 +4,7 @@
     remappées, le 2e lot d'Abbaye de Morgeot 2017 (BLV 2) est rattaché au produit Shopify PYCMCM1MB17 et daté de sa réception chez Alix ;
   • corrections Shopify validées par JS : coûts alignés sur les factures, vins du BLV 2 revalorisés au prix le plus élevé, doublon PYCCSMPADMBB17 archivé.
 Données : scripts/owine_reconstitution/achats.json (contrôle de cohérence « 20260914 02 »)."""
-import json, os
+import json, os, re
 from datetime import date, datetime
 from sqlmodel import Session, select
 from app.core.db import engine
@@ -20,6 +20,18 @@ COSTS = {"DPYCM-CM1CCC-B23": 65.0, "DCM-SV-R23": 19.0, "FDCSTNVCGERB22": 14.5,  
          "CAMCSMPCAIBB15": 240.0, "PYCCSMPCNVBB15": 220.0, "PYCMSTPLCHBB15": 260.0, "PYCMSTPPRZBB15": 245.0, "PYCPUMPLGRBB15": 110.0}      # #12 prix BLV le plus élevé
 LMB_SKUS = {"CAMCSMPCAIBB15", "PYCCSMPCNVBB15", "PYCMSTPLCHBB15", "PYCMSTPPRZBB15", "PYCPUMPLGRBB15"}
 DUPLICATE = "PYCCSMPADMBB17"
+
+
+def reconstituted_invoices() -> tuple:
+    """Factures vignerons relues à la reprise (achats.json) : (ids Pennylane, n° de facture cités — y compris réémission « 25260019 » et offre saisie « 2023 »).
+    Leur stock est déjà constaté (aligné sur Shopify le 13/09/2026, puis achats réels posés par apply_livre) : jamais de tâche « livraison à confirmer »."""
+    try:
+        ach = json.load(open(ACHATS, encoding="utf-8"))
+    except Exception:
+        return set(), set()
+    ids = {int(a["pl_id"]) for a in ach if a.get("pl_id")}
+    nums = {n for a in ach for n in re.findall(r"(?<![/\d])\d{4,}(?![/\d])", a.get("facture") or "")}    # séquences de chiffres hors dates (09/09/2025)
+    return ids, nums
 
 
 def state() -> dict:

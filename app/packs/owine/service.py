@@ -865,12 +865,16 @@ def lmb_drafts_sync(log=None) -> int:
 # ---------------------------------------------------------------- revue des achats Pennylane : facture vigneron sans entrée en stock
 
 def pennylane_purchase_tasks(log=None) -> int:
-    """Chaque facture fournisseur vigneron (non archivée) sans mouvement d'achat « F <n°> » → tâche « achat facturé, livraison à confirmer / à saisir » (acomptes compris)."""
+    """Chaque facture fournisseur vigneron (non archivée) sans mouvement d'achat « F <n°> » → tâche « achat facturé, livraison à confirmer / à saisir » (acomptes compris).
+    Exception (JS, 14/09/2026) : les factures reconstituées à la reprise (achats.json, stock déjà constaté et recoupé avec Shopify) ne génèrent jamais de tâche ;
+    seules les factures postérieures sans entrée en stock — livraison réellement en attente — en créent une."""
     from app.core.connectors.pennylane import for_company
+    from . import reprise
     log = log or (lambda m: None)
     c = for_company(CODE)
     if not c:
         return 0
+    done_ids, done_nums = reprise.reconstituted_invoices()
     sup, cur = {}, None
     for _ in range(5):
         d = c.get("/suppliers", limit=100, **({"cursor": cur} if cur else {}))
@@ -895,10 +899,16 @@ def pennylane_purchase_tasks(log=None) -> int:
         if not name or any(k in name.upper() for k in config.NON_WINE_SUPPLIERS):
             continue
         num = str(i.get("invoice_number") or "").strip()
-        if not num or f"F {num}" in refs or f"F {num.split(' ')[0]}" in refs:
+        if int(i.get("id") or 0) in done_ids or num in done_nums or not num or f"F {num}" in refs or f"F {num.split(' ')[0]}" in refs:
             continue
         key = f"purchase:{i.get('id')}"; still.add(key)
         acompte = "ACOMPTE" in (i.get("label") or "").upper()
+        if not acompte:                                   # libellé Pennylane générique → on regarde les lignes (« ACOMPTE » = commande passée, livraison à venir)
+            try:
+                r = c.get(f"/supplier_invoices/{i.get('id')}/invoice_lines")
+                acompte = any("ACOMPTE" in str(l.get("label") or "").upper() for l in ((r.get("items") if isinstance(r, dict) else r) or []))
+            except Exception:
+                pass
         ht = float(i.get("currency_amount_before_tax") or 0)
         title = (f"Acompte {name} n°{num} du {i.get('date')} ({ht:.2f} € HT) : livraison en attente" if acompte
                  else f"Facture {name} n°{num} du {i.get('date')} ({ht:.2f} € HT) : livraison à confirmer et à saisir dans le stock")
