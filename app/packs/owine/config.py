@@ -1,6 +1,12 @@
 """OWINE — constantes métier."""
 COMPANY = "OWINE"
 LMB = "LMB"                                   # La Mémoire de Bourgogne SARL (dépôt-vente)
+LMB_COMPANY = "LAMEMOIREDEBOURGOGNE"          # code société Pennylane de LMB (factures dépôt-vente LMB → OWINE)
+LMB_CUSTOMER = {"name": "OWINE SAS", "reg_no": "928409887", "vat_number": "FR94928409887", "emails": ["js@owine.co"], "external_reference": "OWINE", "payment_conditions": "30_days",
+                "billing_address": {"address": "Parc d'activité, 14 E rue Coubertin", "postal_code": "21000", "city": "DIJON", "country_alpha2": "FR"}}
+# fournisseurs Pennylane OWINE qui ne sont pas des vignerons (exclus du contrôle « facture sans entrée en stock »)
+NON_WINE_SUPPLIERS = ("CHRONOPOST", "ALIX", "PENNYLANE", "SHOPIFY", "GOOGLE", "INPI", "INFOGREFFE", "LEGAL2DIGITAL", "ADMINISTRO", "NAMECHEAP", "ROSEAU", "OLINDA", "QONTO", "CENSEA", "MODULO",
+                      "ARBELET", "FRAIS", "TRANSPORT", "PÉAGE", "PEAGE", "TAXI", "RESTAURANT", "PARKING", "HÔTEL", "HOTEL", "AUTRE", "FOURNISSEURS -")
 
 LOCATIONS = {"ALIX": "Entrepôt Alix Transport, Beaune", "CHAUX": "La Mémoire de Bourgogne, rue de Chaux"}
 OWNERS = {"OWINE": "OWINE SAS", "LMB": "La Mémoire de Bourgogne (dépôt-vente)"}
@@ -35,7 +41,7 @@ MODES = {"chronopost": "Chronopost", "retrait": "Retrait chez Alix", "manuel": "
 TASK_KINDS = {
     "reception": "Confirmer la réception avec le client", "lmb_invoice": "Facture LMB → OWINE à établir (dépôt-vente)",
     "pennylane_invoice": "Facture client Pennylane à vérifier et valider", "packaging": "Réception d'emballages à confirmer",
-    "cost_missing": "Coût d'achat manquant", "stock": "Écart de stock à vérifier", "other": "Autre",
+    "cost_missing": "Coût d'achat manquant", "stock": "Écart de stock à vérifier", "purchase_pending": "Achat facturé, livraison à confirmer / à saisir", "other": "Autre",
 }
 ALIX_EMAIL = "beaune@transportsalix.com"
 ALIX_CC = ["remi.sery@gmail.com"]

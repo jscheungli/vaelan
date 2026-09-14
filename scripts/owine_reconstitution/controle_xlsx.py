@@ -11,7 +11,7 @@ from openpyxl.utils import get_column_letter
 D = os.path.dirname(os.path.abspath(__file__)); OUT = sys.argv[1]
 ach = json.load(open(D + "/achats.json")); data = json.load(open(D + "/stock_data.json")); shop = data["shopify"]
 imap = service.item_map()
-REMAP = {"FDCSTNVCCORB23": "FDCSTNVCCORB22", "MIMALCVXXXRB22": "MIMALCVLCRRB20", "PYC-CHAMPLOTS-2023": "DPYCM-SA1CC-B23", "PYC-CHENEVOTTES-2023": "DPYCM-CM1CCC-B23"}
+REMAP = {"FDCSTNVCCORB23": "FDCSTNVCCORB22", "MIMALCVXXXRB22": "MIMLDXVLCRRB22", "PYC-CHAMPLOTS-2023": "DPYCM-SA1CC-B23", "PYC-CHENEVOTTES-2023": "DPYCM-CM1CCC-B23"}
 MISSING_SALES = [("OW1016", "2025-10-22", "PYCMSTPLCHBB15", 4, "LMB", 130.0), ("OW1022", "2025-11-20", "PYCCSMPCNVBB22", 2, "OWINE", 62.0)]
 L = []  # (date, kind, sku, qty, owner, location, ref, cost, note)
 for m in service.moves(limit=100000):
@@ -41,8 +41,8 @@ for sku in sorted(set(agg) | {s for s, v in shop.items() if (v or {}).get("on_ha
     it = imap.get(sku)
     if it and it.kind != "wine": continue
     a = agg[sku]; ach_q = a[("OWINE", "purchase")]; v_ow = -(a[("OWINE", "sale")] + a[("OWINE", "pickup")]); dep = a[("LMB", "deposit_in")]; v_lmb = -(a[("LMB", "sale")] + a[("LMB", "pickup")])
-    onh = (shop.get(sku) or {}).get("on_hand"); theo = ach_q - v_ow + dep - v_lmb
-    rows.append([sku, title(sku), ach_q, v_ow, ach_q - v_ow, dep, v_lmb, dep - v_lmb, theo, onh, None if onh is None else onh - theo])
+    sh = shop.get(sku) or {}; onh = sh.get("on_hand"); com = sh.get("committed") or 0; av = sh.get("available"); theo = ach_q - v_ow + dep - v_lmb
+    rows.append([sku, title(sku), ach_q, v_ow, ach_q - v_ow, dep, v_lmb, dep - v_lmb, theo, onh, com, av, None if av is None else av - theo])
 wb = Workbook(); H = Font(bold=True, color="FFFFFF"); F = PatternFill("solid", fgColor="0A2540"); B = Font(bold=True)
 def sheet(ws, head, data, widths):
     ws.append(head)
@@ -51,14 +51,14 @@ def sheet(ws, head, data, widths):
     for i, w in enumerate(widths, 1): ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
 ws = wb.active; ws.title = "Synthèse par vin"
-sheet(ws, ["Réf. Shopify", "Vin", "Achats OWINE (btl)", "Ventes OWINE", "Théorique OWINE", "Dépôt LMB (BLV)", "Ventes LMB", "Théorique LMB", "Théorique total chez Alix", "Stock Shopify (on hand)", "Écart Shopify − théorique", "À vérifier avec Alix"],
-      [r + [("" if r[10] in (0, None) else "OUI")] for r in rows], [18, 62, 10, 10, 10, 10, 10, 10, 12, 12, 12, 10])
+sheet(ws, ["Réf. Shopify", "Vin", "Achats OWINE (btl)", "Ventes OWINE", "Théorique OWINE", "Dépôt LMB (BLV)", "Ventes LMB", "Théorique LMB", "Théorique total chez Alix", "Shopify : en stock (on hand)", "Shopify : engagé (commandes non expédiées)", "Shopify : disponible", "Écart disponible − théorique", "À vérifier avec Alix"],
+      [r + [("" if r[12] in (0, None) else "OUI")] for r in rows], [18, 62, 10, 10, 10, 10, 10, 10, 12, 12, 14, 12, 12, 10])
 for row in ws.iter_rows(min_row=2):
-    if row[10].value not in (0, None):
+    if row[12].value not in (0, None):
         for c in row: c.fill = PatternFill("solid", fgColor="FFF3CD")
 n = len(rows) + 2
 ws.cell(row=n, column=2, value="TOTAL").font = B
-for col in range(3, 12):
+for col in range(3, 14):
     ws.cell(row=n, column=col, value=f"=SUM({get_column_letter(col)}2:{get_column_letter(col)}{n-1})").font = B
 ws2 = wb.create_sheet("Livre des mouvements")
 sheet(ws2, ["Date", "Opération", "Réf. Shopify", "Vin", "Quantité", "Propriétaire", "Lieu", "Référence", "Coût / prix unitaire HT", "Note"],
@@ -88,7 +88,7 @@ for row in ws4.iter_rows(min_row=2):
     for c in row: c.alignment = Alignment(wrap_text=True, vertical="top")
 wb.save(OUT)
 tot = lambda i: sum((r[i] or 0) for r in rows)
-print(f"{len(L)} mouvements | vins {len(rows)} | achats {tot(2):.0f} | ventes OWINE {tot(3):.0f} | théo OWINE {tot(4):.0f} | dépôt {tot(5):.0f} | ventes LMB {tot(6):.0f} | théo LMB {tot(7):.0f} | théo total {tot(8):.0f} | Shopify {tot(9):.0f} | écart {tot(10):+.0f}")
-print("écarts :"); [print(f"  {r[0]:16} {r[1][:58]:58} théo {r[8]:>4.0f} Shopify {r[9]:>4.0f} → {r[10]:+.0f}") for r in rows if r[10] not in (0, None)]
-print("sans stock Shopify avec théorique ≠ 0 :", [(r[0], r[8]) for r in rows if r[9] is None and r[8]])
+print(f"{len(L)} mouvements | vins {len(rows)} | achats {tot(2):.0f} | ventes OWINE {tot(3):.0f} | théo OWINE {tot(4):.0f} | dépôt {tot(5):.0f} | ventes LMB {tot(6):.0f} | théo LMB {tot(7):.0f} | théo total {tot(8):.0f} | Shopify en stock {tot(9):.0f} / engagé {tot(10):.0f} / disponible {tot(11):.0f} | écart disponible {tot(12):+.0f}")
+print("écarts (disponible − théorique) :"); [print(f"  {r[0]:16} {r[1][:58]:58} théo {r[8]:>4.0f} dispo {r[11]:>4.0f} → {r[12]:+.0f}") for r in rows if r[12] not in (0, None)]
+print("sans stock Shopify avec théorique ≠ 0 :", [(r[0], r[8]) for r in rows if r[11] is None and r[8]])
 print("les 8 mouvements les plus récents :", [(str(r[0]), r[1], r[2], r[3], r[6]) for r in L[:8]])

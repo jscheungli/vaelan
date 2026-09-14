@@ -476,6 +476,8 @@ def post_stock_moves(o: OwOrder, by: str = None) -> int:
     delete_moves(o.name, source="order")
     n = 0
     kind = "pickup" if o.mode == "retrait" else "sale"
+    if any(m.kind in ("sale", "pickup") for m in moves(ref=o.name, limit=500)):
+        return  # ventes déjà enregistrées (reprise de l'historique) : pas de double décompte
     d = (o.pickup_date or (o.created_at.date() if o.created_at else date.today()))
     boxes = defaultdict(int)
     for c in cartons(o.id):
@@ -608,3 +610,228 @@ def pennylane_draft_tasks(log=None) -> int:
 
 def cost_alerts() -> List[str]:
     return [i.sku for i in items("wine") if not i.cost and i.status == "ACTIVE"]
+
+
+# ---------------------------------------------------------------- réglages JSON du module (Setting)
+
+def _setting_get(key: str):
+    from app.models import Setting
+    with Session(engine) as s:
+        st = s.exec(select(Setting).where(Setting.company_code == CODE, Setting.key == key)).first()
+        try:
+            return json.loads(st.value) if st and st.value else None
+        except Exception:
+            return None
+
+
+def _setting_set(key: str, value) -> None:
+    from app.models import Setting
+    with Session(engine) as s:
+        st = s.exec(select(Setting).where(Setting.company_code == CODE, Setting.key == key)).first() or Setting(company_code=CODE, key=key, value="")
+        st.value = json.dumps(value, ensure_ascii=False, default=str)
+        s.add(st); s.commit()
+
+
+# ---------------------------------------------------------------- dépôt-vente LMB : facturation LMB → OWINE dans Pennylane
+
+def lmb_prices() -> Dict[str, float]:
+    """Prix de dépôt retenu par vin = le plus élevé des BLV (règle JS 14/09/2026), sinon prix LMB de la fiche."""
+    p: Dict[str, float] = {}
+    for m in moves(owner="LMB", limit=100000):
+        if m.kind == "deposit_in" and m.unit_cost:
+            p[m.sku] = max(p.get(m.sku, 0), float(m.unit_cost))
+    for it in items("wine"):
+        if it.lmb_price and it.sku not in p:
+            p[it.sku] = float(it.lmb_price)
+    return p
+
+
+def lmb_lines(name: str) -> List[dict]:
+    """Bouteilles en dépôt-vente vendues dans une commande : [{sku, qty, title, price}]."""
+    prices = lmb_prices(); q: Dict[str, float] = defaultdict(float)
+    for m in moves(ref=name, owner="LMB", limit=500):
+        if m.kind in ("sale", "pickup") and m.location == "ALIX":
+            q[m.sku] += -m.qty
+    return [{"sku": sku, "qty": int(n), "title": wine_title(sku), "price": prices.get(sku)} for sku, n in q.items() if n > 0]
+
+
+def lmb_draft_info(name: str) -> Optional[dict]:
+    return _setting_get(f"owine:lmb_invoice:{name}")
+
+
+def _lmb_client():
+    from app.core.connectors.pennylane import for_company
+    c = for_company(config.LMB_COMPANY)
+    if not c:
+        raise RuntimeError("Pennylane La Mémoire de Bourgogne non configuré (jeton LAMEMOIREDEBOURGOGNE)")
+    return c
+
+
+def _lmb_customer_id(c) -> int:
+    cid = _setting_get("owine:lmb_customer_id")
+    if cid:
+        return int(cid)
+    for cu in (c.get("/customers", limit=100).get("items") or []):
+        if (cu.get("name") or "").strip().upper() == config.LMB_CUSTOMER["name"].upper():
+            _setting_set("owine:lmb_customer_id", cu["id"]); return int(cu["id"])
+    st, r = c.send_json("POST", "/company_customers", config.LMB_CUSTOMER)
+    if st not in (200, 201):
+        raise RuntimeError(f"création du client OWINE dans Pennylane LMB refusée : {st} {str(r)[:200]}")
+    cid = (r.get("customer") or r)["id"]; _setting_set("owine:lmb_customer_id", cid)
+    return int(cid)
+
+
+def create_lmb_draft(name: str, by: str = None) -> dict:
+    """Crée (ou recrée) dans Pennylane LMB le brouillon de facture LMB → OWINE d'une commande. L'ancien brouillon est retiré s'il l'est encore."""
+    o = get_order(name)
+    if not o:
+        raise RuntimeError(f"commande {name} inconnue")
+    lines = lmb_lines(name)
+    if not lines:
+        raise RuntimeError(f"{name} : aucune bouteille en dépôt-vente")
+    if any(l["price"] is None for l in lines):
+        raise RuntimeError(f"{name} : prix de dépôt manquant pour " + ", ".join(l["sku"] for l in lines if l["price"] is None))
+    c = _lmb_client(); cid = _lmb_customer_id(c)
+    prev = lmb_draft_info(name)
+    if prev and prev.get("id"):
+        try:
+            cur = c.get(f"/customer_invoices/{prev['id']}")
+        except Exception as e:
+            cur = None if "404" in str(e) else {"draft": True}
+        if cur and not cur.get("draft"):
+            raise RuntimeError(f"{name} : la facture {cur.get('invoice_number') or prev['id']} n'est plus un brouillon, elle ne peut pas être recréée")
+        if cur:
+            st, r = c.send_json("DELETE", f"/customer_invoices/{prev['id']}", {})
+            if st not in (200, 202, 204, 404):
+                raise RuntimeError(f"retrait de l'ancien brouillon refusé ({st}) : supprimez-le dans Pennylane puis recommencez")
+    d = (o.created_at.date() if o.created_at else date.today())
+    body = {"customer_id": cid, "date": date.today().isoformat(), "deadline": (date.today() + timedelta(days=30)).isoformat(), "draft": True, "external_reference": f"LMB-{name}",
+            "pdf_invoice_subject": f"Dépôt-vente OWINE — commande {name} du {d:%d/%m/%Y}",
+            "invoice_lines": [{"label": f"{l['title']} — réf. {l['sku']} — vendue par OWINE le {d:%d/%m/%Y} (commande {name}), dépôt-vente BLV 2025031102 / 2026012901", "quantity": l["qty"],
+                               "unit": "piece", "raw_currency_unit_price": f"{l['price']:.2f}", "vat_rate": "FR_200"} for l in lines]}
+    st, r = c.send_json("POST", "/customer_invoices", body)
+    if st not in (200, 201):
+        raise RuntimeError(f"Pennylane a refusé le brouillon ({st}) : {str(r)[:200]}")
+    info = {"id": r.get("id"), "created_at": datetime.utcnow().isoformat(timespec="seconds"), "by": by, "amount": r.get("amount"), "ht": r.get("currency_amount_before_tax"), "pdf": r.get("public_file_url"),
+            "lines": [(l["sku"], l["qty"], l["price"]) for l in lines], "status": "draft", "number": ""}
+    _setting_set(f"owine:lmb_invoice:{name}", info)
+    return info
+
+
+def lmb_drafts_sync(log=None) -> int:
+    """Brouillons LMB → OWINE finalisés dans Pennylane → tâche « facture LMB » fermée, n° mémorisé."""
+    log = log or (lambda m: None); n = 0
+    try:
+        c = _lmb_client()
+    except Exception as e:
+        log(f"LMB : {e}"); return 0
+    for t in tasks("open"):
+        if t.kind != "lmb_invoice" or not t.ref:
+            continue
+        info = lmb_draft_info(t.ref)
+        if not info or not info.get("id"):
+            continue
+        try:
+            cur = c.get(f"/customer_invoices/{info['id']}")
+        except Exception:
+            continue
+        if not cur.get("draft"):
+            info.update(status=cur.get("status"), number=cur.get("invoice_number") or "", pdf=cur.get("public_file_url") or info.get("pdf"))
+            _setting_set(f"owine:lmb_invoice:{t.ref}", info); close_tasks_by_key(f"lmb_invoice:{t.ref}"); n += 1
+            log(f"{t.ref} : facture LMB {info['number']} finalisée → tâche fermée")
+    return n
+
+
+# ---------------------------------------------------------------- revue des achats Pennylane : facture vigneron sans entrée en stock
+
+def pennylane_purchase_tasks(log=None) -> int:
+    """Chaque facture fournisseur vigneron (non archivée) sans mouvement d'achat « F <n°> » → tâche « achat facturé, livraison à confirmer / à saisir » (acomptes compris)."""
+    from app.core.connectors.pennylane import for_company
+    log = log or (lambda m: None)
+    c = for_company(CODE)
+    if not c:
+        return 0
+    sup, cur = {}, None
+    for _ in range(5):
+        d = c.get("/suppliers", limit=100, **({"cursor": cur} if cur else {}))
+        for x in d.get("items") or []:
+            sup[x["id"]] = x.get("name") or ""
+        if not d.get("has_more"):
+            break
+        cur = d.get("next_cursor")
+    refs = {(m.ref or "") for m in moves(limit=100000) if m.kind == "purchase"}
+    invs, cur = [], None
+    for _ in range(5):
+        d = c.get("/supplier_invoices", limit=100, **({"cursor": cur} if cur else {}))
+        invs += d.get("items") or []
+        if not d.get("has_more"):
+            break
+        cur = d.get("next_cursor")
+    n, still = 0, set()
+    for i in invs:
+        if i.get("archived_at") or (i.get("date") or "") < "2025-01-01":
+            continue
+        name = sup.get((i.get("supplier") or {}).get("id"), "")
+        if not name or any(k in name.upper() for k in config.NON_WINE_SUPPLIERS):
+            continue
+        num = str(i.get("invoice_number") or "").strip()
+        if not num or f"F {num}" in refs or f"F {num.split(' ')[0]}" in refs:
+            continue
+        key = f"purchase:{i.get('id')}"; still.add(key)
+        acompte = "ACOMPTE" in (i.get("label") or "").upper()
+        ht = float(i.get("currency_amount_before_tax") or 0)
+        title = (f"Acompte {name} n°{num} du {i.get('date')} ({ht:.2f} € HT) : livraison en attente" if acompte
+                 else f"Facture {name} n°{num} du {i.get('date')} ({ht:.2f} € HT) : livraison à confirmer et à saisir dans le stock")
+        if add_task("purchase_pending", title, ref=num, key=key, details="Revue automatique Pennylane ↔ stock : aucune entrée « F n° » dans le livre des mouvements. À la réception chez Alix, saisir les bouteilles (Mouvements → entrée d'achat, réf. « F n° »)."):
+            n += 1
+    for t in tasks("open"):
+        if t.kind == "purchase_pending" and t.key and t.key not in still:
+            close_tasks_by_key(t.key)
+    log(f"Pennylane achats : {n} nouvelle(s) tâche(s) de livraison à confirmer")
+    return n
+
+
+# ---------------------------------------------------------------- Shopify : commande « traitée » (n° Chronopost) à la date d'enlèvement
+
+def shopify_fulfill(o: OwOrder, log=None) -> str:
+    """Marque la commande comme traitée dans Shopify avec les n° Chronopost des cartons, sans e-mail Shopify au client."""
+    log = log or (lambda m: None)
+    c = _shopify()
+    if not c:
+        raise RuntimeError("Shopify non configuré")
+    d = c.gql("""query($q:String!){ orders(first:1, query:$q){ edges{ node{ id name displayFulfillmentStatus fulfillmentOrders(first:10){ edges{ node{ id status } } } } } } }""", {"q": f"name:{o.name}"})
+    nodes = [e["node"] for e in d["orders"]["edges"] if e["node"]["name"] == o.name]
+    if not nodes:
+        raise RuntimeError(f"{o.name} introuvable dans Shopify")
+    node = nodes[0]
+    if node["displayFulfillmentStatus"] == "FULFILLED":
+        o.fulfillment_status = "FULFILLED"; save_order(o); return "déjà traitée dans Shopify"
+    fos = [e["node"]["id"] for e in node["fulfillmentOrders"]["edges"] if e["node"]["status"] in ("OPEN", "IN_PROGRESS", "SCHEDULED")]
+    if not fos:
+        raise RuntimeError(f"{o.name} : aucun ordre de traitement ouvert dans Shopify")
+    nums = [x.tracking for x in cartons(o.id) if x.tracking]
+    fulfillment = {"lineItemsByFulfillmentOrder": [{"fulfillmentOrderId": f} for f in fos], "notifyCustomer": False}
+    if nums:
+        fulfillment["trackingInfo"] = {"company": "Chronopost", "numbers": nums, "url": f"https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT={nums[0]}"}
+    r = c.gql("""mutation($f:FulfillmentInput!){ fulfillmentCreate(fulfillment:$f){ fulfillment{ id status } userErrors{ field message } } }""", {"f": fulfillment})
+    res = r["fulfillmentCreate"]
+    if res.get("userErrors"):
+        raise RuntimeError(f"Shopify : {res['userErrors']}")
+    o.fulfillment_status = "FULFILLED"; save_order(o)
+    log(f"{o.name} : traitée dans Shopify ({', '.join(nums) or 'sans n° de suivi'})")
+    return f"traitée dans Shopify ({', '.join(nums) or 'sans n° de suivi'})"
+
+
+def shopify_fulfill_due(log=None) -> int:
+    """Commandes envoyées (enlèvement Chronopost passé, ou retrait) pas encore traitées dans Shopify → traitement créé avec les n° de suivi."""
+    log = log or (lambda m: None); n = 0
+    for o in orders():
+        if o.status not in ("attente_reception", "a_facturer", "cloturee") or o.fulfillment_status == "FULFILLED" or not o.shopify_id:
+            continue
+        if o.mode not in ("chronopost", "retrait") or (o.mode == "chronopost" and (not o.pickup_date or o.pickup_date > date.today())):
+            continue
+        try:
+            shopify_fulfill(o, log=log); n += 1
+        except Exception as e:
+            log(f"{o.name} : Shopify — {e}")
+    return n

@@ -24,6 +24,11 @@ def run_sync(ctx=None) -> str:
             log(f"{n4} commande(s) clôturée(s) (facture validée)")
     except Exception as e:
         log(f"Pennylane : {e}"); n3 = 0
+    for fn in (service.pennylane_purchase_tasks, service.lmb_drafts_sync, service.shopify_fulfill_due):
+        try:
+            fn(log=log)
+        except Exception as e:
+            log(f"{fn.__name__} : {e}")
     return f"articles {r1['items']}, commandes +{r2['created']} / {r2['updated']} mises à jour, {len(r1.get('missing_cost') or [])} coût(s) manquant(s), {n3} brouillon(s) Pennylane"
 
 

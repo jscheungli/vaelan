@@ -51,7 +51,7 @@ if MODE == "apply":
     from sqlmodel import Session, select
     from app.core.db import engine
     from app.models import OwMove, OwCarton, OwOrder, OwItem, OwTask
-    REMAP = {"FDCSTNVCCORB23": "FDCSTNVCCORB22", "MIMALCVXXXRB22": "MIMALCVLCRRB20", "PYC-CHAMPLOTS-2023": "DPYCM-SA1CC-B23", "PYC-CHENEVOTTES-2023": "DPYCM-CM1CCC-B23"}
+    REMAP = {"FDCSTNVCCORB23": "FDCSTNVCCORB22", "MIMALCVXXXRB22": "MIMLDXVLCRRB22", "PYC-CHAMPLOTS-2023": "DPYCM-SA1CC-B23", "PYC-CHENEVOTTES-2023": "DPYCM-CM1CCC-B23"}
     with Session(engine) as s:
         # 1. les 68 lignes « Reprise Shopify 13/09/2026 » (placeholder posé le 13/09 en attendant les achats) sont remplacées par les achats réels
         rows = s.exec(select(OwMove).where(OwMove.ref == "Reprise Shopify 13/09/2026", OwMove.kind == "initial")).all()

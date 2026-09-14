@@ -625,7 +625,7 @@ async def owine_task_add(request: Request, code: str):
 
 # ============================== dépôt-vente LMB
 @router.get("/c/{code}/owine/lmb", response_class=HTMLResponse)
-def owine_lmb(request: Request, code: str):
+def owine_lmb(request: Request, code: str, msg: str = ""):
     company, redir = _guard(request, code)
     if redir:
         return redir
@@ -635,7 +635,7 @@ def owine_lmb(request: Request, code: str):
     blvs = defaultdict(lambda: {"date": None, "qty": 0, "ht": 0.0})
     for m in service.moves(owner="LMB", limit=5000):
         if m.kind == "deposit_in":
-            dep[m.sku]["in"] += m.qty; dep[m.sku]["price"] = m.unit_cost
+            dep[m.sku]["in"] += m.qty; dep[m.sku]["price"] = max(dep[m.sku]["price"] or 0, m.unit_cost or 0) or None   # prix retenu = le plus élevé des BLV (règle JS)
             blvs[m.ref]["date"] = m.date; blvs[m.ref]["qty"] += m.qty; blvs[m.ref]["ht"] += m.qty * (m.unit_cost or 0)
         elif m.kind in ("sale", "pickup") and m.location == "ALIX":
             dep[m.sku]["sold"] += -m.qty
@@ -649,4 +649,33 @@ def owine_lmb(request: Request, code: str):
         tot = sum(q * (dep[s]["price"] or 0) for s, q in skus.items())
         to_invoice.append({"ref": ref, "lines": [(s, q, dep[s]["title"], dep[s]["price"]) for s, q in skus.items()], "ht": tot, "open": ref in open_inv})
     return templates.TemplateResponse(request, "owine_lmb.html", _base(request, company, dep=sorted(dep.items(), key=lambda kv: kv[1]["title"]), blvs=sorted(blvs.items()),
-                                                                      to_invoice=to_invoice, total_to_invoice=sum(x["ht"] for x in to_invoice if x["open"])))
+                                                                      to_invoice=to_invoice, total_to_invoice=sum(x["ht"] for x in to_invoice if x["open"]),
+                                                                      drafts={x["ref"]: service.lmb_draft_info(x["ref"]) for x in to_invoice}, msg=msg))
+
+
+@router.post("/c/{code}/owine/lmb/{name}/brouillon")
+def owine_lmb_draft(request: Request, code: str, name: str):
+    """Crée (ou recrée) dans Pennylane LMB le brouillon de facture LMB → OWINE de la commande."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    try:
+        info = service.create_lmb_draft(name, by=_who(request))
+        msg = f"{name} : brouillon créé dans Pennylane La Mémoire de Bourgogne ({info.get('amount')} € TTC). Vérifiez-le puis finalisez-le dans Pennylane : la tâche se fermera à la prochaine synchronisation."
+    except Exception as e:
+        msg = f"{name} : {e}"
+    return RedirectResponse(f"/c/{code}/owine/lmb?msg={msg}#{name}", status_code=303)
+
+
+@router.post("/c/{code}/owine/commandes/{name}/shopify-traitee")
+def owine_order_shopify_fulfill(request: Request, code: str, name: str):
+    """Marque la commande comme traitée dans Shopify (n° Chronopost des cartons), sans e-mail Shopify au client."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name)
+    try:
+        msg = f"{name} : {service.shopify_fulfill(o)}"
+    except Exception as e:
+        msg = f"{name} : {e}"
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={msg}", status_code=303)
