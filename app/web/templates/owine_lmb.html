@@ -3,7 +3,7 @@
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Dépôt-vente LMB</li></ol></nav>
 <h1 class="h4">Dépôt-vente La Mémoire de Bourgogne → OWINE</h1>
-<p class="small text-muted mb-2">Contrat-cadre du 11/03/2025. Les bouteilles déposées chez Alix restent la propriété de LMB jusqu'à la vente ; chaque vente est facturée par LMB à OWINE au prix de cession du bon de livraison valorisé (le plus élevé des BLV pour un même vin).</p>
+<p class="small text-muted mb-2">Contrat-cadre du 11/03/2025. Les bouteilles déposées chez Alix restent la propriété de LMB jusqu'à la vente ; chaque vente est facturée par LMB à OWINE au prix de cession du bon de livraison valorisé du lot vendu (premier déposé, premier vendu).</p>
 {% if msg %}<div class="alert alert-info small py-2">{{ msg }}</div>{% endif %}
 {% set n_open = to_invoice|selectattr('open')|list|length %}
 <ul class="nav nav-tabs small" id="lmbTabs" role="tablist">
