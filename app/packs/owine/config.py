@@ -45,6 +45,7 @@ TASK_KINDS = {
 }
 ALIX_EMAIL = "beaune@transportsalix.com"
 ALIX_CC = ["remi.sery@gmail.com"]
+CLIENT_CC = ["remi.sery@gmail.com"]         # Rémi en copie de chaque e-mail client (aperçu modifiable, envoi, brouillons, zip)
 ALIX_ADDRESS = "OWINE chez ALIX TRANSPORT, 6 Rue JF Champollion, 21200 BEAUNE"
 DIGEST_TO = ["js@owine.co"]
 

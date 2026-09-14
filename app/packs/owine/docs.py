@@ -296,7 +296,7 @@ def email_client(o, cs) -> dict:
                 "Nous pourrons alors vous garantir un remplacement, ou un remboursement si un remplacement par la même bouteille ou une autre qui vous conviendrait n'est pas possible.\n\n"
                 "Nous restons bien entendu à votre disposition pour toute question et vous souhaitons une excellente réception et une très belle journée.\n\nTrès cordialement,")
         subject = f"Votre commande {o.name} : enlèvement Chronopost réservé, livraison le {fr_date(deliv) if deliv else 'lendemain'} avant 13 h"
-    return {"to": [o.email] if o.email else [], "cc": [], "subject": subject, "body": body}
+    return {"to": [o.email] if o.email else [], "cc": list(config.CLIENT_CC), "subject": subject, "body": body}
 
 
 def bundle_zip(o, cs, labels: List[Tuple[str, bytes]] = None) -> bytes:
@@ -310,7 +310,7 @@ def bundle_zip(o, cs, labels: List[Tuple[str, bytes]] = None) -> bytes:
             z.writestr(f"Etiquettes/{name}", data)
         ea, ec = email_alix(o, cs), email_client(o, cs)
         z.writestr("E-mail Alix.txt", f"À : {', '.join(ea['to'])}\nCc : {', '.join(ea['cc'])}\nObjet : {ea['subject']}\n\n{ea['body']}")
-        z.writestr("E-mail client.txt", f"À : {', '.join(ec['to'])}\nObjet : {ec['subject']}\n\n{ec['body']}")
+        z.writestr("E-mail client.txt", f"À : {', '.join(ec['to'])}\nCc : {', '.join(ec['cc'])}\nObjet : {ec['subject']}\n\n{ec['body']}")
     return bio.getvalue()
 
 

@@ -23,6 +23,7 @@
     <div class="card shadow-sm h-100"><div class="card-header py-2 small fw-semibold">E-mail au client</div><div class="card-body py-2 small">
       <div class="row g-1 mb-2">
         <div class="col-12"><label class="form-label mb-0 text-muted">À</label><input class="form-control form-control-sm" name="to_client" value="{{ em.client.to|join(', ') }}"></div>
+        <div class="col-12"><label class="form-label mb-0 text-muted">Cc</label><input class="form-control form-control-sm" name="cc_client" value="{{ em.client.cc|join(', ') }}"></div>
         <div class="col-12"><label class="form-label mb-0 text-muted">Objet</label><input class="form-control form-control-sm" name="subject_client" value="{{ em.client.subject }}"></div>
         <div class="col-12"><label class="form-label mb-0 text-muted">Paragraphe libre (inséré après l'annonce de livraison)</label><textarea class="form-control form-control-sm" name="extra_client" rows="2">{{ ed.get('extra_client', '') }}</textarea></div>
       </div>

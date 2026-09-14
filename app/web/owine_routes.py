@@ -355,7 +355,7 @@ def _emails_of(o, cs, ed: dict) -> dict:
     ea, ec = docs.email_alix(o, cs), docs.email_client(o, cs)
     return {"alix": {"to": ea["to"], "cc": [x.strip() for x in (ed.get("cc_alix") or ", ".join(ea["cc"])).split(",") if x.strip()], "subject": ed.get("subject_alix") or ea["subject"],
                      "html": docs.email_alix_html(o, cs, extra=ed.get("extra_alix") or ""), "text": ea["body"] + ("\n\n" + ed["extra_alix"] if ed.get("extra_alix") else "") + "\n\n" + _signature()},
-            "client": {"to": [ed.get("to_client") or (ec["to"][0] if ec["to"] else "")], "cc": [], "subject": ed.get("subject_client") or ec["subject"],
+            "client": {"to": [ed.get("to_client") or (ec["to"][0] if ec["to"] else "")], "cc": [x.strip() for x in (ed.get("cc_client") or ", ".join(ec["cc"])).split(",") if x.strip()], "subject": ed.get("subject_client") or ec["subject"],
                        "html": docs.email_client_html(o, cs, extra=ed.get("extra_client") or ""), "text": ec["body"] + ("\n\n" + ed["extra_client"] if ed.get("extra_client") else "") + "\n\n" + _signature()}}
 
 
@@ -392,7 +392,7 @@ async def owine_order_emails_save(request: Request, code: str, name: str):
         return redir
     o = service.get_order(name); f = await request.form()
     ed = _email_edits(o)
-    for k in ("subject_alix", "subject_client", "extra_alix", "extra_client", "cc_alix", "to_client"):
+    for k in ("subject_alix", "subject_client", "extra_alix", "extra_client", "cc_alix", "to_client", "cc_client"):
         if k in f:
             ed[k] = (f.get(k) or "").strip()
     _save_email_edits(o, ed)
@@ -415,7 +415,7 @@ def _send_emails(request, code, o, ed):
     att_cli = [(f"Détail {o.name}.pdf", pl, "application/pdf")] + [(n, d, "application/pdf") for n, d in labels]
     ok1, m1 = gmail_imap.send_mail(CODE, em["alix"]["to"], em["alix"]["subject"], em["alix"]["text"], cc=em["alix"]["cc"], attachments=att_alix, html=em["alix"]["html"], inline=logo,
                                    from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
-    ok2, m2 = gmail_imap.send_mail(CODE, em["client"]["to"], em["client"]["subject"], em["client"]["text"], attachments=att_cli, html=em["client"]["html"], inline=logo,
+    ok2, m2 = gmail_imap.send_mail(CODE, em["client"]["to"], em["client"]["subject"], em["client"]["text"], cc=em["client"]["cc"], attachments=att_cli, html=em["client"]["html"], inline=logo,
                                    from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
     if ok1 and ok2:
         service.mark_sent(o, by=_who(request))
@@ -447,7 +447,7 @@ def owine_order_drafts(request: Request, code: str, name: str):
     att_alix = [(f"Détail {o.name}.pdf", pl, "application/pdf"), (f"{o.name}.xlsx", xl, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] + [(n, d, "application/pdf") for n, d in labels]
     ok1, m1 = gmail_imap.create_draft(CODE, ea["to"], ea["subject"], ea["body"] + "\n\n" + _signature(), cc=ea["cc"], attachments=att_alix, html=docs.email_alix_html(o, cs), inline=logo)
     att_cli = [(f"Détail {o.name}.pdf", pl, "application/pdf")] + [(n, d, "application/pdf") for n, d in labels]
-    ok2, m2 = gmail_imap.create_draft(CODE, ec["to"], ec["subject"], ec["body"] + "\n\n" + _signature(), attachments=att_cli, html=docs.email_client_html(o, cs), inline=logo)
+    ok2, m2 = gmail_imap.create_draft(CODE, ec["to"], ec["subject"], ec["body"] + "\n\n" + _signature(), cc=ec["cc"], attachments=att_cli, html=docs.email_client_html(o, cs), inline=logo)
     return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg=Brouillon Alix : {m1} · brouillon client : {m2}", status_code=303)
 
 
