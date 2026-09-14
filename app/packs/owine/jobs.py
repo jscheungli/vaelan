@@ -7,11 +7,16 @@ def run_sync(ctx=None) -> str:
     log = ctx.log if ctx else (lambda m: None)
     r1 = service.sync_items(log=log)
     r2 = service.sync_orders(log=log)
-    for sku in r1.get("missing_cost") or []:
+    missing = set(r1.get("missing_cost") or [])
+    for sku in missing:
         it = service.get_item(sku)
-        if it and it.status == "ACTIVE":
+        if it and it.status == "ACTIVE" and it.kind == "wine":
             service.add_task("cost_missing", f"Coût d'achat manquant : {it.title} ({sku})", ref=sku, key=f"cost:{sku}",
                              details="Renseigner le coût dans Shopify (fiche variante) ou dans Vaelan ; il sert à la valeur assurée.")
+    # tâches de coût devenues sans objet (coût renseigné, sélection, article retiré) → fermées ; les sélections n'ont pas de coût propre (JS : on regarde les bouteilles)
+    for t in service.tasks("open"):
+        if t.kind == "cost_missing" and t.ref and (t.ref not in missing or t.ref.upper().startswith("SEL-")):
+            service.close_tasks_by_key(f"cost:{t.ref}")
     try:
         n3 = service.pennylane_draft_tasks(log=log)
         n4 = service.close_invoiced_orders(log=log)

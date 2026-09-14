@@ -164,9 +164,31 @@ def save_order(o: OwOrder) -> OwOrder:
         return o
 
 
+_TITLES = {"at": None, "map": {}}
+
+
+def wine_title(sku: str, title: str = None) -> str:
+    """Libellé complet d'un vin, millésime compris (règle JS : le millésime identifie la bouteille, il figure partout)."""
+    now = datetime.utcnow()
+    if not _TITLES["at"] or (now - _TITLES["at"]).total_seconds() > 120:
+        _TITLES.update(at=now, map={i.sku: (i.title, i.millesime) for i in items()})
+    t, mill = _TITLES["map"].get(sku, (None, None))
+    if t and (not mill or str(mill) in t):
+        return t
+    base = title or t or sku
+    return f"{base}, {mill}" if mill and str(mill) not in base else base
+
+
+def _titled(lines: List[dict]) -> List[dict]:
+    for l in lines:
+        if l.get("sku"):
+            l["title"] = wine_title(l["sku"], l.get("title"))
+    return lines
+
+
 def order_lines(o: OwOrder) -> List[dict]:
     try:
-        return json.loads(o.lines or "[]")
+        return _titled(json.loads(o.lines or "[]"))
     except Exception:
         return []
 
@@ -181,7 +203,7 @@ def cartons(order_id: int) -> List[OwCarton]:
 
 def carton_lines(c: OwCarton) -> List[dict]:
     try:
-        return json.loads(c.lines or "[]")
+        return _titled(json.loads(c.lines or "[]"))
     except Exception:
         return []
 
@@ -292,7 +314,7 @@ def tasks(status: str = "open", company_code: str = CODE) -> List[OwTask]:
         q = select(OwTask).where(OwTask.company_code == company_code)
         if status:
             q = q.where(OwTask.status == status)
-        rows = s.exec(q.order_by(OwTask.due_date, OwTask.id)).all()
+        rows = s.exec(q.order_by(OwTask.created_at.desc(), OwTask.id.desc())).all()
         for r in rows:
             s.expunge(r)
         return rows
@@ -338,7 +360,7 @@ def sync_items(log=None) -> dict:
             continue
         p = v["product"]
         cost = float(((v.get("inventoryItem") or {}).get("unitCost") or {}).get("amount") or 0) or None
-        kind = "packaging" if sku in config.PACKAGING else "wine"
+        kind = "packaging" if sku in config.PACKAGING else ("selection" if sku.upper().startswith("SEL-") else "wine")
         fields = dict(title=p["title"], price=float(v.get("price") or 0), shopify_variant_id=v["id"], shopify_product_id=p["id"], status=p["status"],
                       vigneron=p.get("vendor") or None, millesime=vintage_of(p["title"]), kind=kind)
         if cost:
