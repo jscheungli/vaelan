@@ -156,13 +156,14 @@
   {% endcall %}
 
   {% call sec('ow-export', 'OWINE — commandes internationales et export (Chrono Viti)') %}
-    <strong>Zones</strong> (pays de livraison Shopify) : <em>France</em> (FR, Monaco) = circuit habituel Chrono 13 ; <em>UE</em> = lettre de transport seule, mais TVA du pays de
-    destination (guichet OSS, dès le premier euro pour les produits soumis à accise) et accises à traiter (particulier : représentant fiscal dans le pays ; société : e-DSA GAMMA) ;
+    <strong>Zones</strong> (pays de livraison Shopify) : <em>France</em> (FR, Monaco) = circuit habituel Chrono 13 ; <em>UE</em> = lettre de transport seule, mais accises dues dans le pays d'arrivée <strong>dès la première bouteille</strong> (aucun seuil en accises ;
+    stock oWine en droits acquittés sous CRD → société : DAES, qui exige l'agrément d'expéditeur certifié de l'expéditeur et un destinataire certifié ; particulier : représentant fiscal et garantie dans chaque pays)
+    et TVA (société : autoliquidation ; particulier : TVA française sous 10 000 € HT de ventes à distance UE cumulées, puis TVA du pays de destination via l'OSS) ;
     <em>hors UE et DROM-COM</em> = export : facture commerciale bilingue en <strong>3 exemplaires</strong> dans la pochette du colis A (1/n), rien sur les autres colis, stickers
     multi-pièces, EORI d'oWine, incoterm <strong>DAP</strong> (droits et taxes payés par le destinataire), vente exonérée de TVA (art. 262 I CGI), justificatif d'export à archiver.
     <br><strong>Règles par pays</strong> = fiches pays du guide export Chrono Viti 2024 (page Douane, onglet Pays) : offre autorisée (Chrono Classic route / Chrono Express avion) selon
     particulier ou société, délai, limites (Suisse particuliers : Classic seul, 6 bouteilles et 10 kg par envoi → <strong>un envoi et une facture par carton</strong> au-delà de 6 bouteilles ;
-    Japon, Corée, Chine, Australie, Taïwan… : particuliers interdits ; Royaume-Uni : Express seul, TVA GB due par le vendeur sous 135 £ ; USA particuliers : avenant Chrono Viti B2C US).
+    Japon, Corée, Chine, Australie, Taïwan… : particuliers interdits ; Royaume-Uni : Express seul, accise et TVA britanniques à l'import — la règle des 135 £ ne vise pas les produits soumis à accise ; USA particuliers : avenant Chrono Viti B2C US).
     Destinations interdites Chrono Viti : liste dans la configuration. « n.c. » = non communiqué → confirmer avec Chronopost.
     <br><strong>Sur la commande</strong> (carte « International ») : type de client déduit (société si société, n° TVA ou EORI), produit Chronopost par défaut = premier autorisé,
     contrôles automatiques (destination, coordonnées complètes : téléphone et e-mail obligatoires, pas de boîte postale, EORI/TVA pour une société, identifiant fiscal du particulier
@@ -192,6 +193,14 @@
     <strong>Site</strong> : textes FR/EN (options, politique, note de paiement) générés depuis les zones ; extrait de thème « owine-international » pour le panier (pays fermé, 6 bouteilles, multiples de 6, n° de TVA VIES via
     <code>/api/owine/vies</code>, attributs de commande) ; traduction anglaise par Claude enregistrée dans Shopify (translationsRegister) et publication de la langue (droits write_translations / write_locales).
     <strong>Mise en place</strong> : liste d'actions JS = tâches « Export : mise en place » (clé setup:&lt;id&gt;), certaines fermées automatiquement (EORI, signature, SIRET/capital, degrés).
+    <br><strong>Jalons d'ouverture (v0.1.198, 15/09/2026)</strong> : la page Douane › Mise en place range les actions par jalon ; seules celles des jalons en cours sont des tâches (titres « J1.1 — … » tenus à jour à chaque
+    synchronisation, action cochée « fait » jamais rouverte, tâche encore ouverte d'une action repoussée retirée). <em>Jalon 1</em> : fermer la vente hors France (zones Shopify « UE » à 22 € et « International » à 29 €
+    antérieures aux travaux : 41 pays livrables). <em>Jalon 2</em> : Suisse, particuliers, un carton de 6 (réponses Chronopost et Alix, réglages Vaelan, préparation Shopify, envoi réel de test par commande brouillon, puis
+    ouverture de la zone). <em>Ensuite</em>, non planifié : Suisse au-delà de 6 bouteilles, sociétés UE (agrément EC d'Alix, prestataire accises), particuliers UE, Royaume-Uni et États-Unis. La zone « UE Ouest sociétés »
+    est désormais <strong>fermée par défaut</strong>. <strong>Garde-fou du périmètre</strong> : à chaque synchronisation Vaelan lit toutes les zones de livraison Shopify (droit read_shipping) ; un pays livrable mais fermé dans
+    Vaelan, ou ouvert avec un tarif sans fenêtre de poids (panier hors règle payable), crée la tâche « ALERTE — Shopify accepte des commandes vers … » (fermée dès que la boutique est conforme) et un bandeau rouge sur la page
+    Douane. <strong>Suisse</strong> : pas d'accise suisse sur le vin, aucun régime accises UE, exportation DAP (TVA 8,1 %, droit de douane et frais du partenaire Chronopost réclamés au client par e-mail ou SMS avant la
+    livraison → téléphone et e-mail obligatoires) ; limite transporteur de 6 bouteilles / 10 kg par envoi ; Chrono Express interdit aux particuliers (contrôle « destination » bloquant) ; PGI seulement au-delà de 20 kg bruts.
   {% endcall %}
 
   {% call sec('gl', 'Grand-livre client (Paiements)') %}

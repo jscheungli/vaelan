@@ -882,7 +882,7 @@ def owine_douane(request: Request, code: str, msg: str = "", tous: int = 0):
     return templates.TemplateResponse(request, "owine_douane.html", _base(request, company, msg=msg, rows=rows, tous=tous, settings=owx.settings(), has_sig=bool(owx.signature()), plan=plan, matrix=matrix,
                                                                          products=owx.X.PRODUCTS, forbidden=sorted(owx.X.country_name(c) for c in owx.X.FORBIDDEN), missing=sum(1 for r in rows if r["missing"]),
                                                                          unconfirmed=sum(1 for r in rows if r.get("abv_status") != "confirme"), zones=owx.zones(), rates=owx.rate_settings(), grid=owx.rate_grid(),
-                                                                         ship_plan=ship_plan, setup=setup, log=owx.customs_log()[:60], texts=owx.site_texts(), tr_plan=tr_plan, scopes=scopes, country_name=owx.X.country_name))
+                                                                         ship_plan=ship_plan, setup=setup, jalons=owx.JALONS, leaks=owx.perimeter_leaks(), log=owx.customs_log()[:60], texts=owx.site_texts(), tr_plan=tr_plan, scopes=scopes, country_name=owx.X.country_name))
 
 
 @router.post("/c/{code}/owine/douane/reglages")

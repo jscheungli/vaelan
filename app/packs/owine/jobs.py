@@ -25,7 +25,7 @@ def run_sync(ctx=None) -> str:
     except Exception as e:
         log(f"Pennylane : {e}"); n3 = 0
     from . import export
-    for fn in (service.pennylane_purchase_tasks, service.lmb_drafts_sync, service.shopify_fulfill_due, export.export_tasks, export.setup_tasks):
+    for fn in (service.pennylane_purchase_tasks, service.lmb_drafts_sync, service.shopify_fulfill_due, export.export_tasks, export.setup_tasks, export.perimeter_guard):
         try:
             fn(log=log)
         except Exception as e:

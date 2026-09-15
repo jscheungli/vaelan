@@ -492,9 +492,9 @@ def state(o, cs) -> dict:
         add("vat", "Facture Pennylane sans TVA (exonération art. 262 I CGI, mention portée) vérifiée", manual=True, blocking=False, detail="le connecteur Shopify crée la facture au paiement : contrôler le taux 0 % export et la mention d'exonération")
     if z == "UE":
         add("vat_oss", "TVA : autoliquidation (société avec n° de TVA valide) ou TVA du pays de destination (particulier, guichet OSS)", manual=True, blocking=False,
-            detail="société : facture Pennylane HT, mention « autoliquidation, art. 262 ter I CGI » et n° de TVA du client ; particulier : TVA du pays de destination via l'OSS (application du seuil de 10 000 € aux produits soumis à accise : à confirmer avec l'expert-comptable)")
-        add("excise", "Accises : document d'accompagnement (DAES / DAE émis par Alix) — référence notée", manual=True, blocking=False,
-            detail="société : DAES (droits acquittés, expéditeur certifié → destinataire certifié SEED) ou DAE (suspension, vers un entrepositaire agréé) selon le régime du stock ; particulier : accises dues dans le pays de destination (représentant fiscal si le pays l'exige)")
+            detail="société : facture Pennylane HT, mention « autoliquidation, art. 262 ter I CGI » et n° de TVA du client ; particulier : TVA française tant que les ventes à distance UE cumulées restent sous 10 000 € HT par an, puis TVA du pays de destination via l'OSS — ce seuil ne vaut que pour la TVA")
+        add("excise", "Accises : référence obtenue avant le départ (CRA du DAES, ou référence de garantie) — notée", manual=True, blocking=False,
+            detail="stock en droits acquittés (CRD) : société → DAES émis par un expéditeur certifié (agrément EC d'Alix) vers un destinataire certifié (le client ou le prestataire accises), apurement sous 5 jours ; particulier → représentant fiscal et garantie dans le pays avant l'envoi. Aucun seuil : l'accise est due dès la première bouteille")
     add("alix", "E-mail Alix envoyé (facture ×3 sur le colis A, stickers multi-pièces)", ok=bool(o.sent_alix_at), blocking=False)
     add("client", "E-mail client envoyé (DAP, délais, suivi)", ok=bool(o.sent_client_at), blocking=False)
     if z == "EXPORT":
@@ -1169,81 +1169,428 @@ def vies_check(vat: str, force: bool = False) -> dict:
 
 
 # ================================================================== mise en place : liste des actions JS (tâches), textes du site, extrait de thème
+# ================================================================== jalons d'ouverture et garde-fou du périmètre Shopify (v0.1.198)
+JALONS = [
+    {"n": 1, "label": "Jalon 1", "tasks": True, "title": "Fermer la vente hors France",
+     "goal": "Priorité immédiate, environ 20 minutes, sans dépendance. Les zones de livraison Shopify « UE (Union Européenne) » (26 pays, 22 €) et « International » (14 pays dont la Suisse, 29 €), "
+             "antérieures aux travaux, laissent commander 40 pays sans accise, sans douane et à un port inférieur au coût. Aucune commande étrangère reçue à ce jour (49 commandes relues le 15/09/2026)."},
+    {"n": 2, "label": "Jalon 2", "tasks": True, "title": "Ouvrir la Suisse aux particuliers (une commande = un carton de 6)",
+     "goal": "Exportation simple : pas d'accise suisse sur le vin, aucun régime accises UE, Chrono Classic, facture commerciale ×3, livraison DAP (le client règle TVA suisse 8,1 %, droit de douane et frais "
+             "du partenaire Chronopost avant la livraison). Ordre : lancer A tout de suite, faire B et C pendant l'attente des réponses, D en dernier. Rien n'est visible des clients avant J2·D2."},
+    {"n": 9, "label": "Ensuite", "tasks": False, "title": "Jalons suivants, à préparer à la fin du jalon 2",
+     "goal": "Ils dépendent de réponses attendues : Chronopost (limite par colis ou par envoi), Alix (agrément d'expéditeur certifié), prestataires accises (Eurotax, ASD Group)."},
+]
+ACTIVE_JALONS = {j["n"] for j in JALONS if j["tasks"]}
+PERIMETER_TASK = "export:perimeter_leak"
+_DZ_CACHE: dict = {"at": 0.0, "data": None, "failed_at": 0.0}
+_WEIGHT_KG = {"KILOGRAMS": 1.0, "GRAMS": 0.001, "POUNDS": 0.45359237, "OUNCES": 0.0283495}
+
+
+def shopify_delivery_zones(force: bool = False) -> Optional[List[dict]]:
+    """Zones de livraison de tous les profils Shopify : pays, tarifs (actif, prix, fenêtre de poids en kg). Cache 10 min (échec : 2 min) ; None si Shopify est injoignable."""
+    import time as _time
+    now = _time.time()
+    if not force:
+        if _DZ_CACHE["data"] is not None and now - _DZ_CACHE["at"] < 600:
+            return _DZ_CACHE["data"]
+        if now - _DZ_CACHE["failed_at"] < 120:
+            return None
+    c = service._shopify()
+    try:
+        if not c:
+            raise RuntimeError("Shopify non configuré")
+        d = c.gql("""{ deliveryProfiles(first: 10) { edges { node { name default
+            profileLocationGroups { locationGroupZones(first: 50) { edges { node {
+              zone { name countries { code { countryCode restOfWorld } } }
+              methodDefinitions(first: 50) { edges { node { name active
+                rateProvider { ... on DeliveryRateDefinition { price { amount } } }
+                methodConditions { field operator conditionCriteria { ... on Weight { value unit } } } } } } } } } } } } } }""")
+    except Exception:
+        _DZ_CACHE["failed_at"] = now
+        return None
+    out = []
+    for pe in d["deliveryProfiles"]["edges"]:
+        prof = pe["node"]
+        for lg in prof["profileLocationGroups"]:
+            for ze in lg["locationGroupZones"]["edges"]:
+                zn = ze["node"]; methods = []
+                for me in zn["methodDefinitions"]["edges"]:
+                    m = me["node"]; lo = hi = None
+                    for cond in m["methodConditions"]:
+                        crit = cond.get("conditionCriteria") or {}
+                        if cond.get("field") != "TOTAL_WEIGHT" or crit.get("value") is None:
+                            continue
+                        kg = float(crit["value"]) * _WEIGHT_KG.get(crit.get("unit"), 1.0)
+                        if cond["operator"] == "GREATER_THAN_OR_EQUAL_TO":
+                            lo = kg
+                        elif cond["operator"] == "LESS_THAN_OR_EQUAL_TO":
+                            hi = kg
+                    methods.append({"name": m["name"], "active": bool(m["active"]), "price": ((m.get("rateProvider") or {}).get("price") or {}).get("amount"), "min_kg": lo, "max_kg": hi})
+                out.append({"profile": prof["name"], "zone": zn["zone"]["name"], "methods": methods,
+                            "countries": [x["code"]["countryCode"] or ("ROW" if x["code"]["restOfWorld"] else "?") for x in zn["zone"]["countries"]]})
+    _DZ_CACHE.update(at=now, data=out, failed_at=0.0)
+    return out
+
+
+def _rate_issue(m: dict, vz: dict) -> Optional[str]:
+    """Motif si ce tarif laisse payer un panier hors règle de la zone (None = conforme) : pas de fenêtre de poids, ou fenêtre qui admet un nombre de bouteilles non autorisé."""
+    if m["min_kg"] is None or m["max_kg"] is None:
+        return "tarif sans fenêtre de poids"
+    bk = config.BOTTLE_KG
+    for b in range(1, int(m["max_kg"] // bk) + 1):
+        if m["min_kg"] - 1e-6 <= b * bk <= m["max_kg"] + 1e-6 and ((vz.get("max_bottles") and b > vz["max_bottles"]) or (vz.get("multiple") and b % vz["multiple"])):
+            return f"tarif « {m['name']} » payable avec {b} bouteilles"
+    return None
+
+
+def perimeter_leaks(force: bool = False) -> Optional[List[dict]]:
+    """Pays que la boutique laisse commander hors du périmètre ouvert dans Vaelan : pays d'une zone fermée (ou « reste du monde »), ou pays ouvert dont un tarif actif
+    accepte un panier hors règle. [] = boutique conforme ; None = Shopify injoignable. La France et Monaco ne sont jamais signalés."""
+    zs = shopify_delivery_zones(force=force)
+    if zs is None:
+        return None
+    out = []
+    for z in zs:
+        active = [m for m in z["methods"] if m["active"]]
+        if not active:
+            continue                                           # zone sans tarif actif : aucun paiement possible
+        for cc in z["countries"]:
+            if cc in ("FR", "MC"):
+                continue
+            vz = zone_of(cc) if cc not in ("ROW", "?") else None
+            if not vz or not (vz.get("particulier") or vz.get("societe")):
+                out.append({"country": cc, "profile": z["profile"], "zone": z["zone"], "reason": "pays non ouvert dans Vaelan"})
+                continue
+            issues = [i for i in (_rate_issue(m, vz) for m in active) if i]
+            if issues:
+                out.append({"country": cc, "profile": z["profile"], "zone": z["zone"], "reason": issues[0]})
+    return out
+
+
+def _refresh_open_task(key: str, title: str, details: str) -> None:
+    from sqlmodel import Session, select
+    from app.core.db import engine
+    from app.models import OwTask
+    with Session(engine) as s_:
+        t = s_.exec(select(OwTask).where(OwTask.key == key, OwTask.status == "open")).first()
+        if t and (t.title != title or (t.details or "") != (details or "")):
+            t.title, t.details = title, details
+            s_.add(t); s_.commit()
+
+
+def perimeter_guard(log=None) -> int:
+    """Synchronisation : tâche « ALERTE » tant que Shopify laisse commander hors périmètre (rouverte si la fuite revient), fermée dès que la boutique est conforme."""
+    log = log or (lambda m: None)
+    leaks = perimeter_leaks(force=True)
+    if leaks is None:
+        log("garde-fou périmètre : zones Shopify illisibles"); return 0
+    if not leaks:
+        service.close_tasks_by_key(PERIMETER_TASK); return 0
+    cc = sorted({l["country"] for l in leaks})
+    title = f"ALERTE — Shopify accepte des commandes vers {len(cc)} pays hors périmètre : " + ", ".join(cc[:12]) + ("…" if len(cc) > 12 else "")
+    details = ("Zones de livraison en cause : " + " ; ".join(sorted({f"{l['zone']} (profil {l['profile']})" for l in leaks})) + ". Motifs : " + " ; ".join(sorted({l["reason"] for l in leaks})) + ".\n"
+               "Corriger dans Shopify › Paramètres › Expédition et livraison : supprimer la zone ou ses tarifs, ou poser la fenêtre de poids de la grille Vaelan (Douane › Mise en place, jalon 1). "
+               "Une commande passée entre-temps est bloquée par le contrôle « périmètre » de Vaelan, mais le client a payé : la refuser et la rembourser depuis la commande.")
+    if not service.add_task("customs", title, ref="export", key=PERIMETER_TASK, details=details):
+        _refresh_open_task(PERIMETER_TASK, title, details)
+    log(f"garde-fou périmètre : {len(cc)} pays hors périmètre")
+    return 1
+
+
+def _eur(v: float) -> str:
+    return f"{float(v or 0):,.2f} €".replace(",", " ").replace(".", ",")
+
+
 def setup_items() -> List[dict]:
+    """Actions de mise en place rangées par jalon (JALONS) : réf. « J2·B5 », groupe, consignes pas à pas, état constaté quand Vaelan peut le lire (zones Shopify, réglages, degrés, droits)."""
     s = settings(); rows = customs_rows(); sc = _scopes()
-    need = {"write_shipping", "read_markets", "write_markets", "read_locales", "write_locales", "read_translations", "write_translations", "read_themes", "write_themes"}
-    return [
-        {"id": "chronopost", "title": "Écrire à Corentin Menard (Chronopost) : offres, suppléments, carburant, web service, fiches pays", "done": False,
-         "how": "À confirmer par écrit : Chrono Classic (44) et Chrono Express (17) ouverts sur le contrat 84048903 ; supplément douane Suisse 15 € par expédition et prestation de dédouanement export (21 € TTC ?) ; surcharge carburant du mois (à reporter dans Douane › Zones) ; activation du ShippingServiceWS (étiquettes et enlèvement depuis Vaelan) ; fiches pays Norvège, Hong Kong, Singapour ; avenant Chrono Viti B2C US pour plus tard. Ces réponses conditionnent la grille de port."},
-        {"id": "alix", "title": "Alix : régime d'accise du stock, document d'accompagnement pour les sociétés UE, fournitures", "done": False,
-         "how": "Demander à Alix (entrepositaire agréé, n° d'accise FR 107859E0476 à Beaune) : (1) le stock oWine est-il en droits acquittés ou en suspension ? (2) qui émet le document d'accompagnement pour une société de l'UE : DAES via GAMMA2 si droits acquittés (statut d'expéditeur certifié EC, gratuit, même pour un EA) ou DAE si suspension (vers un entrepositaire agréé) — 15 € HT au tarif Alix ; (3) confirmer qu'Alix lit le degré sur l'étiquette à la préparation et le renvoie par e-mail ; (4) commander les pochettes Chronopost réf. 2010 et les stickers multi-pièces réf. 1068 (gratuits, espace client chronopost.fr). Dans tous les cas le client européen doit lui-même avoir un statut SEED (destinataire certifié ou entrepositaire) : un n° de TVA ne suffit pas — son n° d'accise est demandé dans le formulaire douane. Le pôle d'action économique de la douane de Dijon tranche le régime."},
-        {"id": "eori", "title": "Obtenir le n° EORI d'oWine et le saisir dans Réglages douane", "done": bool(s.get("eori")),
-         "how": "douane.gouv.fr › Services en ligne › SOPRANO-EORI › « Demander un numéro EORI » (gratuit, actif 24 h après délivrance ; depuis 2023 le numéro est au SIREN : FR928409887). Puis page Douane › Exportateur › N° EORI. Sans EORI, aucune facture commerciale n'est valable."},
-        {"id": "legal", "title": "Compléter SIRET et capital social (pied de facture)", "done": bool(s.get("siret") and s.get("capital")),
-         "how": "Page Douane › Exportateur : SIRET (extrait Kbis) et capital (50 000 € au contrat Chronopost). Le RCS et le n° de TVA sont déjà renseignés."},
-        {"id": "signature", "title": "Charger une image de votre signature (PNG)", "done": bool(signature()),
-         "how": "Page Douane › Exportateur › Signature : apposée sur la facture commerciale. La déclaration d'origine préférentielle exige en plus une signature manuscrite originale (ou le statut d'exportateur agréé, voir plus bas)."},
-        {"id": "ea", "title": "Demander le statut d'exportateur agréé (EA) au pôle d'action économique de la douane de Dijon", "done": False,
-         "how": "Statut gratuit : la déclaration d'origine sur facture n'a plus besoin de signature manuscrite et le plafond de 6 000 € disparaît. En attendant, faire signer à la main les 3 exemplaires, ou accepter que le vin paie le droit de douane plein à destination (faible pour la Suisse)."},
-        {"id": "scopes", "title": "Accorder à l'application Vaelan les droits Shopify manquants", "done": need <= sc if sc else False,
-         "how": "shopify.dev › Dev Dashboard › app Vaelan › Configuration › Access scopes : ajouter write_shipping, read_markets, write_markets, read_locales, write_locales, read_translations, write_translations, read_themes, write_themes. Enregistrer puis réinstaller l'app sur la boutique (Home › Install). Vaelan pourra alors écrire la grille de port, publier l'anglais et traduire. Manquants : " + (", ".join(sorted(need - sc)) if sc else "inconnus (Shopify injoignable)") + "."},
-        {"id": "abv", "title": "Vins : valider les degrés connus, laisser Alix confirmer les autres", "done": bool(rows) and all(r.get("abv") for r in rows),
-         "how": "Page Douane › Vins : les degrés sont pré-remplis (fiche publique du domaine ou estimation) ; cochez « Confirmer » pour ceux dont vous connaissez l'étiquette. Pour les autres, l'e-mail de préparation à Alix demande le degré lu sur l'étiquette et vous saisissez la réponse sur la commande : un vin confirmé n'est plus jamais redemandé. Deux valeurs basses (12 %) sont signalées à vérifier."},
-        {"id": "weights", "title": "Vérifier que chaque article vendable pèse 1,5 kg par bouteille dans Shopify", "done": False,
-         "how": "La grille de port au poids ne fonctionne que si le poids du panier vaut 1,5 kg × bouteilles : Douane › Shopify produits › « Écrire dans Shopify » corrige les sélections (0 kg) ; vérifier à la main les magnums (3 kg) et tout article hors vin (fournitures) qui ne doit pas être vendable à l'international. Paramètres › Expédition › Colis : poids du colis par défaut = 0 kg."},
-        {"id": "customs_shopify", "title": "Écrire dans Shopify les codes SH, l'origine et le poids des sélections", "done": False,
-         "how": "Page Douane › Shopify produits › « Écrire dans Shopify ». Les codes 22042113 / 22042143 et l'origine FR figurent sur les documents Shopify ; les sélections passent de 0 kg à 1,5 kg par bouteille."},
-        {"id": "markets", "title": "Marchés Shopify : Suisse et Union européenne actifs, tout le reste inactif", "done": False,
-         "how": "Shopify › Paramètres › Marchés : « Suisse » (CH, LI) et « Union européenne » (BE LU NL DE IT ES PT AT IE) actifs, en euros, langues fr + en ; désactiver tous les autres pays (AE AU CA HK IL JP KR MY NZ SG US GB NO…) : ils n'apparaissent plus dans le sélecteur de pays ni au paiement. Un pays inactif n'a pas de message « prochainement » : le texte des options de livraison (FAQ, panier) le dit."},
-        {"id": "taxes", "title": "Taxes : exclure la TVA française selon le pays du client", "done": False,
-         "how": "Shopify › Paramètres › Taxes et droits › « Inclure ou exclure les taxes selon le pays du client » : activer. Un client suisse ou une société européenne paie alors hors TVA française. Tant que ce n'est pas fait, Vaelan signale la TVA encaissée sur chaque commande internationale (à rembourser)."},
-        {"id": "checkout", "title": "Paiement : téléphone obligatoire, société et adresse ligne 2 affichées, boutons de paiement rapide masqués", "done": False,
-         "how": "Shopify › Paramètres › Paiement › Informations client : « Numéro de téléphone de l'adresse d'expédition : Obligatoire » ; « Nom de l'entreprise : Facultatif » ; « Adresse ligne 2 : Facultatif ». Boutique en ligne › Thème › Personnaliser : désactiver les boutons de paiement dynamiques (Shop Pay, PayPal, « Acheter maintenant ») sur les pages produit et le panier, pour que le client passe par le panier où les règles s'affichent."},
-        {"id": "zones", "title": "Zones ouvertes et grille de port : vérifier les prix puis écrire dans Shopify", "done": False,
-         "how": "Page Douane › Zones : particuliers en Suisse (6 bouteilles), sociétés UE Ouest (TVA intracommunautaire, 18 bouteilles maximum). Reporter la surcharge carburant et le supplément douane confirmés par Chronopost, choisir la marge, lire les prix obtenus (aujourd'hui de l'ordre de 85 € pour 6 bouteilles en Suisse, 60 € en Allemagne : un choix commercial) puis « Écrire dans Shopify » : les zones UE (22 €) et International (29 €) sont remplacées par des tarifs par carton de 6 (fenêtre de poids 8,9 à 9,4 kg, 17,9 à 18,4 kg…) — un panier hors règle n'a aucun tarif et ne peut pas être payé. Sans write_shipping : reproduire la grille à la main."},
-        {"id": "snippet", "title": "Installer l'extrait de panier (options par pays, règles, n° de TVA vérifié)", "done": False,
-         "how": "Page Douane › Textes du site › télécharger « owine-international.liquid ». Thème › Modifier le code › Snippets › « owine-international », coller le contenu ; ajouter {% render 'owine-international' %} avant le bouton de paiement dans sections/main-cart-footer.liquid ET dans snippets/cart-drawer.liquid. L'extrait lit les règles en direct sur Vaelan (/api/owine/rules) : un changement de zone est appliqué sans le réinstaller. Il guide le client ; le verrou reste la grille de port et le contrôle de Vaelan après commande."},
-        {"id": "policies", "title": "Politique d'expédition, FAQ, note de paiement et notification de commande (FR et EN)", "done": False,
-         "how": "Page Douane › Textes du site : coller les textes dans Paramètres › Politiques › Politique d'expédition (FR, puis la version EN dans l'éditeur de langue), dans la page FAQ, dans Paramètres › Paiement › Contenu (note DAP) et ajouter le paragraphe DAP dans Paramètres › Notifications › Confirmation de commande."},
-        {"id": "languages", "title": "Publier l'anglais et traduire la boutique", "done": False,
-         "how": "Après les droits Shopify : page Douane › Anglais › « Traduire en anglais » (Vaelan active la langue, traduit produits, collections, pages, politiques, menus, options et chaînes du thème par Claude, puis « Publier l'anglais »). Clé ANTHROPIC_API_KEY à créer dans Render (variable d'environnement) au préalable. Sélecteur de langue : Thème › Personnaliser › En-tête › Localisation."},
-        {"id": "pennylane", "title": "Pennylane : mentions des factures export et intracommunautaires, état récapitulatif TVA", "done": False,
-         "how": "Facture d'une vente hors UE : TVA 0 % avec la mention « Exonération de TVA, article 262 I du CGI » ; société UE : TVA 0 %, n° de TVA du client et mention « Autoliquidation, article 262 ter I du CGI ». Déposer chaque mois l'état récapitulatif TVA (ex-DEB) sur douane.gouv.fr pour les livraisons intracommunautaires. À régler avec l'expert-comptable, ainsi que la question OSS pour de futures ventes aux particuliers de l'UE."},
-        {"id": "insurance", "title": "Décider de l'assurance ad valorem Chronopost", "done": False,
-         "how": "La responsabilité contractuelle est limitée à 23 € par kg en Chrono Classic (≈ 200 € pour un carton de 6). Pour les commandes de valeur, souscrire l'option ad valorem à l'édition de l'étiquette (jusqu'à 20 000 €) et reporter la prime dans « Assurance HT » sur la commande."},
-        {"id": "age", "title": "Vérification d'âge à l'entrée du site", "done": False,
-         "how": "Application gratuite « Age verification » (Shopify App Store) ou module du thème : « Avez-vous l'âge légal pour acheter de l'alcool ? » en français et en anglais."},
-        {"id": "vat_check", "title": "Sociétés UE : conduite si le n° de TVA n'est pas valide", "done": False,
-         "how": "Vaelan vérifie chaque n° sur VIES ; si invalide ou absent, la commande est bloquée (contrôle rouge) : demander le bon numéro (formulaire douane), accepter par dérogation motivée, ou refuser et rembourser (bouton sur la commande, e-mail FR/EN au client)."},
-        {"id": "test", "title": "Commande d'essai en Suisse et commande d'essai société UE", "done": False,
-         "how": "Passer une commande test sur le site (adresse suisse, 6 bouteilles ; puis adresse belge avec un n° de TVA valide) pour vérifier de bout en bout : port affiché, paiement, synchronisation Vaelan, carte International, facture commerciale, e-mails. Annuler et rembourser ensuite."},
+    leaks = perimeter_leaks(); dz = shopify_delivery_zones() or []
+    shop = {cc for z in dz if any(m["active"] for m in z["methods"]) for cc in z["countries"]}
+    ch_live = leaks is not None and "CH" in shop and not any(l["country"] in ("CH", "LI") for l in leaks)
+    if leaks is None:
+        leak_txt = "État : zones Shopify illisibles pour l'instant."
+    elif leaks:
+        lc = sorted({l["country"] for l in leaks})
+        leak_txt = f"État actuel : {len(lc)} pays hors France encore livrables ({', '.join(lc[:10])}{'…' if len(lc) > 10 else ''})."
+    else:
+        leak_txt = "État actuel : conforme, aucun pays hors périmètre."
+    rs = rate_settings(); ch = chronopost_cost("CH", "classic", 6); al = alix_cost(6)
+    g_ch = next((r for g in rate_grid() if g["zone"]["key"] == "CH" for r in g["rows"] if r["bottles"] == 6), None)
+    if ch.get("shipments"):
+        sh = ch["shipments"][0]
+        cost_txt = (f"tarif Classic zone 4, tranche 7-12 kg {_eur(sh['base'])} + supplément douane {_eur(X.SUPPLEMENTS['customs_classic_zone4'])} + dédouanement export {_eur(rs['export_declaration'])} "
+                    f"+ éco {_eur(X.SUPPLEMENTS['eco'])} + carburant {rs['fuel_pct']:g} % {_eur(sh['fuel'])} = {_eur(ch['total'])} Chronopost, + préparation Alix {_eur(al['total'])} = {_eur(ch['total'] + al['total'])} HT"
+                    + (f" ; avec la marge de {rs['margin_pct']:g} % : {g_ch['price']:.0f} €" if g_ch else " (zone Suisse fermée dans Vaelan : pas de prix proposé)"))
+    else:
+        cost_txt = "incalculable (pas de tarif Classic pour la Suisse dans la configuration)"
+    price_txt = f"{g_ch['price']:.0f} €" if g_ch else "le prix décidé en J2·B5"
+    n_abv = sum(1 for r in rows if r.get("abv"))
+    A = "A. Réponses à obtenir — à lancer tout de suite, elles fixent le prix et les textes"
+    B = "B. Vaelan et comptabilité"
+    C = "C. Boutique Shopify — préparée fermée : rien n'est visible des clients tant que la zone Suisse n'existe pas"
+    D = "D. Envoi réel de test, puis ouverture"
+    F = "Facultatif — améliore, ne bloque pas l'ouverture"
+    E = "Contenu prévu (sera détaillé à la préparation du jalon)"
+    items = [
+        # ------------------------------------------------------------ jalon 1 : fermer la vente hors France
+        {"id": "close_zones", "jalon": 1, "ref": "J1·1", "auto": True, "done": leaks is not None and not leaks,
+         "title": "Supprimer les zones de livraison « UE » et « International » dans Shopify",
+         "how": "1. Shopify › Paramètres › Expédition et livraison › Expédition › « Tarifs d'expédition généraux » (profil général, le seul de la boutique).\n"
+                "2. Zone « UE (Union Européenne) » (26 pays, tarif 22 €) : bouton « ⋯ » › « Supprimer la zone ». Même chose pour la zone « International » (14 pays dont la Suisse, tarif 29 €).\n"
+                "3. Ne pas toucher la zone « France » (tarifs au poids de 20 à 60 €) ni le retrait chez Alix.\n"
+                "4. « Enregistrer ».\n"
+                "Contrôle : Vaelan relit les zones à chaque synchronisation (ou « Actualiser la liste ») et coche cette action tout seul ; le bandeau rouge et la tâche « ALERTE » disparaissent. " + leak_txt},
+        {"id": "close_markets", "jalon": 1, "ref": "J1·2", "done": False,
+         "title": "Désactiver les marchés internationaux dans Shopify",
+         "how": "1. Shopify › Paramètres › Marchés.\n"
+                "2. Garder actif le marché principal (France).\n"
+                "3. Chaque autre marché actif (« International », « Union européenne »…) : l'ouvrir › « ⋯ » › « Désactiver ». Le sélecteur de pays et de devise ne propose plus ces pays.\n"
+                "4. Ne rien supprimer : le marché « Suisse » servira au jalon 2.\n"
+                "Vaelan ne peut pas le vérifier (droit read_markets non accordé) : cliquer « Fait »."},
+        {"id": "close_texts", "jalon": 1, "ref": "J1·3", "done": False,
+         "title": "Retirer du site toute promesse de livraison à l'étranger",
+         "how": "Vaelan ne peut pas lire les politiques (droit read_legal_policies non accordé) : vérification à la main.\n"
+                "1. Shopify › Paramètres › Politiques › Politique d'expédition : retirer les tarifs Europe (22 €) et International (29 €) s'ils y figurent ; écrire « Nous livrons en France métropolitaine. Livraison à l'étranger : prochainement. »\n"
+                "2. Boutique en ligne › Pages : FAQ, Livraison, CGV : même correction.\n"
+                "3. Boutique en ligne › Thèmes › Personnaliser : bandeau d'annonce et pied de page (« livraison dans toute l'Europe »…).\n"
+                "4. Même correction dans la version anglaise si des textes anglais sont déjà en ligne."},
+        {"id": "close_check", "jalon": 1, "ref": "J1·4", "done": False,
+         "title": "Vérifier sur le site qu'une commande hors France est impossible",
+         "how": "1. Navigation privée sur owine.co : une bouteille au panier › « Paiement ».\n"
+                "2. Adresse de livraison en Belgique, puis en Suisse, puis aux États-Unis : le pays n'est plus proposé, ou Shopify indique qu'aucun mode d'expédition n'est disponible. Ne pas payer.\n"
+                "3. Même essai avec un bouton de paiement rapide (Shop Pay, PayPal, « Acheter maintenant ») s'il est affiché.\n"
+                "4. Adresse en France : les tarifs habituels s'affichent (20 € jusqu'à 3 kg…).\n"
+                "5. Le « Retrait » chez Alix peut rester proposé à un client étranger : la vente a lieu en France, sans question d'accises ni de douane.\n"
+                "6. Vaelan › Douane › Mise en place : plus de bandeau rouge, J1·1 coché."},
+
+        # ------------------------------------------------------------ jalon 2 : Suisse, particuliers, un carton de 6
+        {"id": "chronopost", "jalon": 2, "group": A, "ref": "J2·A1", "done": False,
+         "title": "Chronopost : questions écrites sur la Suisse",
+         "how": "E-mail à Corentin Menard (corentin.menard@chronopost.fr, 02 42 28 00 33), objet « Contrat Chrono Viti Easy 84048903 — vin vers la Suisse », réponse écrite demandée :\n"
+                "1. Particuliers en Suisse : le vin part-il bien en Chrono Classic (code produit 44) sur notre compte, Chrono Express étant exclu ?\n"
+                "2. Frais réclamés au destinataire par votre partenaire suisse (dédouanement, avance de TVA et de droits) : montant exact, et contact par e-mail ou SMS avant la livraison ?\n"
+                "3. Déclaration d'exportation : la déposez-vous ? Est-elle comprise dans le supplément douane de 15 € par expédition ou facturée en plus (21 € TTC par déclaration au contrat) ? Qui nous transmet le justificatif (MRN) ?\n"
+                "4. Surcharge carburant applicable ce mois-ci ?\n"
+                "5. La limite de 6 bouteilles et 10 kg vaut-elle par colis ou par envoi : peut-on grouper deux cartons de 6 sous une seule lettre de transport avec une seule facture commerciale ?\n"
+                "Reporter : réponses 3 et 4 dans Douane › Zones (« Dédouanement export » : 0 si compris dans les 15 € ; « Surcharge carburant »), puis J2·B5 ; réponse 2 dans les textes du site (J2·D3). "
+                "Réponse 1 négative = jalon suspendu. La réponse 5 ne bloque pas ce jalon (6 bouteilles au plus) : elle prépare la suite."},
+        {"id": "alix", "jalon": 2, "group": A, "ref": "J2·A2", "done": False,
+         "title": "Alix : organisation d'un envoi vers la Suisse",
+         "how": "E-mail à Sébastien Poulet (direction@alixlogistique.com), copie Rémi Séry, en complément du mail du 15/09 :\n"
+                "1. Pour chaque commande suisse, Vaelan envoie une facture commerciale en 3 exemplaires : les imprimer et les glisser dans la pochette Chronopost réf. 2010 collée sur le carton. D'accord ?\n"
+                "2. Au premier envoi d'un vin, lire le degré sur l'étiquette et le donner par retour d'e-mail (Vaelan le mémorise et ne le redemande plus). D'accord ?\n"
+                "3. Pochettes 2010 et stickers multi-pièces 1068 : bien reçus ?\n"
+                "4. Stock en droits acquittés exporté hors UE : confirmer qu'aucun document d'accises n'est à émettre de leur côté, et ce qu'ils facturent pour une commande export (la ligne « BL / DAE Sortie » à 15,50 € ou 22 € s'applique-t-elle ?).\n"
+                "Reporter la réponse 4 dans Douane › Zones : si cette ligne s'ajoute à chaque commande, l'ajouter au « minimum préparation » d'Alix."},
+        {"id": "eori", "jalon": 2, "group": B, "ref": "J2·B1", "auto": True, "done": bool(s.get("eori")),
+         "title": "N° EORI saisi dans Vaelan", "how": "Douane › Exportateur › N° EORI" + (f" : {s.get('eori')}." if s.get("eori") else " : à saisir (au SIREN, FR928409887).")},
+        {"id": "legal", "jalon": 2, "group": B, "ref": "J2·B2", "auto": True, "done": bool(s.get("siret") and s.get("capital")),
+         "title": "SIRET et capital social (pied de la facture commerciale)", "how": "Douane › Exportateur : SIRET (extrait Kbis) et capital (50 000 €)."},
+        {"id": "signature", "jalon": 2, "group": B, "ref": "J2·B3", "auto": True, "done": bool(signature()),
+         "title": "Charger l'image de votre signature",
+         "how": "1. Signer sur une feuille blanche, photographier ou scanner, recadrer au plus près (PNG, moins de 1 Mo).\n"
+                "2. Vaelan › Douane › onglet « Exportateur » › Signature › charger.\n"
+                "Elle signe la facture commerciale. La déclaration d'origine imprimée sur la facture exige en plus une signature manuscrite, sauf statut d'exportateur agréé (J2·F1). "
+                "Sans l'un ni l'autre, cette déclaration n'est pas valable : la douane suisse applique alors le droit normal, payé par le client (DAP) — rien d'illégal, un surcoût pour le client."},
+        {"id": "abv", "jalon": 2, "group": B, "ref": "J2·B4", "auto": True, "done": bool(rows) and n_abv == len(rows),
+         "title": "Degrés d'alcool : pré-remplir en un clic, confirmer ceux dont vous avez l'étiquette",
+         "how": "1. Vaelan › Douane › onglet « Vins » › lien « Pré-remplir les degrés manquants » : 38 degrés publics (fiches des domaines) et une estimation pour les autres, au statut « estimé ».\n"
+                "2. Vérifier d'abord les deux valeurs basses à 12 % : Corton-Charlemagne 2015 et Saint-Aubin 2022 de Pierre-Yves Colin-Morey.\n"
+                "3. Cocher « Confirmer » seulement pour les vins dont vous avez l'étiquette sous les yeux : inutile de tout confirmer.\n"
+                "4. Les autres sont confirmés par Alix à la première commande suisse qui les contient : la question part dans l'e-mail de préparation, vous saisissez la réponse sur la commande, "
+                "puis « Envoyer la facture définitive à Alix » avant l'enlèvement (la facture suisse exige le type de boisson et le degré).\n"
+                f"Se coche seul quand tous les vins ont un degré ({n_abv}/{len(rows)} aujourd'hui)."},
+        {"id": "prices", "jalon": 2, "group": B, "ref": "J2·B5", "done": False,
+         "title": "Port Suisse : valider les coûts et choisir le prix",
+         "how": "1. Vaelan › Douane › onglet « Zones ouvertes & grille de port » : Suisse ouverte aux particuliers, 6 bouteilles au plus, multiple de 6 ; toutes les autres zones fermées "
+                "(« UE Ouest » est fermée par défaut depuis la v0.1.198 : ne pas la rouvrir).\n"
+                f"2. Coût actuel d'un carton de 6 : {cost_txt}. Le chiffre de 39,28 € du document du 15/09 ne comptait que le tarif et le supplément douane.\n"
+                "3. Après les réponses de Chronopost (J2·A1) et d'Alix (J2·A2) : corriger « Surcharge carburant », « Dédouanement export » et « minimum préparation », ajuster la marge, « Enregistrer ».\n"
+                "4. Décider le prix du port payé par le client (prix de la grille ou prix rond) : il sert au test J2·D1 et à l'ouverture J2·D2. "
+                "Le client paiera en plus, à la livraison, la TVA suisse (8,1 %), le droit de douane et les frais du partenaire Chronopost."},
+        {"id": "pennylane", "jalon": 2, "group": B, "ref": "J2·B6", "done": False,
+         "title": "Pennylane : facture export sans TVA, avec la mention d'exonération",
+         "how": "1. Demander à l'expert-comptable le compte de vente et le code TVA « export hors UE » à utiliser dans Pennylane.\n"
+                "2. À la première commande suisse (dès le test J2·D1), le connecteur Shopify → Pennylane crée la facture en brouillon : vérifier TVA 0 % sur les vins et le port, client domicilié en Suisse, "
+                "et ajouter la mention « Exonération de TVA, article 262 I du CGI » avant de finaliser.\n"
+                "3. Archiver le justificatif d'exportation (MRN transmis par Chronopost) : c'est la preuve de l'exonération ; Vaelan crée la tâche « justificatif d'exportation » après l'envoi."},
+        {"id": "customs_shopify", "jalon": 2, "group": C, "ref": "J2·C1", "done": False,
+         "title": "Écrire dans Shopify les codes SH, l'origine et le poids des sélections",
+         "how": "1. Vaelan › Douane › onglet « Shopify produits » : relire le plan (relevé du 15/09 : 94 articles à coder 22042113 blanc / 22042143 rouge, origine FR ; 48 sélections à 0 kg).\n"
+                "2. « Écrire dans Shopify » (droit déjà accordé).\n"
+                "⚠ Effet en France, à accepter avant de cliquer : la grille France est au poids. Une sélection de 6 bouteilles passe de 0 kg (port 20 €) à 9 kg (30 €), une sélection de 3 bouteilles à 4,5 kg (25 €). "
+                "C'est le port juste, mais la hausse se voit.\n"
+                "Sans ce poids, une sélection commandée depuis la Suisse n'a aucun tarif : le client ne peut pas payer."},
+        {"id": "weights", "jalon": 2, "group": C, "ref": "J2·C2", "done": False,
+         "title": "Poids du colis par défaut à 0 kg, cas du magnum",
+         "how": "1. Shopify › Paramètres › Expédition et livraison › « Colis » : le colis par défaut doit peser 0 kg, sinon ce poids s'ajoute au panier et peut sortir de la fenêtre 8,9 – 9,4 kg du tarif suisse.\n"
+                "2. Magnum Gevrey-Chambertin 1er Cru Aux Combottes 2019 (Hubert Lignier, 3 kg) : pas de carton de 6 pour lui à l'international. Seul au panier suisse, aucun tarif : commande impossible, c'est voulu. "
+                "Avec 4 bouteilles (9 kg au total) le tarif s'afficherait : Vaelan bloque alors la commande (5 bouteilles) et vous la refusez ou l'arrangez avec le client.\n"
+                "3. Tout article vendable hors vin doit avoir un poids réaliste ; une carte cadeau : « Ne nécessite pas d'expédition »."},
+        {"id": "taxes", "jalon": 2, "group": C, "ref": "J2·C3", "done": False,
+         "title": "Taxes : ne pas facturer la TVA française aux clients suisses",
+         "how": "1. Shopify › Paramètres › Taxes et droits.\n"
+                "2. Activer « Inclure ou exclure les taxes selon le pays du client » (libellé variable : prix incluant les taxes dynamiques).\n"
+                "3. Ne pas collecter de taxe pour la Suisse (oWine n'est pas immatriculé en Suisse : livraison DAP).\n"
+                "Effet : une bouteille à 120 € TTC en France s'affiche 100 € pour un client suisse, TVA 0 € sur la commande. Vérifié au test J2·D1 ; à défaut Vaelan signale « TVA française encaissée » sur la commande, à rembourser."},
+        {"id": "checkout", "jalon": 2, "group": C, "ref": "J2·C4", "done": False,
+         "title": "Paiement : e-mail et téléphone obligatoires, paiement rapide masqué",
+         "how": "1. Shopify › Paramètres › Paiement › « Méthode de contact du client » : « E-mail » (et non « Numéro de téléphone ou e-mail »).\n"
+                "2. Même page › « Informations client » : « Numéro de téléphone de l'adresse de livraison » = Obligatoire ; « Nom de l'entreprise » et « Adresse ligne 2 » = Facultatif. Cela vaut aussi pour la France (utile au livreur).\n"
+                "3. Boutique en ligne › Thèmes › Personnaliser › modèle produit et panier : décocher « Afficher les boutons de paiement dynamiques » (Shop Pay, PayPal, Acheter maintenant) pour que le client passe par le panier, où l'extrait J2·C6 explique la règle.\n"
+                "Pourquoi : le partenaire suisse de Chronopost contacte le client par e-mail ou SMS avant la livraison pour les droits et taxes ; sans téléphone le colis reste bloqué."},
+        {"id": "markets", "jalon": 2, "group": C, "ref": "J2·C5", "done": False,
+         "title": "Préparer le marché « Suisse » dans Shopify",
+         "how": "1. Shopify › Paramètres › Marchés › « Ajouter un marché » (ou réactiver celui désactivé en J1·2) : nom « Suisse », pays Suisse et Liechtenstein.\n"
+                "2. Devise : euro (pas de conversion en francs : grille de port et facture sont en euros). Langue : français (anglais quand il sera publié, J2·F3).\n"
+                "3. Activer, puis refaire le test J1·4 avec une adresse suisse : toujours aucun mode d'expédition tant que la zone de livraison Suisse (J2·D2) n'existe pas. Si un tarif apparaît, désactiver le marché et me le signaler."},
+        {"id": "snippet", "jalon": 2, "group": C, "ref": "J2·C6", "done": False,
+         "title": "Installer l'extrait de panier (règle du carton de 6 expliquée au client)",
+         "how": "1. Vaelan › Douane › onglet « Textes du site » › télécharger « owine-international.liquid ».\n"
+                "2. Shopify › Boutique en ligne › Thèmes › « ⋯ » › « Modifier le code » › dossier « Snippets » › « Ajouter un snippet » nommé owine-international › coller le contenu › Enregistrer.\n"
+                "3. Fichier sections/main-cart-footer.liquid : juste avant le bouton de paiement (name=\"checkout\"), ajouter la ligne {% render 'owine-international' %} › Enregistrer. Même ajout dans snippets/cart-drawer.liquid (tiroir panier).\n"
+                "4. Panier en France : l'encadré s'affiche, le paiement reste possible.\n"
+                "L'extrait lit les règles en direct dans Vaelan et n'annonce une destination que lorsqu'elle est réellement livrable dans Shopify : la Suisse apparaîtra d'elle-même après J2·D2. "
+                "Pays fermé ou 7 bouteilles vers la Suisse : bouton de paiement désactivé avec un message clair. C'est un guide ; le verrou reste la fenêtre de poids du tarif."},
+        {"id": "ch_test", "jalon": 2, "group": D, "ref": "J2·D1", "done": False,
+         "title": "Envoi réel de test en Suisse, site toujours fermé (commande brouillon)",
+         "how": "Prérequis : réponses J2·A1 et J2·A2, actions B et C faites.\n"
+                "1. Shopify › Commandes › Brouillons › « Créer une commande » : un vrai destinataire en Suisse (proche ou client fidèle), adresse physique (pas de case postale), téléphone et e-mail ; 6 bouteilles ; "
+                "« Ajouter l'expédition » › « Personnalisée » › « Chronopost Chrono Classic — 6 bouteilles », au prix décidé en J2·B5 ; TVA à 0 ; « Collecter le paiement » (lien envoyé au client, ou « Marquer comme payée »). Jamais de vin à 0 € : interdit en douane.\n"
+                "2. Vaelan › la commande › « Synchroniser avec Shopify » : carte « International », contrôles verts (destination Chrono Classic, périmètre, coordonnées, EORI).\n"
+                "3. Cartons : un carton de 6 (réf. 2036). chronopost.fr › Expédier : Chrono Classic vers la Suisse, 9 kg, 38 × 28 × 40 cm ; saisir le n° de colis dans Vaelan ; réserver l'enlèvement.\n"
+                "4. « Relire les e-mails » puis « Valider et envoyer » : Alix reçoit la facture PROVISOIRE et la question des degrés.\n"
+                "5. Réponse d'Alix : saisir les degrés sur la commande › « Envoyer la facture définitive à Alix » avant l'enlèvement (3 exemplaires dans la pochette 2010).\n"
+                "6. Suivre : dédouanement (Chronotrace), montant réellement demandé au destinataire et par quel canal, délai, état du carton ; réception confirmée ; facture Pennylane (J2·B6) ; justificatif d'export.\n"
+                "7. Noter le montant constaté des frais à la livraison pour les textes du site (J2·D3)."},
+        {"id": "ch_open", "jalon": 2, "group": D, "ref": "J2·D2", "auto": True, "done": ch_live,
+         "title": "Ouvrir : créer la zone de livraison Suisse dans Shopify",
+         "how": "1. Shopify › Paramètres › Expédition et livraison › « Tarifs d'expédition généraux » › « Créer une zone » : nom « Suisse (Chrono Classic) », pays Suisse et Liechtenstein › « Terminé ».\n"
+                f"2. Dans cette zone : « Ajouter un tarif » › « Configurer les tarifs vous-même » › nom « Chronopost Chrono Classic — 6 bouteilles (1 carton) », prix {price_txt} › « Ajouter des conditions » › « En fonction du poids de l'article » : "
+                "minimum 8,9 kg, maximum 9,4 kg › « Terminé » › « Enregistrer ». Un seul tarif : 7 ou 12 bouteilles n'ont aucun tarif et ne peuvent pas être payées.\n"
+                "   Variante : droit write_shipping accordé (J2·F2) → Vaelan › Douane › Zones › « Écrire dans Shopify » crée la même zone.\n"
+                "3. Vaelan › « Actualiser la liste » : cette action se coche seule, sans bandeau rouge (sinon la fenêtre de poids du tarif n'est pas la bonne)."},
+        {"id": "policies", "jalon": 2, "group": D, "ref": "J2·D3", "done": False,
+         "title": "Le jour de l'ouverture : textes du site",
+         "how": "Vaelan › Douane › onglet « Textes du site » (générés depuis les zones ouvertes) :\n"
+                "1. Politique d'expédition → Shopify › Paramètres › Politiques › Politique d'expédition (remplace le texte « France seulement » de J1·3).\n"
+                "2. Options de livraison → page FAQ / Livraison.\n"
+                "3. Note DAP → éditeur du paiement (Paramètres › Paiement › Personnaliser) et Paramètres › Notifications › « Confirmation de commande ».\n"
+                "4. Y ajouter le montant des frais demandés à la livraison (réponse J2·A1 ou constat J2·D1).\n"
+                "5. Versions anglaises dans l'éditeur de langue, quand l'anglais est publié (J2·F3)."},
+        {"id": "ch_check", "jalon": 2, "group": D, "ref": "J2·D4", "done": False,
+         "title": "Contrôle public après l'ouverture, puis remboursement de la commande d'essai",
+         "how": "1. Navigation privée, adresse suisse, 6 bouteilles : le tarif Chrono Classic s'affiche au prix prévu, TVA 0 €, téléphone exigé.\n"
+                "2. 7 bouteilles, 12 bouteilles, une sélection de 3 : aucun mode d'expédition, et message de l'extrait au panier.\n"
+                "3. Commande de 6 bouteilles payée jusqu'au bout : elle arrive dans Vaelan (carte International, périmètre vert) ; l'annuler et la rembourser dans Shopify.\n"
+                "4. Adresses en Belgique et aux États-Unis : toujours impossibles.\n"
+                "Jalon 2 terminé : préparer les suivants."},
+        {"id": "ea", "jalon": 2, "group": F, "ref": "J2·F1", "optional": True, "done": False,
+         "title": "Statut d'exportateur agréé (douane de Dijon)",
+         "how": "Gratuit ; plus de signature manuscrite sur la déclaration d'origine et plus de plafond de 6 000 €.\n"
+                "1. douane.gouv.fr › « pôle d'action économique » de la direction régionale de Dijon : demander par écrit le statut d'exportateur agréé pour des exportations de vins d'origine UE vers la Suisse, "
+                "avec Kbis et n° EORI (FR928409887) ; ils envoient le formulaire et la liste des pièces (preuves d'origine : factures des vignerons).\n"
+                "2. Le numéro d'autorisation obtenu doit figurer dans la déclaration d'origine : un champ sera ajouté aux réglages douane de Vaelan à ce moment-là."},
+        {"id": "scopes", "jalon": 2, "group": F, "ref": "J2·F2", "optional": True, "auto": True, "done": "write_shipping" in sc,
+         "title": "Droit Shopify write_shipping (grille écrite par Vaelan)",
+         "how": "Seulement pour laisser Vaelan créer la zone Suisse (variante de J2·D2) et les zones futures.\n"
+                "1. dev.shopify.com › Dev Dashboard › application Vaelan › Configuration (ou nouvelle version) › Access scopes : ajouter write_shipping (et pour l'anglais J2·F3 : read_locales, write_locales, read_translations, "
+                "write_translations, read_themes, write_themes, read_markets, write_markets ; pour lire les politiques : read_legal_policies) › enregistrer ou publier la version.\n"
+                "2. Shopify admin › Applications › Vaelan : accepter la mise à jour des autorisations (sinon réinstaller depuis le Dev Dashboard).\n"
+                "Se coche seul quand write_shipping est accordé."},
+        {"id": "languages", "jalon": 2, "group": F, "ref": "J2·F3", "optional": True, "done": False,
+         "title": "Publier l'anglais et traduire la boutique",
+         "how": "Pas indispensable pour la Suisse romande. Après les droits de J2·F2 et la clé ANTHROPIC_API_KEY ajoutée dans Render (variables d'environnement) : Vaelan › Douane › onglet « Anglais » › « Traduire en anglais », relire, "
+                "puis « Publier l'anglais ». Sélecteur de langue : Thèmes › Personnaliser › En-tête › Localisation."},
+        {"id": "age", "jalon": 2, "group": F, "ref": "J2·F4", "optional": True, "done": False,
+         "title": "Vérification d'âge à l'entrée du site",
+         "how": "Application gratuite « Age verification » (Shopify App Store) ou module du thème : « Avez-vous l'âge légal pour acheter de l'alcool ? », en français et en anglais. Utile aussi pour la France."},
+        {"id": "insurance", "jalon": 2, "group": F, "ref": "J2·F5", "optional": True, "done": False,
+         "title": "Décider de l'assurance ad valorem Chronopost",
+         "how": "Responsabilité limitée à 23 € par kg en Chrono Classic, soit environ 207 € pour un carton de 9 kg. Pour une commande de valeur, souscrire l'option ad valorem à l'édition de l'étiquette et reporter la prime dans « Assurance HT » sur la commande."},
+
+        # ------------------------------------------------------------ ensuite : pas encore de tâches
+        {"id": "later_ch_split", "jalon": 9, "group": E, "ref": "E·1", "done": False,
+         "title": "Suisse au-delà de 6 bouteilles",
+         "how": "Attend la réponse 5 de Chronopost (limite par colis ou par envoi). Développement Vaelan : découpage d'une commande en envois (factures FC-OWxxxx-A, -B…), port recalculé (un supplément douane de 15 € par envoi, "
+                "ou groupage), paramètre « limite par envoi / par colis » par pays, grille Shopify à 12 et 18 bouteilles. Permis général d'importation suisse seulement pour une société au-delà de 20 kg bruts."},
+        {"id": "later_ue_b2b", "jalon": 9, "group": E, "ref": "E·2", "done": False,
+         "title": "Union européenne : sociétés",
+         "how": "Attend : réponse d'Alix sur l'agrément d'expéditeur certifié (stock en droits acquittés → DAES ; sans EC chez Alix, aucun envoi possible) et devis Eurotax / ASD Group (destinataire certifié dans chaque pays, "
+                "couverture des 12 pays retenus, minimum mensuel, coût par envoi ; vérifier l'arrêt annoncé de becompliant.tax/wine au 1er octobre). Développement Vaelan : état « conformité accise » par commande "
+                "(non requis → à déclarer → référence reçue → expédiable → apuré sous 5 jours) avec verrou « pas d'étiquette tant que non expédiable », référentiel accises par pays (taux, régime, statut), port par groupe "
+                "(taux zéro / Benelux / Nord) et accise chiffrée au panier. Comptabilité : autoliquidation (art. 262 ter I CGI), état récapitulatif TVA mensuel ; contrôle VIES déjà en place."},
+        {"id": "later_ue_b2c", "jalon": 9, "group": E, "ref": "E·3", "done": False,
+         "title": "Union européenne : particuliers (vente à distance)",
+         "how": "Représentant fiscal et garantie dans chaque pays avant la première bouteille (aucun seuil en accises) ; document commercial « vente à distance de produits soumis à accise » portant la référence de garantie ; "
+                "TVA française tant que les ventes à distance UE cumulées restent sous 10 000 € HT par an, puis OSS ; un restaurant ou une société n'est jamais traité en particulier."},
+        {"id": "later_gb_us", "jalon": 9, "group": E, "ref": "E·4", "done": False,
+         "title": "Royaume-Uni et États-Unis",
+         "how": "Royaume-Uni : Chrono Express seul, accise et TVA britanniques à l'import (la règle des 135 £ ne vise pas l'alcool). États-Unis : avenant Chrono Viti B2C US à signer. Degré exact indispensable (droits calculés sur le degré)."},
     ]
+    for it in items:
+        it["active"] = it["jalon"] in ACTIVE_JALONS
+        it.setdefault("group", None); it.setdefault("optional", False); it.setdefault("auto", False)
+    return items
+
+
+def _setup_title(it: dict) -> str:
+    return f"{it['ref']} — {it['title']}" + (" (facultatif)" if it.get("optional") else "")
 
 
 def setup_tasks(log=None) -> int:
-    """Une tâche Vaelan par action de mise en place (clé setup:<id>) ; les actions détectées comme faites ferment leur tâche ; une tâche cochée « fait » à la main n'est jamais rouverte."""
+    """Une tâche Vaelan par action des jalons en cours (clé setup:<id>, titre « J2·B5 — … ») : titre et consignes tenus à jour, action constatée fermée,
+    tâche cochée « fait » jamais rouverte ; une tâche encore ouverte d'une action sortie des jalons en cours est retirée (elle reviendra avec son jalon)."""
     from sqlmodel import Session, select
     from app.core.db import engine
     from app.models import OwTask
     log = log or (lambda m: None); n = 0
+    by_key = {f"setup:{it['id']}": it for it in setup_items() if it["active"]}
+    seen = set()
     with Session(engine) as s_:
-        existing = {t.key: t.status for t in s_.exec(select(OwTask).where(OwTask.kind == "customs_setup")).all()}
-    for i, it in enumerate(setup_items(), 1):
-        key = f"setup:{it['id']}"
-        if it["done"]:
-            service.close_tasks_by_key(key); continue
-        if key in existing:
-            continue                                               # ouverte : rien à faire ; faite à la main : on ne la rouvre pas
-        if service.add_task("customs_setup", f"{i:02d}. {it['title']}", ref="export", key=key, details=it["how"]):
+        for t in s_.exec(select(OwTask).where(OwTask.kind == "customs_setup")).all():
+            it = by_key.get(t.key or "")
+            if it is None:
+                if t.status == "open" and (t.key or "").startswith("setup:"):
+                    s_.delete(t)
+                continue
+            seen.add(t.key)
+            if t.status != "open":
+                continue                                           # faite (à la main ou constatée) : jamais rouverte
+            if it["done"]:
+                t.status, t.done_at = "done", datetime.utcnow()
+            elif t.title != _setup_title(it) or (t.details or "") != it["how"]:
+                t.title, t.details = _setup_title(it), it["how"]
+            s_.add(t)
+        s_.commit()
+    for key, it in by_key.items():
+        if key in seen or it["done"]:
+            continue
+        if service.add_task("customs_setup", _setup_title(it), ref="export", key=key, details=it["how"]):
             n += 1
     log(f"mise en place export : {n} nouvelle(s) tâche(s)")
     return n
 
 
-def site_texts() -> dict:
-    """Textes FR / EN dérivés des zones ouvertes : options de livraison (panier, FAQ), politique d'expédition, note de paiement."""
+def _announced_zones(live_only: bool = False) -> List[dict]:
+    """Zones ouvertes (France comprise) ; live_only : zones hors France seulement si elles sont réellement livrables dans Shopify, sans fuite —
+    le panier n'annonce rien avant l'ouverture de la zone (Shopify injoignable : France seule)."""
     zs = [z for z in zones() if z.get("particulier") or z.get("societe")]
-    fr, en = [], []
+    if not live_only:
+        return zs
+    dz = shopify_delivery_zones(); leaks = perimeter_leaks()
+    if dz is None or leaks is None:
+        return [z for z in zs if z["key"] == "FR"]
+    bad = {l["country"] for l in leaks}
+    shop = {cc for z in dz if any(m["active"] for m in z["methods"]) for cc in z["countries"]}
+    return [z for z in zs if z["key"] == "FR" or any(cc in shop and cc not in bad for cc in z["countries"])]
+
+
+def site_texts(live_only: bool = False) -> dict:
+    """Textes FR / EN dérivés des zones ouvertes (live_only : seulement celles déjà livrables dans Shopify, ce que lit le panier) :
+    options de livraison, message « pays fermé », politique d'expédition, note de paiement. Adresse client : contact@owine.co."""
+    zs = _announced_zones(live_only)
+    fr, en, short_fr, short_en = [], [], [], []
     for z in zs:
         who = " et ".join([w for w, ok in (("particuliers", z.get("particulier")), ("sociétés", z.get("societe"))) if ok])
         who_en = " and ".join([w for w, ok in (("private individuals", z.get("particulier")), ("companies", z.get("societe"))) if ok])
@@ -1260,27 +1607,46 @@ def site_texts() -> dict:
         prod = X.PRODUCTS[z["product"]]["label"]
         fr.append(f"{z['label'].split(' (')[0]} ({names}) : {who} — Chronopost {prod}" + (f", {', '.join(lim)}" if lim else "") + ".")
         en.append(f"{names_en}: {who_en} — Chronopost {prod}" + (f", {', '.join(lim_en)}" if lim_en else "") + ".")
-    options_fr = "Nous livrons actuellement :\n" + "\n".join("• " + x for x in fr) + "\nLes autres destinations et les particuliers dans l'Union européenne : prochainement. Sociétés hors Europe : sur devis à orders@owine.co."
-    options_en = "We currently ship to:\n" + "\n".join("• " + x for x in en) + "\nOther destinations and private customers in the EU: coming soon. Companies outside Europe: quote on request at orders@owine.co."
-    policy_fr = (options_fr + "\n\nSuisse — Vos vins partent de notre entrepôt de Beaune par Chronopost Chrono Classic, livraison en 2 à 4 jours ouvrés après l'enlèvement, à une adresse physique (pas de boîte postale) ; un numéro de téléphone est indispensable. "
-                 "Notre transporteur limite chaque envoi à 6 bouteilles : une commande = un carton de 6. Nos prix s'entendent hors TVA française. Votre commande est livrée « DAP » : la TVA suisse (8,1 %), le droit de douane sur le vin et les frais de dédouanement du transporteur ne sont pas compris dans le prix et vous seront demandés par Chronopost avant la livraison. Vous devez avoir l'âge légal pour acheter de l'alcool.\n\n"
-                 "Union européenne (sociétés) — Livraison par Chronopost Chrono Classic en 2 à 4 jours ouvrés selon le pays, par carton de 6. Facture hors TVA sur présentation d'un numéro de TVA intracommunautaire valide (autoliquidation) ; les accises du pays de destination restent dues par l'acheteur selon la réglementation locale.\n\n"
-                 "À la livraison — Ouvrez les cartons devant le livreur, notez toute réserve sur le bon de livraison avant de signer, photographiez et écrivez-nous à contact@owine.co : nous prenons le relais auprès de Chronopost.")
-    policy_en = (options_en + "\n\nSwitzerland — Your wines leave our Beaune warehouse with Chronopost Chrono Classic, delivered in 2 to 4 working days after collection, to a physical address (no PO box); a phone number is required. "
-                 "Our carrier limits each shipment to 6 bottles: one order = one case of 6. Our prices exclude French VAT. Your order is delivered “DAP”: Swiss VAT (8.1%), the customs duty on wine and the carrier's clearance fee are not included and will be requested by Chronopost before delivery. You must be of legal drinking age.\n\n"
-                 "European Union (companies) — Chronopost Chrono Classic, 2 to 4 working days depending on the country, in cases of 6. Invoice without VAT against a valid EU VAT number (reverse charge); excise duties in the destination country remain payable by the buyer under local rules.\n\n"
-                 "On delivery — Open the cases in front of the driver, write any reservation on the delivery note before signing, take photos and e-mail contact@owine.co: we take over with Chronopost.")
-    checkout_fr = "Livraison hors Union européenne : les droits de douane, la TVA et les frais de dédouanement de votre pays ne sont pas compris et vous seront demandés par le transporteur avant la livraison (incoterm DAP)."
-    checkout_en = "Delivery outside the European Union: import duties, VAT and clearance fees of your country are not included and will be requested by the carrier before delivery (Incoterm DAP)."
-    return {"options_fr": options_fr, "options_en": options_en, "policy_fr": policy_fr, "policy_en": policy_en, "checkout_fr": checkout_fr, "checkout_en": checkout_en}
+        short_fr.append(z["label"].split(" (")[0] + ("" if z["key"] == "FR" else f" ({who})")); short_en.append(names_en + ("" if z["key"] == "FR" else f" ({who_en})"))
+    abroad = [z for z in zs if z["key"] != "FR"]
+    ch = any(z["key"] == "CH" and z.get("particulier") for z in abroad)
+    ue_b2b = any(z["key"].startswith("UE") and z.get("societe") for z in abroad)
+    options_fr = "Nous livrons actuellement :\n" + "\n".join("• " + x for x in fr) + "\nLes autres destinations : prochainement. Une demande particulière : contact@owine.co."
+    options_en = "We currently ship to:\n" + "\n".join("• " + x for x in en) + "\nOther destinations: coming soon. Special requests: contact@owine.co."
+    closed_fr = "Nous ne livrons pas encore ce pays : prochainement. Destinations ouvertes : " + " ; ".join(short_fr) + "."
+    closed_en = "We do not ship to this country yet: coming soon. Available destinations: " + "; ".join(short_en) + "."
+    policy_fr = options_fr; policy_en = options_en
+    if ch:
+        policy_fr += ("\n\nSuisse — Vos vins partent de notre entrepôt de Beaune par Chronopost Chrono Classic, livraison en 2 à 4 jours ouvrés après l'enlèvement, à une adresse physique (pas de case postale). "
+                      "Notre transporteur limite chaque envoi à 6 bouteilles : une commande = un carton de 6. Nos prix s'entendent hors TVA française. Votre commande est livrée « DAP » : la TVA suisse (8,1 %), le droit de douane "
+                      "sur le vin et les frais de dédouanement du transporteur ne sont pas compris ; avant la livraison, le partenaire suisse de Chronopost vous les demande par e-mail ou SMS — un numéro de téléphone et une adresse "
+                      "e-mail sont donc indispensables. Vous devez avoir l'âge légal pour acheter de l'alcool.")
+        policy_en += ("\n\nSwitzerland — Your wines leave our Beaune warehouse with Chronopost Chrono Classic, delivered in 2 to 4 working days after collection, to a physical address (no PO box). "
+                      "Our carrier limits each shipment to 6 bottles: one order = one case of 6. Our prices exclude French VAT. Your order is delivered “DAP”: Swiss VAT (8.1%), the customs duty on wine and the carrier's "
+                      "clearance fee are not included; before delivery, Chronopost's Swiss partner will ask you to pay them by e-mail or text message — a phone number and an e-mail address are therefore required. "
+                      "You must be of legal drinking age.")
+    if ue_b2b:
+        policy_fr += ("\n\nUnion européenne (sociétés) — Livraison par Chronopost Chrono Classic en 2 à 4 jours ouvrés selon le pays, par carton de 6. Facture hors TVA sur présentation d'un numéro de TVA "
+                      "intracommunautaire valide (autoliquidation) ; les accises du pays de destination sont traitées avant le départ.")
+        policy_en += ("\n\nEuropean Union (companies) — Chronopost Chrono Classic, 2 to 4 working days depending on the country, in cases of 6. Invoice without VAT against a valid EU VAT number (reverse charge); "
+                      "excise duties of the destination country are handled before dispatch.")
+    policy_fr += "\n\nÀ la livraison — Ouvrez les cartons devant le livreur, notez toute réserve sur le bon de livraison avant de signer, photographiez et écrivez-nous à contact@owine.co : nous prenons le relais auprès de Chronopost."
+    policy_en += "\n\nOn delivery — Open the cases in front of the driver, write any reservation on the delivery note before signing, take photos and e-mail contact@owine.co: we take over with Chronopost."
+    export = any(zone(c) == "EXPORT" for z in abroad for c in z["countries"])
+    checkout_fr = ("Livraison hors Union européenne : les droits de douane, la TVA et les frais de dédouanement de votre pays ne sont pas compris et vous seront demandés par le transporteur avant la livraison (incoterm DAP)."
+                   if export else "")
+    checkout_en = ("Delivery outside the European Union: import duties, VAT and clearance fees of your country are not included and will be requested by the carrier before delivery (Incoterm DAP)."
+                   if export else "")
+    return {"options_fr": options_fr, "options_en": options_en, "policy_fr": policy_fr, "policy_en": policy_en, "checkout_fr": checkout_fr, "checkout_en": checkout_en,
+            "closed_fr": closed_fr, "closed_en": closed_en}
 
 
 def public_rules() -> dict:
-    """Règles lues par l'extrait de thème (JSON public) : zones ouvertes, limites, textes FR/EN."""
-    t = site_texts()
+    """Règles lues par l'extrait de thème (JSON public) : zones réellement livrables, limites, textes FR/EN (options, pays fermé)."""
+    t = site_texts(live_only=True)
     return {"zones": {z["key"]: {"countries": z["countries"], "particulier": bool(z.get("particulier")), "societe": bool(z.get("societe")), "max": z.get("max_bottles"), "multiple": z.get("multiple"),
-                                 "vat": bool(z.get("vat_required")), "label": z["label"].split(" (")[0]} for z in zones() if z.get("particulier") or z.get("societe")},
-            "texts": {"fr": t["options_fr"], "en": t["options_en"]}, "bottle_kg": config.BOTTLE_KG}
+                                 "vat": bool(z.get("vat_required")), "label": z["label"].split(" (")[0]} for z in _announced_zones(live_only=True)},
+            "texts": {"fr": t["options_fr"], "en": t["options_en"]}, "closed": {"fr": t["closed_fr"], "en": t["closed_en"]}, "bottle_kg": config.BOTTLE_KG}
 
 
 def theme_snippet() -> str:
@@ -1327,7 +1693,7 @@ def theme_snippet() -> str:
     document.querySelectorAll('.ow-intl [data-fr]').forEach(function(s){ s.textContent = s.dataset[lang]; });
     document.querySelectorAll('.ow-intl__options').forEach(function(o){ o.textContent = rules.texts[lang]; });
     if (cc === 'FR' || cc === 'MC') { lock(false); return; }
-    if (!zone) { lock(true, msgs.closed[lang]); return; }
+    if (!zone) { lock(true, (rules.closed && rules.closed[lang]) || msgs.closed[lang]); return; }
     if (zone.max && bottles > zone.max) { lock(true, msgs.max[lang].replace('{n}', zone.max)); return; }
     if (zone.multiple && bottles % zone.multiple !== 0) { lock(true, msgs.mult[lang]); return; }
     if (!zone.societe) { lock(false); return; }
