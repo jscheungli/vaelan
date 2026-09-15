@@ -63,8 +63,6 @@ def missing_vars(o, cs) -> List[str]:
         exp = _x.state(o, cs)
         for c in exp["blocking"]:
             miss.append(f"export : {c['label'].lower()}")
-        if exp["customs"] and not (exp["invoice"] or {}).get("final"):
-            miss.append("facture commerciale (3 exemplaires) à générer après les étiquettes")
     return miss
 
 
@@ -680,7 +678,7 @@ def export_client_email(o, cs, exp: dict) -> dict:
         body += f"Please find attached the packing list ({n} parcel{'s' if n > 1 else ''}) and the shipping label{'s' if n > 1 else ''}; each parcel can be tracked on chronopost.fr with its number.\n\n"
         if customs:
             body += ("IMPORTANT — CUSTOMS (Incoterm DAP)\nYour order is shipped duty unpaid: the import duties, VAT and customs clearance fees of your country are not included in your order and are payable by you to Chronopost "
-                     "(or its local partner) before delivery. Chronopost will contact you by e-mail or SMS to settle them. A copy of the commercial invoice used for customs is attached; three originals travel with the first parcel.\n\n")
+                     "(or its local partner) before delivery. Chronopost will contact you by e-mail or SMS to settle them. The commercial invoice used for customs travels with the first parcel.\n\n")
         body += ("ON DELIVERY: three reflexes that protect you\n1. Open each parcel in front of the driver, before signing, and check that the bottles are intact and match the packing list.\n"
                  "2. Write any damage or missing bottle on the delivery note before signing (parcel and bottle concerned). A note signed without reservation means the carrier considers the parcel complete and in good condition, and no claim is possible afterwards.\n"
                  f"3. Photograph the bottle, the parcel and the annotated note and send them to {config.CONTACT_EMAIL}: we open the claim with Chronopost and guarantee a replacement, or a refund if a replacement is not possible.\n\n"
@@ -692,7 +690,7 @@ def export_client_email(o, cs, exp: dict) -> dict:
                 f"Vous trouverez ci-joint{'e' if n <= 1 else 's'} la liste de colisage ({n} colis) et {lab(n)} ; chaque colis se suit sur chronopost.fr avec son numéro.\n\n")
         if customs:
             body += ("IMPORTANT — DOUANE (incoterm DAP)\nVotre commande voyage droits non acquittés : les droits de douane, la TVA et les frais de dédouanement de votre pays ne sont pas compris dans votre commande et vous seront demandés par Chronopost "
-                     "(ou son partenaire local) avant la livraison, par e-mail ou SMS. La copie de la facture commerciale servant au dédouanement est jointe ; trois originaux voyagent avec le premier colis.\n\n")
+                     "(ou son partenaire local) avant la livraison, par e-mail ou SMS. La facture commerciale servant au dédouanement voyage avec le premier colis.\n\n")
         body += ("À LA LIVRAISON : trois réflexes qui vous protègent\n1. Ouvrez chaque carton devant le livreur, avant de signer, et vérifiez que les bouteilles sont intactes et conformes à la liste de colisage.\n"
                  "2. Écrivez toute anomalie sur le bon de livraison avant de signer (carton et bouteille concernés). Un bon signé sans réserve vaut acceptation d'un colis complet et en bon état : plus aucun recours n'est possible ensuite.\n"
                  f"3. Photographiez la bouteille, le carton et le bon annoté et envoyez-les à {config.CONTACT_EMAIL} : nous ouvrons la réclamation auprès de Chronopost et vous garantissons un remplacement, ou un remboursement si un remplacement n'est pas possible.\n\n"
@@ -713,7 +711,7 @@ def export_client_email_html(o, cs, exp: dict, extra: str = "") -> str:
         if exp["customs"]:
             inner += (f'<div style="border:1px solid {CSS_WINE};border-radius:8px;background:#fdf8f8;padding:12px 16px;margin:16px 0;"><div style="font-weight:bold;color:{CSS_WINE};font-size:13px;margin-bottom:4px;">IMPORTANT — CUSTOMS (Incoterm DAP)</div>'
                       '<div style="font-size:13.5px;color:#222;">Your order is shipped duty unpaid: the import duties, VAT and customs clearance fees of your country are <strong>not included</strong> in your order and are payable by you to Chronopost (or its local partner) before delivery. '
-                      'Chronopost will contact you by e-mail or SMS to settle them. A copy of the commercial invoice used for customs is attached; three originals travel with the first parcel.</div></div>')
+                      'Chronopost will contact you by e-mail or SMS to settle them. The commercial invoice used for customs travels with the first parcel.</div></div>')
         inner += (f'<p style="font-size:13px;color:#555;">Attached: the packing list and the shipping label{"s" if n > 1 else ""} (one tracking number per parcel, clickable above).</p>'
                   f'<div style="border:1px solid {CSS_WINE};border-radius:8px;background:#fdf8f8;padding:14px 16px;margin:18px 0;"><div style="font-weight:bold;color:{CSS_WINE};font-size:13px;margin-bottom:6px;">ON DELIVERY: THREE REFLEXES THAT PROTECT YOU</div>'
                   '<ol style="font-size:13.5px;margin:0;padding-left:18px;"><li><strong>Open each parcel in front of the driver, before signing</strong>, and check that the bottles are intact and match the packing list.</li>'
@@ -727,7 +725,7 @@ def export_client_email_html(o, cs, exp: dict, extra: str = "") -> str:
     if exp["customs"]:
         inner += (f'<div style="border:1px solid {CSS_WINE};border-radius:8px;background:#fdf8f8;padding:12px 16px;margin:16px 0;"><div style="font-weight:bold;color:{CSS_WINE};font-size:13px;margin-bottom:4px;">IMPORTANT — DOUANE (incoterm DAP)</div>'
                   '<div style="font-size:13.5px;color:#222;">Votre commande voyage droits non acquittés : les droits de douane, la TVA et les frais de dédouanement de votre pays <strong>ne sont pas compris</strong> dans votre commande et vous seront demandés par Chronopost (ou son partenaire local) avant la livraison, par e-mail ou SMS. '
-                  'La copie de la facture commerciale servant au dédouanement est jointe ; trois originaux voyagent avec le premier colis.</div></div>')
+                  'La facture commerciale servant au dédouanement voyage avec le premier colis.</div></div>')
     inner += (f'<p style="font-size:13px;color:#555;">Ci-joint{"e" if n <= 1 else "s"} : la liste de colisage et {lab(n)} (un numéro de suivi par colis, cliquable ci-dessus).</p>' + _delivery_box()
               + "<p>Nous restons à votre disposition et vous souhaitons une excellente dégustation.</p><p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
     return _shell(f"Commande {o.name} · enlèvement réservé", inner)
@@ -748,10 +746,29 @@ def export_alix_instructions(o, cs, exp: dict) -> str:
                 lines.append(f"Coller sur chaque colis le sticker multi-pièces Chronopost avec sa position dans le groupage (1/{n}, 2/{n}…) : colis " + ", ".join(f"{c.ref} = {i + 1}/{n}" for i, c in enumerate(cs)) + ".")
         lines.append("Ne pas utiliser de caisse en bois ; étiquette collée à plat sur le dessus, jamais sur une arête (code-barres).")
     else:
-        lines.append("Pas de document douanier (Union européenne) : lettre de transport seule sur chaque colis" + (f" ; sticker multi-pièces 1/{n}, 2/{n}… à côté de l'étiquette." if n > 1 else "."))
+        if len(ships) > 1:
+            lines.append(f"Pas de document douanier (Union européenne). Chaque carton est un ENVOI SÉPARÉ (limite {cname} : 6 bouteilles par envoi) : une lettre de transport par carton, pas de groupage.")
+        else:
+            lines.append("Pas de document douanier (Union européenne) : lettre de transport seule sur chaque colis" + (f" ; sticker multi-pièces 1/{n}, 2/{n}… à côté de l'étiquette." if n > 1 else "."))
         if exp["kind"] == "societe":
-            lines.append(f"Destinataire professionnel dans l'UE (n° de TVA {o.vat_number or '—'}) : merci d'émettre le document d'accompagnement accises (DAE ou e-DSA) pour cette expédition, comme convenu, et de nous en transmettre la référence.")
+            lines.append(f"Destinataire professionnel dans l'UE (n° de TVA {o.vat_number or '—'}" + (f", n° d'accise {exp['st'].get('excise_no')}" if exp["st"].get("excise_no") else "") + ") : merci d'émettre le document d'accompagnement accises (DAES ou DAE selon le régime du stock) pour cette expédition et de nous en transmettre la référence.")
+    uw = _export.unconfirmed_wines(o, cs) if exp["customs"] else []
+    if uw:
+        lines.append("DEGRÉS D'ALCOOL À CONFIRMER : la facture douanière jointe est PROVISOIRE. Merci de nous indiquer, en réponse à cet e-mail, le degré (% vol) lu sur l'étiquette de : "
+                     + " ; ".join(f"{w['title']}" + (f" (nous avons {w['abv']:g} %)" if w.get("abv") else "") for w in uw) + ". La facture définitive à imprimer en 3 exemplaires suivra avant l'enlèvement.")
     return "\n".join(lines)
+
+
+def final_invoice_email(o, cs) -> dict:
+    """E-mail à Alix : facture commerciale définitive (3 exemplaires) à imprimer et glisser dans la pochette du colis A avant l'enlèvement."""
+    n = len(cs); ships = _export.shipments(o, cs)
+    if len(ships) > 1:
+        where = "chaque carton étant un envoi séparé, imprimer la facture de CHAQUE carton en 3 exemplaires (un bloc par carton dans le PDF) et la glisser dans la pochette du carton concerné"
+    else:
+        where = f"3 exemplaires dans la pochette Chronopost (réf. 2010) collée sur le colis A" + (f" (1/{n}), rien sur les autres colis" if n > 1 else "")
+    body = (f"Bonjour,\n\nVoici la facture commerciale DÉFINITIVE de la commande OWINE #{o.name} ({_export.X.country_name(o.country)}), avec les degrés confirmés et les numéros de colis : {where}.\n\n"
+            "Elle remplace la version provisoire envoyée avec les instructions de préparation.\n\nMerci, et à bientôt,")
+    return {"to": [config.ALIX_EMAIL], "cc": list(config.ALIX_CC), "subject": f"Commande OWINE #{o.name} — facture commerciale définitive (3 exemplaires)", "body": body}
 
 
 def export_sheet(o, cs, exp: dict) -> dict:
@@ -759,6 +776,5 @@ def export_sheet(o, cs, exp: dict) -> dict:
     s = exp["settings"]
     return {"product": exp["product_label"].split(" ·")[0], "product_code": _export.X.PRODUCTS[exp["product"]]["code"], "incoterm": exp["incoterm"], "eori": s.get("eori") or "(à renseigner dans Réglages douane)",
             "customs_value": exp["totals"]["goods_ht"], "content": "Vin de Bourgogne AOP en bouteilles (75 cl) / Burgundy PDO wine", "dims": {k: (s.get("box_dims") or {}).get(k) or "à mesurer (Réglages douane)" for k in ("2031", "2033", "2036")},
-            "shipments": [{"suffix": sh["suffix"] or "—", "cartons": [c.ref for c in sh["cartons"]], "bottles": sum(int(l["qty"]) for c in sh["cartons"] for l in service.carton_lines(c)), "kg": round(sum(c.weight_kg for c in sh["cartons"]), 1),
-                           "value": round(sum(l["total_ht"] for l in exp["totals"]["lines"]) * (sum(int(l["qty"]) for c in sh["cartons"] for l in service.carton_lines(c)) / max(exp["totals"]["bottles"], 1)), 2)} for sh in exp["shipments"]],
+            "shipments": [{"suffix": sh["suffix"] or "—", "cartons": [p["ref"] for p in sh["parcels"]], "bottles": sh["bottles"], "kg": sh["gross_kg"], "value": sh["goods_ht"]} for sh in _export.invoice_data(o, cs)["shipments"]],
             "customs": exp["customs"], "invoice_desc": exp["invoice_desc"]}

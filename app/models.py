@@ -609,7 +609,7 @@ class OwOrder(SQLModel, table=True):
     shipping_paid: float = 0                             # frais de port facturés au client (TTC si tax_total > 0)
     attributes: Optional[str] = None                     # attributs de commande Shopify (JSON [{key, value}])
     export_json: Optional[str] = None                    # formalités export : produit, incoterm, facture, contrôles cochés (JSON)
-    customs_token: Optional[str] = None                  # jeton du formulaire public « informations douanières »
+    customs_token: Optional[str] = Field(default=None, index=True)   # jeton du formulaire public « informations douanières »
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 

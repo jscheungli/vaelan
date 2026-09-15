@@ -1,0 +1,230 @@
+{
+ "PAPBCHRXXXBB23": {
+  "abv": 13,
+  "source": "https://www.lespassionnesduvin.com/bourgogne-blanc-chardonnay-2023-domaine-paul-pillot.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin, 'Degré Alcool 13'"
+ },
+ "LCNBPNRXXXRB23": {
+  "abv": 13.5,
+  "source": "https://www.xtrawine.com/products/lecheneau-bourgogne-pinot-noir-2023",
+  "match": "exact",
+  "note": "XtraWine structured data 'Alcohol by volume 13.5%'"
+ },
+ "PAPBPNRXXXRB22": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/product/bourgogne-pinot-noir-paul-pillot-2022",
+  "match": "exact",
+  "note": "Hedonism Wines ABV 13% (Les Passionnés du Vin also gives 13 for the 2023)"
+ },
+ "BAMBAMGXXXBB22": {
+  "abv": 13.5,
+  "source": "https://hedonism.co.uk/product/batard-montrachet-bachelet-monnot-2022",
+  "match": "exact",
+  "note": "Hedonism Wines, ABV 13.5%"
+ },
+ "THPBAMGXXXBB22": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/products/batard-montrachet-thierry-pillot-2022",
+  "match": "exact",
+  "note": "Hedonism Wines, ABV 13%"
+ },
+ "HBLCBMVLBSRB22": {
+  "abv": 13,
+  "source": "https://www.lespassionnesduvin.com/chambolle-musigny-les-bussieres-2022-domaine-hubert-lignier.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin, 'Degré Alcool 13'"
+ },
+ "PAPCSMVXXXBB22": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/product/chassagne-montrachet-paul-pillot-2022",
+  "match": "exact",
+  "note": "Hedonism Wines ABV 13% (Les Passionnés du Vin also gives 13 for the 2023)"
+ },
+ "CAMCSMPCAIBB17": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/fr/acheter-vin/B2181523-2777-2-bouteilles-Chassagne-Montrachet-1er-Cru-Cailleret-Caroline-Morey-2017-Blanc",
+  "match": "exact",
+  "note": "iDealwine lot page, 13.5%"
+ },
+ "PAPCSMPLCGBB22": {
+  "abv": 13,
+  "source": "https://www.lespassionnesduvin.com/chassagne-montrachet-1er-cru-les-champs-gains-2023-domaine-paul-pillot.html",
+  "match": "adjacent vintage",
+  "note": "Les Passionnés du Vin gives 'Degré Alcool 13' for the 2023 (blanc); 2022 not found"
+ },
+ "PYCCSMPCNVBB15": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/product/chassagne-montrachet-les-chenevottes-pierre-yves-colin-morey-2015",
+  "match": "exact",
+  "note": "Hedonism Wines, ABV 13%"
+ },
+ "DPYCM-CM1CC-B23": {
+  "abv": 13.5,
+  "source": "https://www.lespassionnesduvin.com/pierre-yves-colin-morey-chassagne-montrachet-1er-cru-la-maltroie-2023.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin, 'Degré Alcool 13.5'"
+ },
+ "CAMCSMPVRGBB22": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/fr/acheter-vin/2541162-1-bouteille-Chassagne-Montrachet-1er-Cru-Les-Vergers-Caroline-Morey-2022-Blanc",
+  "match": "exact",
+  "note": "iDealwine lot page, 13.5%"
+ },
+ "DCM-CM1CV-B23": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/fr/acheter-vin/2541162-1-bouteille-Chassagne-Montrachet-1er-Cru-Les-Vergers-Caroline-Morey-2022-Blanc",
+  "match": "adjacent vintage",
+  "note": "iDealwine lot for the 2022 vintage states 13.5%; 2023 not found (Parcelle/Winex/Leon & Son show no ABV)"
+ },
+ "HBLCLVGXXXRB17": {
+  "abv": 13,
+  "source": "https://www.idealwine.com/en/buy-a-wine/B2110046-94795-1-bottle-Clos-de-Vougeot-Grand-Cru-Hubert-Lignier-Domaine-2018-Red",
+  "match": "adjacent vintage",
+  "note": "iDealwine lot for the 2018 vintage states 13%; 2017 not found"
+ },
+ "JJCCLVGXXXRB12": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/fr/acheter-vin/B2224159-3707-1-Bouteille-Clos-de-Vougeot-Grand-Cru-Jean-Jacques-Confuron-2011-Rouge.jsp",
+  "match": "adjacent vintage",
+  "note": "iDealwine lot for the 2011 vintage states 13.5%; 2012 not found. US importer Banville's generic cuvée sheet says 13% (not vintage-specific)"
+ },
+ "HBLCLRGXXXRB15": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/fr/acheter-vin/B2110046-5980-1-Bouteille-Clos-de-la-Roche-Grand-Cru-Hubert-Lignier-Domaine-2016-Rouge.jsp",
+  "match": "adjacent vintage",
+  "note": "iDealwine lot for the 2016 vintage states 13.5%; 2015 not found"
+ },
+ "HBLCLRGXXXRB16": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/fr/acheter-vin/B2110046-5980-1-Bouteille-Clos-de-la-Roche-Grand-Cru-Hubert-Lignier-Domaine-2016-Rouge.jsp",
+  "match": "exact",
+  "note": "iDealwine lot page, 13.5%"
+ },
+ "HBLCLRGXXXRB22": {
+  "abv": 13.5,
+  "source": "https://www.lespassionnesduvin.com/domaine-hubert-lignier-clos-de-la-roche-grand-cru-2022.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin, 'Degré Alcool 13.5'"
+ },
+ "PYCCOCGXXXBB15": {
+  "abv": 12,
+  "source": "https://hedonism.co.uk/product/corton-charlemagne-pierre-yves-colin-morey-2015",
+  "match": "exact",
+  "note": "Hedonism Wines states ABV 12% — unusually low for a 2015 Corton-Charlemagne; verify on label"
+ },
+ "DPYCM-CCGC-B23": {
+  "abv": 13,
+  "source": "https://www.idealwine.com/fr/acheter-vin/2761062-1-bouteille-Corton-Charlemagne-Grand-Cru-Pierre-Yves-Colin-Morey-2023-Blanc",
+  "match": "exact",
+  "note": "iDealwine lot page, 13%"
+ },
+ "LCNGECVXXXRB23": {
+  "abv": 14,
+  "source": "https://www.xtrawine.com/products/lecheneaut-gevrey-chambertin-2023",
+  "match": "exact",
+  "note": "XtraWine structured data 'Alcohol by volume 14.0%'"
+ },
+ "MIMLDXVLCRRB22": {
+  "abv": 13.5,
+  "source": "https://www.chateaunet.com/domaine-michel-mallard-1158079-domaine-michel-mallard-le-clos-royer-ladoix-rouge-2022-075",
+  "match": "exact",
+  "note": "Chateaunet states 13.50°; CONFLICT: Caves Carrière (carriere-distribution.fr/fr/bourgogne/6332-ladoix-le-clos-royer) states 13 for the same wine/vintage. Check the label."
+ },
+ "BAMMRGPLFUBB23": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/product/maranges-la-fussiere-blanc-bachelet-monnot-2023",
+  "match": "exact",
+  "note": "Hedonism Wines, ABV 13%"
+ },
+ "BAMMRGPLFURB23": {
+  "abv": 13.5,
+  "source": "https://hedonism.co.uk/product/maranges-la-fussiere-rouge-bachelet-monnot-2023",
+  "match": "exact",
+  "note": "Hedonism Wines, ABV 13.5%"
+ },
+ "THPMSTVNRVBB22": {
+  "abv": 13.5,
+  "source": "https://hedonism.co.uk/product/meursault-narvaux-thierry-pillot-2022",
+  "match": "adjacent vintage",
+  "note": "Hedonism page resolves to the 2023 vintage at 13.5%; 2022 not found"
+ },
+ "THPMSTPPRSBB22": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/product/meursault-porusot-thierry-pillot-2022",
+  "match": "exact",
+  "note": "Hedonism Wines, ABV 13%"
+ },
+ "HBLMSDPLARRB22": {
+  "abv": 14,
+  "source": "https://www.lespassionnesduvin.com/domaine-hubert-lignier-morey-saint-denis-premier-cru-la-riotte-2022.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin states 'Degré Alcool 14'; CONFLICT: XtraWine (xtrawine.com/products/domaine-hubert-lignier-morey-saint-denis-rouge-1er-cru-la-riotte-2022) states 13% vol for the same wine/vintage. Check the label."
+ },
+ "HBLMSDPCFFRB22": {
+  "abv": 13.5,
+  "source": "https://www.lespassionnesduvin.com/morey-saint-denis-premier-cru-les-chaffots-2022-domaine-hubert-lignier.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin, 'Degré Alcool 13.5'"
+ },
+ "HBLMSDVXXXRB22": {
+  "abv": 13,
+  "source": "https://www.lespassionnesduvin.com/morey-st-denis-trilogie-2022-domaine-hubert-lignier.html",
+  "match": "exact",
+  "note": "Lignier's village Morey-Saint-Denis is the cuvée 'Trilogie'; Les Passionnés du Vin 'Degré Alcool 13'"
+ },
+ "BAMPUMVXXXBB22": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/product/puligny-montrachet-bachelet-monnot-2022",
+  "match": "exact",
+  "note": "Hedonism Wines, ABV 13%"
+ },
+ "JJCRSVGXXXRB11": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/uk/acheter-vin/B2159563-4099-1-Bottle-Romanee-Saint-Vivant-Grand-Cru-Jean-Jacques-Confuron-2011-Red.jsp",
+  "match": "exact",
+  "note": "iDealwine lot page, 13.5%"
+ },
+ "JJCRSVGXXXRB12": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/uk/acheter-vin/B2159563-4099-1-Bottle-Romanee-Saint-Vivant-Grand-Cru-Jean-Jacques-Confuron-2011-Red.jsp",
+  "match": "adjacent vintage",
+  "note": "iDealwine lot for the 2011 vintage states 13.5%; 2012 not found"
+ },
+ "FDCSTAVXXXBB23": {
+  "abv": 13,
+  "source": "https://www.stonevine.co.uk/p4251/fran-oise-and-denis-clair-st-aubin-blanc-2023/",
+  "match": "exact",
+  "note": "Stone, Vine & Sun (UK), ABV 13%"
+ },
+ "PYCSTAVXXXBB22": {
+  "abv": 12,
+  "source": "https://www.lespassionnesduvin.com/domaine-pierre-yves-colin-morey-saint-aubin-le-banc-2022.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin states 'Degré Alcool 12' for Saint-Aubin (Le Banc) 2022 — low vs 13 for the 2023; verify on label"
+ },
+ "DPYCM-SA-B23": {
+  "abv": 13,
+  "source": "https://www.lespassionnesduvin.com/domaine-pierre-yves-colin-morey-saint-aubin-2023.html",
+  "match": "exact",
+  "note": "Les Passionnés du Vin, 'Degré Alcool 13'"
+ },
+ "DCM-SV-R23": {
+  "abv": 13.5,
+  "source": "https://www.idealwine.com/en/buy-a-wine/2805280-2-bottles-Santenay-Caroline-Morey-2023-Red",
+  "match": "exact",
+  "note": "iDealwine lot page, 13.5%"
+ },
+ "FDCSTNVCGERB22": {
+  "abv": 13.5,
+  "source": "https://www.stonevine.co.uk/p3807/fran-oise-and-denis-clair-santenay-rouge-clos-genet-2022/",
+  "match": "exact",
+  "note": "Stone, Vine & Sun (UK), ABV 13.5%"
+ },
+ "PAPSTNVVIVRB22": {
+  "abv": 13,
+  "source": "https://hedonism.co.uk/product/santenay-rouge-paul-pillot-2022",
+  "match": "exact",
+  "note": "Hedonism 'Santenay Rouge Paul Pillot 2022' ABV 13% — Paul Pillot's Santenay rouge is the Vieilles Vignes cuvée, though the listing does not print 'VV'"
+ }
+}

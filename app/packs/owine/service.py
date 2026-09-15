@@ -566,6 +566,8 @@ def validate_cartons(o: OwOrder, plan: List[dict], by: str = None) -> None:
     replace_cartons(o.id, plan)
     o.status = "cartons"
     save_order(o)
+    from . import export
+    export.invalidate_invoice(o)
 
 
 def apply_labels(o: OwOrder, mapping: Dict[str, str]) -> int:
@@ -583,6 +585,9 @@ def apply_labels(o: OwOrder, mapping: Dict[str, str]) -> int:
     if all((mapping.get(c.ref) or c.tracking) for c in cs):
         o.status = "etiquettes"
         save_order(o)
+    if n:
+        from . import export
+        export.invalidate_invoice(o)
     return n
 
 
@@ -623,16 +628,26 @@ def mark_sent(o: OwOrder, by: str = None) -> None:
         add_task("reception", f"{o.name} : confirmer la collecte par le client chez Alix", ref=o.name, due=(o.pickup_date or date.today()) + timedelta(days=1), key=f"reception:{o.name}")
     else:
         o.status = "attente_reception"
-        due = (o.delivery_date or (o.pickup_date + timedelta(days=1) if o.pickup_date else date.today() + timedelta(days=3))) + timedelta(days=1)
+        from . import export
+        if export.zone(o.country) != "FR":
+            days = export.delay_days(o.country, export.dest_kind(o), export.product_of(o))
+            due = (o.pickup_date or date.today()) + timedelta(days=days + 2)      # délai indicatif de la fiche pays + 2 jours
+        else:
+            due = (o.delivery_date or (o.pickup_date + timedelta(days=1) if o.pickup_date else date.today() + timedelta(days=3))) + timedelta(days=1)
         add_task("reception", f"{o.name} : vérifier avec le client que tout est bien arrivé", ref=o.name, due=due, key=f"reception:{o.name}")
     save_order(o)
     from . import export
     if export.zone(o.country) == "EXPORT":
         base = o.pickup_date or date.today()
+        st = export.get_state(o)
+        if not (st.get("invoice") or {}).get("final") or export.unconfirmed_wines(o, cartons(o.id)):
+            st["final_invoice_pending"] = True; export.set_state(o, st)
+            add_task("customs", f"{o.name} : saisir les degrés confirmés par Alix, générer la facture définitive et l'envoyer à Alix avant l'enlèvement", ref=o.name, due=base, key=f"final_invoice:{o.name}",
+                     details="Carte International : « Enregistrer les degrés lus par Alix » → « Générer (3 ex.) » → « Envoyer la facture définitive à Alix ».")
         add_task("customs", f"{o.name} : suivre le dédouanement ({export.X.country_name(o.country)}) puis cocher « dédouané et livré » sur la commande", ref=o.name, due=base + timedelta(days=2), key=f"cleared:{o.name}",
                  details="Chronotrace : douane export puis import ; en DAP le destinataire règle droits et taxes au transporteur avant la remise.")
         add_task("export_proof", f"{o.name} : archiver le justificatif d'exportation (déclaration Chronopost / MRN) — preuve de l'exonération de TVA", ref=o.name, due=base + timedelta(days=15), key=f"proof:{o.name}")
-        close_tasks_by_key(f"customs:{o.name}"); close_tasks_by_key(f"customs_data:{o.name}")
+        close_tasks_by_key(f"customs:{o.name}"); close_tasks_by_key(f"customs_data:{o.name}"); close_tasks_by_key(f"customs_info:{o.name}")
 
 
 def confirm_reception(o: OwOrder, by: str = None) -> None:
@@ -653,7 +668,7 @@ def close_order(o: OwOrder, by: str = None) -> None:
     save_order(o)
     close_tasks_by_key(f"reception:{o.name}")
     close_tasks_by_key(f"pennylane_invoice:{o.name}")
-    for pfx in ("customs", "customs_data", "customs_info", "cleared", "proof"):
+    for pfx in ("customs", "customs_data", "customs_info", "cleared", "proof", "final_invoice"):
         close_tasks_by_key(f"{pfx}:{o.name}")
 
 

@@ -109,7 +109,8 @@ def _order_ctx(request, company, o, msg=""):
         l["cost_missing"] = not l.get("cost")
         l["short"] = (ow + lmb) < l["qty"]
     cs = service.cartons(o.id)
-    proposal = service.propose_cartons(lines, st) if not cs else None
+    from app.packs.owine import export as _owx0
+    proposal = service.propose_cartons(lines, st, intl=(_owx0.zone(o.country) != "FR")) if not cs else None
     sheet = docs.chronopost_sheet(o, cs) if cs else None
     initial = [{"ref": p["ref"], "box_sku": p["box_sku"], "lines": p["lines"]} for p in proposal] if proposal else \
               [{"ref": c.ref, "box_sku": c.box_sku or "2036", "lines": service.carton_lines(c)} for c in cs]
@@ -178,7 +179,8 @@ async def owine_order_cartons(request: Request, code: str, name: str):
         if not l.get("cost") and it and it.cost:
             l["cost"] = it.cost
     if f.get("auto") or not f.get("n_boxes"):
-        plan = service.propose_cartons(lines, st)
+        from app.packs.owine import export as _owx0
+        plan = service.propose_cartons(lines, st, intl=(_owx0.zone(o.country) != "FR"))
     else:
         n = int(f.get("n_boxes") or 1)
         plan = []
@@ -395,9 +397,11 @@ def owine_order_emails(request: Request, code: str, name: str, msg: str = ""):
     att_client = [(f"Détail {o.name}.pdf", f"{base}/colisage", size(pl))] + [(n, f"{base}/etiquette/{i}", size(d)) for i, (n, d) in enumerate(labels)]
     from app.packs.owine import export as _owx
     if _owx.zone(o.country) == "EXPORT":
-        inv = _owx.stored_invoice(o)
-        if inv:
-            att_alix.append((inv[0] + " (3 exemplaires)", f"{base}/facture-commerciale", size(inv[1]))); att_client.append((inv[0], f"{base}/facture-commerciale", size(inv[1])))
+        inv = _owx.stored_invoice(o); final = bool((_owx.get_state(o).get("invoice") or {}).get("final")) and not _owx.unconfirmed_wines(o, cs)
+        name_ = (inv[0] if inv else f"Facture commerciale {_owx.invoice_number(o)}.pdf") + (" (3 exemplaires)" if final else " (PROVISOIRE, degrés ou numéros à confirmer)")
+        att_alix.append((name_, f"{base}/facture-commerciale" + ("" if inv else "?live=1"), size(inv[1]) if inv else "—"))
+        if final:
+            att_client.append((inv[0], f"{base}/facture-commerciale", size(inv[1])))
     return templates.TemplateResponse(request, "owine_emails.html", _base(request, company, o=o, em=em, ed=ed, msg=msg, gmail_ok=gmail_imap.configured(CODE), labels=[n for n, _ in labels],
                                                                          att_alix=att_alix, att_client=att_client, sent=o.status in ("envoye", "attente_reception", "a_facturer", "cloturee")))
 
@@ -432,10 +436,12 @@ def _send_emails(request, code, o, ed):
     att_cli = [(f"Détail {o.name}.pdf", pl, "application/pdf")] + [(n, d, "application/pdf") for n, d in labels]
     from app.packs.owine import export as _owx
     if _owx.zone(o.country) == "EXPORT":
-        inv = _owx.stored_invoice(o)
-        if not inv or not (_owx.get_state(o).get("invoice") or {}).get("final"):
-            return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}?msg=Export : générez la facture commerciale définitive (étiquettes reçues) avant l'envoi.#export", status_code=303)
-        att_alix.append((inv[0], inv[1], "application/pdf")); att_cli.append((inv[0], inv[1], "application/pdf"))
+        inv = _owx.stored_invoice(o); final = bool((_owx.get_state(o).get("invoice") or {}).get("final")) and not _owx.unconfirmed_wines(o, cs)
+        if not inv:
+            data = docs.commercial_invoice_pdf(o, cs); _owx.store_invoice(o, data, by=_who(request), final=False); inv = (f"Facture commerciale {_owx.invoice_number(o)} (provisoire).pdf", data)
+        att_alix.append(((inv[0] if final else inv[0].replace(".pdf", " (PROVISOIRE).pdf")), inv[1], "application/pdf"))
+        if final:
+            att_cli.append((inv[0], inv[1], "application/pdf"))
     ok1, m1 = gmail_imap.send_mail(CODE, em["alix"]["to"], em["alix"]["subject"], em["alix"]["text"], cc=em["alix"]["cc"], attachments=att_alix, html=em["alix"]["html"], inline=logo,
                                    from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
     ok2, m2 = gmail_imap.send_mail(CODE, em["client"]["to"], em["client"]["subject"], em["client"]["text"], cc=em["client"]["cc"], attachments=att_cli, html=em["client"]["html"], inline=logo,
@@ -752,7 +758,8 @@ from app.packs.owine import export as owx
 
 
 def _exp_redirect(code, name, msg):
-    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={msg}#export", status_code=303)
+    from urllib.parse import quote
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={quote(str(msg))}#export", status_code=303)
 
 
 @router.post("/c/{code}/owine/commandes/{name}/export/infos")
@@ -763,12 +770,20 @@ async def owine_export_infos(request: Request, code: str, name: str):
         return redir
     o = service.get_order(name); f = await request.form()
     g = lambda k: (f.get(k) or "").strip()
-    fields = {"customer_type": g("customer_type") or None, "vat_number": g("vat_number"), "eori": g("eori"), "tax_id": g("tax_id"), "billing_company": g("billing_company"),
-              "product": g("product") or None, "incoterm": g("incoterm") or "DAP", "invoice_no": g("invoice_no"), "invoice_date": g("invoice_date"), "notes": g("notes"), "content_desc": g("content_desc")}
-    sh = g("shipping_ht").replace(",", ".")
-    fields["shipping_ht"] = float(sh) if sh else None
-    ins = g("insurance_ht").replace(",", ".")
-    fields["insurance_ht"] = float(ins) if ins else 0
+    fields = {k: (g(k) or None) for k in ("customer_type", "vat_number", "eori", "tax_id", "billing_company", "product") if k in f}
+    for k in ("incoterm", "invoice_no", "invoice_date", "notes", "content_desc"):
+        if k in f:
+            fields[k] = g(k) or ("DAP" if k == "incoterm" else "")
+    def money(k):
+        v = re.sub(r"[^0-9.,]", "", g(k)).replace(",", ".")
+        try:
+            return float(v) if v else None
+        except ValueError:
+            return None
+    if "shipping_ht" in f:
+        fields["shipping_ht"] = money("shipping_ht")
+    if "insurance_ht" in f:
+        fields["insurance_ht"] = money("insurance_ht") or 0
     if g("company"):
         o.company = g("company")
     owx.set_info(o, by=_who(request), **fields)
@@ -886,10 +901,15 @@ async def owine_douane_signature(request: Request, code: str, file: UploadFile =
     company, redir = _guard(request, code)
     if redir:
         return redir
-    data = await file.read() if file else b""
-    if not data:
+    form = await request.form()
+    data = await file.read() if (file and file.filename) else b""
+    if form.get("remove"):
         owx.set_signature(None)
         return RedirectResponse(f"/c/{code}/owine/douane?msg=Signature retirée.", status_code=303)
+    if not data:
+        return RedirectResponse(f"/c/{code}/owine/douane?msg=Choisissez un fichier image.", status_code=303)
+    if len(data) > 1_000_000:
+        return RedirectResponse(f"/c/{code}/owine/douane?msg=Image trop lourde (1 Mo maximum).", status_code=303)
     if not (data[:8].startswith(b"\x89PNG") or data[:3] == b"\xff\xd8\xff"):
         return RedirectResponse(f"/c/{code}/owine/douane?msg=La signature doit être une image PNG ou JPEG.", status_code=303)
     owx.set_signature(data, file.filename or "signature.png")
@@ -938,17 +958,19 @@ def owine_customs_form(request: Request, token: str, done: int = 0, err: str = "
     lang = _pub_lang(request, o)
     if not o:
         return templates.TemplateResponse(request, "owine_douane_public.html", {"o": None, "lang": lang, "done": 0, "err": "", "cfg": cfg}, status_code=404)
-    exp = owx.state(o, service.cartons(o.id))
-    return templates.TemplateResponse(request, "owine_douane_public.html", {"o": o, "lang": lang, "done": done, "err": err, "cfg": cfg, "exp": exp, "kind": owx.dest_kind(o),
-                                                                            "country": owx.X.country_name(o.country, lang), "tax_id_label": exp["tax_id_label"], "token": token})
+    if o.status not in ("a_traiter", "cartons", "etiquettes") and not done:
+        return templates.TemplateResponse(request, "owine_douane_public.html", {"o": o, "lang": lang, "done": 1, "err": "", "cfg": cfg, "country": owx.X.country_name(o.country, lang)})
+    light = {"customs": owx.zone(o.country) == "EXPORT", "tax_id_label": owx.X.TAX_ID_B2C.get((o.country or "").upper())}
+    return templates.TemplateResponse(request, "owine_douane_public.html", {"o": o, "lang": lang, "done": done, "err": err, "cfg": cfg, "exp": light, "kind": owx.dest_kind(o),
+                                                                            "country": owx.X.country_name(o.country, lang), "tax_id_label": light["tax_id_label"], "token": token})
 
 
 @router.post("/douane/{token}")
 async def owine_customs_form_submit(request: Request, token: str):
     o = owx.by_token(token)
-    if not o:
+    if not o or o.status not in ("a_traiter", "cartons", "etiquettes"):
         return RedirectResponse(f"/douane/{token}", status_code=303)
-    f = await request.form(); lang = (f.get("lang") or "fr")
+    f = await request.form(); lang = "en" if (f.get("lang") or "fr") == "en" else "fr"
     if not (f.get("phone") or "").strip():
         return RedirectResponse(f"/douane/{token}?lang={lang}&err=phone", status_code=303)
     if (f.get("kind") == "societe") and not ((f.get("vat") or "").strip() or (f.get("eori") or "").strip()):
@@ -992,9 +1014,9 @@ async def owine_douane_confirm(request: Request, code: str, sku: str):
     if f.get("undo"):
         owx.unconfirm_wine(sku, by=_who(request)); msg = f"{sku} : confirmation retirée."
     else:
-        abv = (f.get("abv") or "").replace(",", ".").strip()
-        owx.confirm_wine(sku, by=_who(request), abv=float(abv) if abv else None, colour=(f.get("colour") or "").strip().lower() or None, hs=re.sub(r"[^0-9]", "", f.get("hs") or "") or None, source=(f.get("source") or "").strip() or None)
-        msg = f"{sku} : données douanières confirmées."
+        owx.save_customs_rows(dict(f))                                   # les valeurs tapées sur toutes les lignes sont d'abord enregistrées
+        ok = owx.confirm_wine(sku, by=_who(request))
+        msg = f"{sku} : données douanières confirmées." if ok else f"{sku} : confirmation impossible — degré ou couleur manquant."
     return RedirectResponse(f"/c/{code}/owine/douane?msg={msg}#t-vins", status_code=303)
 
 
@@ -1003,11 +1025,15 @@ async def owine_douane_confirm_many(request: Request, code: str):
     company, redir = _guard(request, code)
     if redir:
         return redir
-    f = await request.form(); n = 0
+    f = await request.form(); n = 0; ko = []
+    owx.save_customs_rows(dict(f))
     for sku in f.getlist("sel"):
         if owx.confirm_wine(sku, by=_who(request)):
             n += 1
-    return RedirectResponse(f"/c/{code}/owine/douane?msg={n} vin(s) confirmé(s).#t-vins", status_code=303)
+        else:
+            ko.append(sku)
+    msg = f"{n} vin(s) confirmé(s)." + (f" Non confirmés (degré ou couleur manquant) : {', '.join(ko)}." if ko else "")
+    return RedirectResponse(f"/c/{code}/owine/douane?msg={msg}#t-vins", status_code=303)
 
 
 @router.post("/c/{code}/owine/douane/vins/estimer")
@@ -1097,12 +1123,86 @@ async def owine_export_confirm_abv(request: Request, code: str, name: str):
     return _exp_redirect(code, name, f"{n} degré(s) confirmé(s).")
 
 
+_VIES_HITS: dict = {}
+_VIES_ORIGINS = {"https://owine.co", "https://www.owine.co", "https://2ac587-75.myshopify.com", "https://owineco.myshopify.com"}
+
+
 @router.get("/api/owine/vies")
 def owine_api_vies(request: Request, vat: str = ""):
-    """Vérification VIES pour la page panier du site (extrait de thème) : {valid, name}. Réponse mise en cache 30 jours côté Vaelan."""
-    r = owx.vies_check(vat)
+    """Vérification VIES pour la page panier du site (extrait de thème) : {valid, name}. Format contrôlé, 30 appels par IP et par 10 minutes, résultats gardés côté Vaelan."""
+    import time
     origin = request.headers.get("origin") or ""
     headers = {"Cache-Control": "no-store"}
-    if origin.endswith("owine.co") or origin.endswith(".myshopify.com"):
-        headers["Access-Control-Allow-Origin"] = origin
+    if origin in _VIES_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = origin; headers["Vary"] = "Origin"
+    v = re.sub(r"[^A-Za-z0-9]", "", vat or "").upper()
+    if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{2,13}", v):
+        return JSONResponse({"valid": False, "error": "format", "vat": v}, headers=headers)
+    fwd = request.headers.get("x-forwarded-for"); ip = (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?"))
+    now = time.time(); hits = [t for t in _VIES_HITS.get(ip, []) if now - t < 600]
+    if len(hits) >= 30:
+        return JSONResponse({"valid": None, "error": "trop de vérifications, réessayez plus tard", "vat": v}, status_code=429, headers=headers)
+    hits.append(now); _VIES_HITS[ip] = hits
+    if len(_VIES_HITS) > 5000:
+        _VIES_HITS.clear()
+    r = owx.vies_check(v)
     return JSONResponse({"valid": r.get("valid"), "name": r.get("name"), "error": r.get("error"), "vat": r.get("vat")}, headers=headers)
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/facture-alix")
+def owine_export_invoice_to_alix(request: Request, code: str, name: str):
+    """Envoie à Alix la facture commerciale définitive (3 exemplaires) après la saisie des degrés et la réception des étiquettes."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); cs = service.cartons(o.id)
+    if owx.unconfirmed_wines(o, cs):
+        return _exp_redirect(code, name, "Des degrés restent à confirmer : saisissez la réponse d'Alix d'abord.")
+    if not all(c.tracking for c in cs):
+        return _exp_redirect(code, name, "Numéros de colis manquants : enregistrez les étiquettes d'abord.")
+    pdf = docs.commercial_invoice_pdf(o, cs); meta = owx.store_invoice(o, pdf, by=_who(request), final=True)
+    em = docs.final_invoice_email(o, cs)
+    ok, m = gmail_imap.send_mail(CODE, em["to"], em["subject"], em["body"] + "\n\n" + _signature(), cc=em["cc"], attachments=[(f"Facture commerciale {meta['no']}.pdf", pdf, "application/pdf")],
+                                 from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
+    if not ok:
+        return _exp_redirect(code, name, f"Envoi impossible : {m}")
+    st = owx.get_state(o); st["final_invoice_sent_at"] = service.now_local().strftime("%d/%m/%Y %H:%M"); st.pop("final_invoice_pending", None); owx.set_state(o, st)
+    service.close_tasks_by_key(f"final_invoice:{o.name}")
+    return _exp_redirect(code, name, f"Facture définitive {meta['no']} (version {meta['version']}) envoyée à Alix.")
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/refuser")
+async def owine_export_refuse(request: Request, code: str, name: str):
+    """Commande hors périmètre refusée : annulation Vaelan, tâche de remboursement Shopify, e-mail FR/EN au client."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); f = await request.form()
+    if o.status not in ("a_traiter", "cartons", "etiquettes"):
+        return _exp_redirect(code, name, "Cette commande n'est plus au stade où l'on peut la refuser.")
+    em = owx.refuse_order(o, by=_who(request), reason=(f.get("reason") or "").strip()[:200])
+    msg = "Commande refusée et annulée dans Vaelan ; tâche « rembourser dans Shopify » créée."
+    if o.email and f.get("send_email"):
+        ok, m = gmail_imap.send_mail(CODE, [o.email], em["subject"], em["body"], cc=list(cfg.CLIENT_CC), from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
+        msg += f" E-mail au client ({em['lang']}) : {'envoyé' if ok else 'non envoyé — ' + m}."
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={msg}", status_code=303)
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/vies")
+def owine_export_vies(request: Request, code: str, name: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name)
+    r = owx.vies_check(o.vat_number or "", force=True)
+    return _exp_redirect(code, name, f"VIES : {'valide' if r.get('valid') else ('invalide' if r.get('valid') is False else 'indisponible')}" + (f" — {r.get('name')}" if r.get("name") else "") + (f" ({r.get('error')})" if r.get("error") else ""))
+
+
+@router.get("/api/owine/rules")
+def owine_api_rules(request: Request):
+    """Règles d'expédition lues par l'extrait de thème du panier : zones ouvertes, limites, textes FR/EN (public, sans donnée personnelle)."""
+    origin = request.headers.get("origin") or ""
+    headers = {"Cache-Control": "public, max-age=300"}
+    if origin in _VIES_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = origin; headers["Vary"] = "Origin"
+    return JSONResponse(owx.public_rules(), headers=headers)

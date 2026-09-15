@@ -92,7 +92,7 @@ COUNTRY_RULES = {
                      "Droits et taxes suisses payés par le destinataire (DAP) : TVA 8,1 % sur marchandise + transport, droit de douane au litre, frais de dédouanement du transporteur"]},
     "GB": {"customs": True, "b2b": _r(None, "J+1/2"), "b2c": _r(None, "J+1/2"),
            "notes": ["Chrono Classic interdit (une solution en dédouanement existe : voir le chargé d'affaires) ; Chrono Express seul",
-                     "Vente à un particulier de moins de 135 £ de marchandise : la TVA britannique est due par le vendeur (n° de TVA GB à obtenir) → fixer un minimum de commande",
+                     "Produits soumis à accise : la règle des 135 £ (TVA collectée par le vendeur) ne s'applique pas ; droits d'accise (≈ 3 £ par bouteille à 13 %) et TVA 20 % payés par le destinataire à l'arrivée (DAP)",
                      "Destinataire société : EORI GB au minimum, n° de TVA GB si possible"]},
     "IS": {"customs": True, "b2b": _r(None, "J+2/3"), "b2c": _r(None, "J+2/3"), "invoice_desc": ["type de boisson", "degré d'alcool", "nombre de bouteilles", "quantité par bouteille", "origine"],
            "notes": ["Facture commerciale uniquement (pas de pro forma)"]},
@@ -156,7 +156,7 @@ NET_KG_PER_BOTTLE = 1.2                      # bouteille pleine 75 cl sans embal
 EUR1_THRESHOLD = 6000.0                      # au-delà : certificat EUR.1 au lieu de la déclaration d'origine sur facture
 
 ORIGIN_DECLARATION_FR = ("L'exportateur des produits couverts par le présent document déclare que, sauf indication claire du contraire, "
-                         "ces produits sont d'origine préférentielle UE.")
+                         "ces produits ont l'origine préférentielle UE.")
 ORIGIN_DECLARATION_EN = ("The exporter of the products covered by this document declares that, except where otherwise clearly indicated, "
                          "these products are of EU preferential origin.")
 VAT_EXEMPTION_EXPORT = "Exonération de TVA — article 262 I du CGI (livraison à l'exportation) / VAT exempt: export supply (art. 262 I French Tax Code)"
@@ -475,12 +475,12 @@ ZONES_DEFAULT = [
      "note": "circuit actuel : Chrono 13, grille de port au poids existante"},
     {"key": "CH", "label": "Suisse (Chrono Classic, douane)", "countries": ["CH", "LI"], "product": "classic", "particulier": True, "societe": False, "max_bottles": 6, "multiple": 6, "min_order": None, "vat_required": False,
      "note": "particuliers : 6 bouteilles et 10 kg par envoi (fiche pays), un carton de 6 par commande ; sociétés fermées pour l'instant"},
-    {"key": "UE_OUEST", "label": "Union européenne — Ouest (Chrono Classic)", "countries": ["BE", "LU", "NL", "DE", "IT", "ES", "PT", "AT", "IE"], "product": "classic", "particulier": False, "societe": True, "max_bottles": None, "multiple": 6, "min_order": None, "vat_required": True,
+    {"key": "UE_OUEST", "label": "Union européenne — Ouest (Chrono Classic)", "countries": ["BE", "LU", "NL", "DE", "IT", "ES", "PT", "AT", "IE"], "product": "classic", "particulier": False, "societe": True, "max_bottles": 18, "multiple": 6, "min_order": None, "vat_required": True,
      "note": "sociétés avec n° de TVA intracommunautaire valide (VIES) ; particuliers fermés tant que l'OSS et un représentant fiscal ne sont pas en place"},
-    {"key": "UE_EST", "label": "Union européenne — Nord et Est (Chrono Express)", "countries": ["DK", "FI", "EE", "LV", "LT", "CZ", "SK", "PL", "HU", "HR", "RO", "GR", "SI", "BG", "CY", "MT"], "product": "express", "particulier": False, "societe": False, "max_bottles": None, "multiple": 6, "min_order": None, "vat_required": True,
+    {"key": "UE_EST", "label": "Union européenne — Nord et Est (Chrono Express)", "countries": ["DK", "FI", "EE", "LV", "LT", "CZ", "SK", "PL", "HU", "HR", "RO", "GR", "SI", "BG", "CY", "MT"], "product": "express", "particulier": False, "societe": False, "max_bottles": 18, "multiple": 6, "min_order": None, "vat_required": True,
      "note": "Chrono Classic interdit dans les pays nordiques et baltes : Chrono Express ; fermé au démarrage"},
-    {"key": "GB", "label": "Royaume-Uni (Chrono Express, douane)", "countries": ["GB"], "product": "express", "particulier": False, "societe": False, "max_bottles": 12, "multiple": 6, "min_order": 160.0, "vat_required": False,
-     "note": "TVA britannique due par le vendeur sous 135 £ : minimum de commande ; fermé au démarrage"},
+    {"key": "GB", "label": "Royaume-Uni (Chrono Express, douane)", "countries": ["GB"], "product": "express", "particulier": False, "societe": False, "max_bottles": 12, "multiple": 6, "min_order": None, "vat_required": False,
+     "note": "droits d'accise et TVA payés à l'arrivée (DAP) ; fermé au démarrage"},
     {"key": "US", "label": "États-Unis (Chrono Express, avenant Viti US)", "countries": ["US"], "product": "express", "particulier": False, "societe": False, "max_bottles": 12, "multiple": 6, "min_order": None, "vat_required": False,
      "note": "avenant Chrono Viti B2C US à signer ; fermé"},
 ]

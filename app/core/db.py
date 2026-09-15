@@ -70,6 +70,7 @@ _COLUMN_ADDS = [
     "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS abv_source VARCHAR",
     "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS customs_confirmed_at TIMESTAMP",
     "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS customs_confirmed_by VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_ow_orders_customs_token ON ow_orders (customs_token)",
 ]
 
 
@@ -80,7 +81,7 @@ def _ensure_columns() -> None:
         for stmt in _COLUMN_ADDS:
             try:
                 if sqlite:
-                    if "ADD COLUMN IF NOT EXISTS" not in stmt:
+                    if "ADD COLUMN IF NOT EXISTS" not in stmt and not stmt.startswith("CREATE INDEX"):
                         continue                              # ALTER TYPE… : Postgres seulement
                     stmt = stmt.replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN")   # SQLite n'a pas IF NOT EXISTS : « duplicate column » avalé ci-dessous
                 conn.execute(text(stmt))

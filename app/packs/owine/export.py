@@ -9,7 +9,7 @@ import math
 import os
 import re
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from . import config, export_config as X, service
@@ -40,9 +40,10 @@ def rule(country: Optional[str]) -> Optional[dict]:
 
 
 def dest_kind(o) -> str:
+    """Société seulement si le client l'a dit (attribut du panier, n° de TVA ou EORI) ou si JS l'a choisi ; un nom de société dans l'adresse (livraison au bureau) ne suffit pas."""
     if o.customer_type in ("societe", "particulier"):
         return o.customer_type
-    return "societe" if (o.company or o.billing_company or o.vat_number or o.eori) else "particulier"
+    return "societe" if (o.vat_number or o.eori) else "particulier"
 
 
 def kind_label(k: str) -> str:
@@ -81,6 +82,16 @@ def default_product(country: str, kind: str) -> str:
     return "express"
 
 
+def delay_days(country: str, kind: str, product: str) -> int:
+    """Borne haute du délai indicatif (jours ouvrés) : fiche pays sinon zoning, sinon 4."""
+    r = rule(country); v = ((r or {}).get("b2b" if kind == "societe" else "b2c") or {}).get(product)
+    zo = X.zoning(product, country)
+    m = re.findall(r"\d+", v or "") if isinstance(v, str) else []
+    if m:
+        return int(m[-1])
+    return int(zo[2]) if zo and zo[2] else 4
+
+
 def delay_text(country: str, kind: str, product: str, lang: str = "fr") -> str:
     """Délai annoncé au client : fiche pays si connue, sinon zoning ; en jours ouvrés après l'enlèvement."""
     r = rule(country)
@@ -93,14 +104,15 @@ def delay_text(country: str, kind: str, product: str, lang: str = "fr") -> str:
     else:
         return "" if lang == "en" else ""
     if lang == "en":
-        return f"{d} working day{'s' if d not in ('1',) else ''} after collection"
-    return f"J+{d} jour{'s' if d not in ('1',) else ''} ouvré{'s' if d not in ('1',) else ''} après l'enlèvement"
+        return f"{d.replace('/', ' to ')} working day{'s' if d not in ('1',) else ''} after collection"
+    return f"{d.replace('/', ' à ')} jour{'s' if d not in ('1',) else ''} ouvré{'s' if d not in ('1',) else ''} après l'enlèvement"
 
 
 # ================================================================== état export d'une commande (JSON)
 def get_state(o) -> dict:
     try:
-        return json.loads(o.export_json or "{}") or {}
+        d = json.loads(o.export_json or "{}") or {}
+        return d if isinstance(d, dict) else {}
     except Exception:
         return {}
 
@@ -123,7 +135,12 @@ def set_info(o, by: str = None, **fields) -> None:
     set_state(o, st)
 
 
+MANUAL_CHECK_KEYS = {"recipient_ok", "eur1", "signed", "vat", "vat_oss", "excise", "cleared", "proof", "vat_checked", "perimeter_ok"}
+
+
 def toggle_check(o, key: str, done: bool, by: str = None, note: str = None) -> None:
+    if key not in MANUAL_CHECK_KEYS:
+        return
     st = get_state(o)
     ch = st.setdefault("checks", {})
     if done:
@@ -156,6 +173,9 @@ def line_values(o) -> List[dict]:
     out = []
     for l in service.order_lines(o):
         unit = float(l["net"]) if l.get("net") is not None else float(l.get("price") or 0)
+        if unit <= 0:                                            # bouteille offerte ou remise 100 % : la douane exige une valeur réaliste → prix catalogue
+            it0 = imap.get(l.get("sku"))
+            unit = float(l.get("price") or 0) or float((it0.price if it0 and it0.price else 0) or 0)
         u = ht(unit, o)
         out.append({"sku": l.get("sku"), "title": l.get("title"), "qty": int(l.get("qty") or 0), "unit_ttc": unit, "unit_ht": u, "total_ht": round(u * int(l.get("qty") or 0), 2),
                     "item": imap.get(l.get("sku"))})
@@ -231,17 +251,25 @@ def set_signature(data: Optional[bytes], name: str = "") -> None:
 
 
 def colour_from_sku(sku: str) -> Optional[str]:
-    """Convention des références oWine : lettre de couleur avant « B<millésime> » (…RB14 = rouge, …BB23 = blanc)."""
-    m = re.search(r"([RB])B\d{2}$", (sku or "").upper())
+    """Convention des références oWine : lettre de couleur puis format puis millésime (…RB14 = rouge bouteille 2014, …BB23 = blanc, …RM19 = rouge magnum) ;
+    nouvelles références « D…-…-R23 » / « -B23 »."""
+    u = (sku or "").upper()
+    m = re.search(r"([RB])[BM]\d{2}$", u) or re.search(r"-([RB])\d{2}$", u)
     return {"R": "rouge", "B": "blanc"}.get(m.group(1)) if m else None
 
 
+RED_WORDS = ("rouge", "pinot noir", "red", "gevrey", "chambertin", "morey-saint-denis", "morey saint denis", "chambolle", "vosne", "nuits-saint-georges", "nuits saint georges", "pommard", "volnay",
+             "clos de la roche", "clos saint-denis", "clos vougeot", "musigny", "échezeaux", "echezeaux", "richebourg", "romanée", "romanee", "bonnes-mares", "clos des lambrays", "corton bressandes", "aloxe")
+WHITE_WORDS = ("blanc", "chardonnay", "aligoté", "aligote", "white", "meursault", "corton-charlemagne", "bâtard-montrachet", "batard-montrachet", "chevalier-montrachet", "criots-bâtard", "bienvenues-bâtard", "le montrachet")
+
+
 def colour_from_title(title: str) -> Optional[str]:
-    t = (title or "").lower()
-    if any(w in t for w in ("blanc", "chardonnay", "aligoté", "aligote", "montrachet", "meursault", "corton-charlemagne", "white")):
-        return "blanc"
-    if any(w in t for w in ("rouge", "pinot noir", "red")):
+    """Couleur déduite du nom ; « Chassagne-Montrachet », « Puligny-Montrachet », Saint-Aubin, Santenay… existent en rouge et en blanc : pas de déduction (à confirmer)."""
+    t = " " + (title or "").lower() + " "
+    if any(w in t for w in RED_WORDS):
         return "rouge"
+    if any(w in t for w in WHITE_WORDS):
+        return "blanc"
     return None
 
 
@@ -255,10 +283,10 @@ def customs_row(it) -> dict:
         missing.append("degré")
     if not colour:
         missing.append("couleur")
-    if not it.millesime:
-        missing.append("millésime")
+    if it.millesime is None:
+        missing.append("millésime")                              # 0 = sans millésime (NV), accepté
     return {"sku": it.sku, "title": it.title, "colour": colour, "colour_saved": bool(it.couleur), "abv": it.abv, "abv_status": it.abv_status or ("estime" if it.abv else None), "abv_source": it.abv_source,
-            "confirmed_at": it.customs_confirmed_at, "confirmed_by": it.customs_confirmed_by, "volume_cl": it.volume_cl or 75, "hs": hs, "hs_saved": bool(saved_hs and saved_hs != X.HS_GENERIC),
+            "confirmed_at": it.customs_confirmed_at, "confirmed_by": it.customs_confirmed_by, "volume_cl": it.volume_cl or 75, "hs": hs, "hs_saved": bool(saved_hs and saved_hs != X.HS_GENERIC), "nv": it.millesime == 0,
             "origin": (it.origin or X.ORIGIN_DEFAULT).upper(), "vintage": it.millesime, "vigneron": it.vigneron, "appellation": it.appellation, "missing": missing, "kind": it.kind, "status": it.status}
 
 
@@ -274,11 +302,27 @@ def save_customs_rows(form: dict) -> int:
     skus = {k.split("_", 1)[1] for k in form if k.startswith(("abv_", "colour_", "hs_", "origin_", "vol_"))}
     for sku in skus:
         fields = {}
-        v = (form.get(f"abv_{sku}") or "").replace(",", ".").strip()
-        fields["abv"] = float(v) if v else None
+        vint = (form.get(f"vintage_{sku}") or "").strip().upper()
+        if vint in ("NV", "SM", "S.M.", "0"):
+            fields["millesime"] = 0
+        elif re.fullmatch(r"(19|20)\d{2}", vint):
+            fields["millesime"] = int(vint)
+        v = re.sub(r"[^0-9.,]", "", (form.get(f"abv_{sku}") or "")).replace(",", ".").strip()
+        try:
+            fields["abv"] = float(v) if v else None
+        except ValueError:
+            fields["abv"] = None
+        if fields["abv"] is not None and not (5 <= fields["abv"] <= 25):
+            fields["abv"] = None
         cur = service.get_item(sku)
         if cur and fields["abv"] is not None and (cur.abv or 0) != fields["abv"]:
             fields["abv_source"] = "saisi à la main"; fields["abv_status"] = "estime" if cur.abv_status != "confirme" else "confirme"
+            if cur.abv_status == "confirme":
+                log = service._setting_get(LOG_KEY) or []
+                log.insert(0, {"at": service.now_local().strftime("%d/%m/%Y %H:%M"), "by": form.get("_by") or "?", "sku": sku, "title": cur.title, "abv": fields["abv"], "colour": cur.couleur, "hs": cur.hs_code, "source": f"degré confirmé modifié à la main ({cur.abv} → {fields['abv']})"})
+                service._setting_set(LOG_KEY, log[:500])
+        if cur and fields["abv"] is None and cur.abv_status == "confirme":
+            fields["abv_status"] = "estime"; fields["customs_confirmed_at"] = None; fields["customs_confirmed_by"] = None   # degré effacé : plus confirmé
         c = (form.get(f"colour_{sku}") or "").strip().lower()
         if c:
             fields["couleur"] = c
@@ -389,16 +433,28 @@ def state(o, cs) -> dict:
     vies = None
     if zn.get("vat_required") and k == "societe":
         vies = vies_check(o.vat_number) if o.vat_number else {"valid": False, "error": "n° de TVA absent"}
-        if vies.get("valid") is False:
+        if vies.get("na"):
+            per_issues.append(f"n° de TVA non européen ({o.vat_number}) : une société de l'UE doit avoir un n° intracommunautaire")
+        elif vies.get("valid") is False:
             per_issues.append(f"n° de TVA intracommunautaire invalide ({vies.get('error') or o.vat_number})")
-        elif vies.get("valid") is None and not vies.get("na"):
+        elif vies.get("valid") is None:
             per_issues.append(f"VIES injoignable : {vies.get('error')} — vérifier à la main puis cocher « TVA vérifiée »")
-    vat_manual = bool((checks_done.get("vat_checked") or {}).get("done"))
-    add("perimeter", f"Périmètre ouvert : {zlabel}" if zopen else "Périmètre de vente", ok=not per_issues or (vat_manual and all("TVA" in x or "VIES" in x for x in per_issues)),
-        detail=" · ".join(per_issues) if per_issues else ((f"TVA {o.vat_number} valide sur VIES : {vies.get('name') or ''}" if vies and vies.get('valid') else "règles de la zone respectées")))
-    add("vat_checked", "N° de TVA vérifié à la main (VIES indisponible)", manual=True, blocking=False, when=bool(vies) and vies.get("valid") is None)
+    vat_manual = bool((checks_done.get("vat_checked") or {}).get("done")) and bool((checks_done.get("vat_checked") or {}).get("note"))
+    per_manual = bool((checks_done.get("perimeter_ok") or {}).get("done")) and bool((checks_done.get("perimeter_ok") or {}).get("note"))
+    vat_issues = [x for x in per_issues if "TVA" in x or "VIES" in x]; other_issues = [x for x in per_issues if x not in vat_issues]
+    per_ok = (not other_issues or per_manual) and (not vat_issues or vat_manual)
+    add("perimeter", f"Périmètre ouvert : {zlabel}" if zopen else "Périmètre de vente", ok=per_ok,
+        detail=" · ".join(per_issues) + (" — dérogation notée" if per_ok and per_issues else "") if per_issues else ((f"TVA {o.vat_number} valide sur VIES" + (f" : {vies.get('name')}" if vies and vies.get('name') else "")) if vies and vies.get('valid') else "règles de la zone respectées"))
+    add("perimeter_ok", "Dérogation : commande acceptée hors périmètre (motif obligatoire)", manual=True, blocking=False, when=bool(other_issues))
+    add("vat_checked", "N° de TVA vérifié à la main (motif obligatoire : VIES indisponible, immatriculation récente…)", manual=True, blocking=False, when=bool(vies) and vies.get("valid") is not True)
+    if (o.company or o.billing_company) and k == "particulier":
+        add("company_hint", f"Nom de société dans l'adresse ({o.company or o.billing_company}) mais commande traitée en particulier : confirmer le type (réglages ci-dessous)", ok=bool(o.customer_type), blocking=False)
+    if z != "FR" and (o.tax_total or 0) > 0:
+        add("vat_collected", f"TVA française encaissée par Shopify : {o.tax_total:.2f} € — à rembourser au client ou à régulariser sur la facture Pennylane (réglage Taxes « exclure la TVA selon le pays »)", ok=False, blocking=False)
     rec = _recipient_issues(o)
-    add("recipient", "Coordonnées du destinataire complètes", ok=not rec, detail=" · ".join(rec) if rec else "adresse, téléphone, e-mail" + (", EORI / TVA" if k == "societe" else ""))
+    rec_manual = bool((checks_done.get("recipient_ok") or {}).get("done"))
+    pobox_only = bool(rec) and all("boîte postale" in x for x in rec)
+    add("recipient", "Coordonnées du destinataire complètes", ok=not rec or (pobox_only and rec_manual), detail=" · ".join(rec) if rec else "adresse, téléphone, e-mail" + (", EORI / TVA" if k == "societe" else ""))
     add("recipient_ok", "Coordonnées confirmées (client ou formulaire douane)", manual=True, blocking=False, detail="formulaire public envoyé le " + str(st.get("customs_form", {}).get("sent_at") or "—") + (", rempli le " + str(st["customs_form"]["submitted_at"]) if st.get("customs_form", {}).get("submitted_at") else ""))
     if z == "EXPORT":
         wi = _wine_issues(o, cs)
@@ -418,20 +474,27 @@ def state(o, cs) -> dict:
         add("limit", f"Chaque envoi ≤ {lim['max_bottles']} bouteilles" + (f" et ≤ {lim['max_kg']} kg" if lim.get("max_kg") else ""), ok=not bad, detail=("cartons trop lourds : " + ", ".join(bad)) if bad else "respecté")
     add("labels", "Étiquettes Chronopost (n° de colis) sur tous les cartons", ok=bool(cs) and all(x.tracking for x in cs), detail="saisir le produit " + X.PRODUCTS[p]["label"] + " sur chronopost.fr ; les numéros figurent sur la facture")
     if z == "EXPORT":
+        s_ = settings()
+        add("eori", "N° EORI d'oWine renseigné (Réglages douane)", ok=bool(re.fullmatch(r"FR[0-9A-Z]{9,17}", (s_.get("eori") or "").replace(" ", "").upper())), detail=s_.get("eori") or "obligatoire : sans EORI aucune exportation n'est possible")
         uw = unconfirmed_wines(o, cs)
-        add("abv", "Degrés d'alcool confirmés (étiquette) pour tous les vins de la commande", ok=not uw,
-            detail=("à confirmer : " + " · ".join(f"{w['title']} ({w['abv']:g} % estimé)" if w.get("abv") else w["title"] for w in uw) + " — demander à Alix (bouton) ou confirmer sur la page Douane") if uw else "tous confirmés"
-            + (f" · demande envoyée à Alix le {st.get('abv_request_sent_at')}" if st.get("abv_request_sent_at") and uw else ""))
+        sent = st.get("abv_request_sent_at")
+        add("abv", "Degrés d'alcool confirmés (étiquette) pour tous les vins de la commande", ok=not uw, blocking=False,
+            detail=(("à confirmer : " + " · ".join(f"{w['title']} ({w['abv']:g} % estimé)" if w.get("abv") else w["title"] for w in uw)
+                     + (f" — demande incluse dans l'e-mail Alix / envoyée le {sent}" if sent else " — la demande part dans l'e-mail de préparation à Alix ; saisir la réponse ci-dessous")) if uw else "tous confirmés"))
         final = bool(inv.get("final"))
-        add("invoice", "Facture commerciale définitive générée (3 exemplaires, numéros de colis)", ok=final,
-            detail=(f"version {inv.get('version')} du {inv.get('at')}" + ("" if inv.get("final") else " — PROVISOIRE : regénérer après les étiquettes")) if inv else "à générer une fois les étiquettes reçues")
+        add("invoice", "Facture commerciale définitive générée (numéros de colis, degrés confirmés)", ok=final and not uw, blocking=False,
+            detail=(f"version {inv.get('version')} du {inv.get('at')}" + ("" if inv.get("final") else " — PROVISOIRE : regénérer après les étiquettes et les degrés")) if inv else "à générer une fois les étiquettes reçues ; une version provisoire part avec l'e-mail de préparation")
+        add("invoice_alix", "Facture définitive envoyée à Alix (3 exemplaires à imprimer avant l'enlèvement)", ok=bool(st.get("final_invoice_sent_at")) or (bool(o.sent_alix_at) and final and not uw and not st.get("final_invoice_pending")), blocking=False,
+            detail=(f"envoyée le {st['final_invoice_sent_at']}" if st.get("final_invoice_sent_at") else ("partie avec l'e-mail de préparation" if o.sent_alix_at and final and not uw and not st.get("final_invoice_pending") else "bouton « Envoyer la facture définitive à Alix » une fois les degrés saisis et les étiquettes reçues")))
         add("signature", "Signature de l'exportateur apposée (image enregistrée dans Réglages douane)", ok=bool(signature()), blocking=False, when=not (checks_done.get("signed") or {}).get("done"),
-            detail="sans image, les 3 exemplaires imprimés par Alix ne sont pas signés : charger une signature, ou signer à la main et cocher ci-dessous")
+            detail="l'image signe la facture ; la déclaration d'origine préférentielle exige une signature manuscrite originale (sauf statut d'exportateur agréé) : faire signer les 3 exemplaires à la main ou obtenir le statut EA")
         add("signed", "Facture signée à la main (si pas de signature enregistrée)", manual=True, when=not signature(), blocking=False)
         add("vat", "Facture Pennylane sans TVA (exonération art. 262 I CGI, mention portée) vérifiée", manual=True, blocking=False, detail="le connecteur Shopify crée la facture au paiement : contrôler le taux 0 % export et la mention d'exonération")
     if z == "UE":
-        add("vat_oss", "TVA du pays de destination appliquée (guichet OSS)", manual=True, blocking=False, detail="vente à distance intracommunautaire de produits soumis à accise : TVA du pays de destination dès le 1er euro, déclarée via l'OSS")
-        add("excise", "Accises : représentant fiscal / document d'accompagnement", manual=True, blocking=False, detail="particulier : accises dues dans le pays de destination via un représentant fiscal ; société : e-DSA (GAMMA) — noter la référence")
+        add("vat_oss", "TVA : autoliquidation (société avec n° de TVA valide) ou TVA du pays de destination (particulier, guichet OSS)", manual=True, blocking=False,
+            detail="société : facture Pennylane HT, mention « autoliquidation, art. 262 ter I CGI » et n° de TVA du client ; particulier : TVA du pays de destination via l'OSS (application du seuil de 10 000 € aux produits soumis à accise : à confirmer avec l'expert-comptable)")
+        add("excise", "Accises : document d'accompagnement (DAES / DAE émis par Alix) — référence notée", manual=True, blocking=False,
+            detail="société : DAES (droits acquittés, expéditeur certifié → destinataire certifié SEED) ou DAE (suspension, vers un entrepositaire agréé) selon le régime du stock ; particulier : accises dues dans le pays de destination (représentant fiscal si le pays l'exige)")
     add("alix", "E-mail Alix envoyé (facture ×3 sur le colis A, stickers multi-pièces)", ok=bool(o.sent_alix_at), blocking=False)
     add("client", "E-mail client envoyé (DAP, délais, suivi)", ok=bool(o.sent_client_at), blocking=False)
     if z == "EXPORT":
@@ -487,10 +550,14 @@ def invoice_data(o, cs) -> dict:
                 a = agg.setdefault(l["sku"], {**row, "qty": 0, "unit_ht": 0.0})
                 a["qty"] += int(l["qty"])
         # prix unitaire HT : ligne de commande correspondante (sinon coût ÷ 0 interdit → prix catalogue)
-        lv = {l["sku"]: l for l in tot_all["lines"]}
+        # prix unitaire HT par SKU = moyenne pondérée des lignes de commande (un même vin peut figurer sur plusieurs lignes à des prix différents)
+        agg_ht: Dict[str, List[float]] = {}
+        for l in tot_all["lines"]:
+            if l.get("sku"):
+                a_ = agg_ht.setdefault(l["sku"], [0.0, 0]); a_[0] += l["total_ht"]; a_[1] += l["qty"]
+        lv = {k: (v[0] / v[1] if v[1] else 0.0) for k, v in agg_ht.items()}
         for sku, a in agg.items():
-            l = lv.get(sku)
-            a["unit_ht"] = l["unit_ht"] if l else ht(float((imap.get(sku).price if imap.get(sku) and imap.get(sku).price else 0) or 0), o)
+            a["unit_ht"] = round(lv[sku], 2) if sku in lv else ht(float((imap.get(sku).price if imap.get(sku) and imap.get(sku).price else 0) or 0), o)
             a["total_ht"] = round(a["unit_ht"] * a["qty"], 2)
             a["desc"] = wine_description(a)
             col_ = {"rouge": "Vin rouge / Red wine", "blanc": "Vin blanc / White wine", "rosé": "Vin rosé / Rosé wine", "rose": "Vin rosé / Rosé wine"}.get(a.get("colour") or "", "Vin / Wine")
@@ -501,8 +568,15 @@ def invoice_data(o, cs) -> dict:
         nb = sum(x["qty"] for x in lines)
         share = (nb / tot_all["bottles"]) if tot_all["bottles"] else 1
         ship_ht = round(tot_all["shipping_ht"] * share, 2); ins = round(tot_all["insurance_ht"] * share, 2)
+        if i == len(ships) - 1:                                    # le résidu d'arrondi du prorata va sur le dernier envoi
+            ship_ht = round(tot_all["shipping_ht"] - sum(x["shipping_ht"] for x in out["shipments"]), 2)
+            ins = round(tot_all["insurance_ht"] - sum(x["insurance_ht"] for x in out["shipments"]), 2)
         gross = round(sum(c.weight_kg for c in cartons), 1)
         pack = round(sum((config.PACKAGING.get(c.box_sku) or {}).get("kg", 0) for c in cartons), 2)
+        if i == len(ships) - 1 and lines and abs(tot_all["bottles"] - sum(x["qty"] for s_ in out["shipments"] for x in s_["lines"]) - nb) < 1e-9:
+            resid = round(tot_all["goods_ht"] - sum(s_["goods_ht"] for s_ in out["shipments"]) - goods, 2)   # résidu d'arrondi des prix unitaires : porté sur la dernière ligne
+            if abs(resid) <= 0.05 * max(1, len(lines)):
+                lines[-1]["total_ht"] = round(lines[-1]["total_ht"] + resid, 2); goods = round(goods + resid, 2)
         out["shipments"].append({"no": out["no"] + (f"-{sh['suffix']}" if sh["suffix"] else ""), "suffix": sh["suffix"], "parcels": [{"ref": c.ref, "tracking": c.tracking or "", "pos": f"{j + 1}/{len(cartons)}",
                                  "bottles": sum(int(l['qty']) for l in service.carton_lines(c)), "kg": c.weight_kg, "box": c.box_sku} for j, c in enumerate(cartons)],
                                  "lines": lines, "goods_ht": goods, "shipping_ht": ship_ht, "insurance_ht": ins, "total_ht": round(goods + ship_ht + ins, 2), "bottles": nb,
@@ -517,6 +591,13 @@ def store_invoice(o, pdf: bytes, by: str = None, final: bool = True) -> dict:
     service._setting_set(INV_KEY.format(name=o.name), {"b64": base64.b64encode(pdf).decode(), "name": f"Facture commerciale {invoice_number(o)}.pdf", **meta})
     st["invoice"] = meta; set_state(o, st)
     return meta
+
+
+def invalidate_invoice(o) -> None:
+    """Cartons ou numéros de colis modifiés : la facture archivée n'est plus définitive (à regénérer avant l'envoi)."""
+    st = get_state(o)
+    if (st.get("invoice") or {}).get("final"):
+        st["invoice"]["final"] = False; st["invoice"]["stale"] = True; set_state(o, st)
 
 
 def stored_invoice(o) -> Optional[Tuple[str, bytes]]:
@@ -557,7 +638,7 @@ def mark_form_sent(o, by: str = None) -> None:
 
 
 def apply_customs_form(o, data: dict, ip: str = "") -> None:
-    g = lambda k: (data.get(k) or "").strip()
+    g = lambda k: str(data.get(k) or "").strip()[:200]
     kind = "societe" if g("kind") == "societe" else "particulier"
     o.customer_type = kind
     if g("phone"):
@@ -568,6 +649,8 @@ def apply_customs_form(o, data: dict, ip: str = "") -> None:
         o.company = g("company") or o.company
         o.vat_number = g("vat") or o.vat_number
         o.eori = g("eori") or o.eori
+        if g("excise_no"):
+            st0 = get_state(o); st0["excise_no"] = g("excise_no"); o.export_json = json.dumps(st0, ensure_ascii=False)
     else:
         o.tax_id = g("tax_id") or o.tax_id
     if g("address2") and g("address2") not in (o.address2 or ""):
@@ -579,16 +662,43 @@ def apply_customs_form(o, data: dict, ip: str = "") -> None:
     service.close_tasks_by_key(f"customs_info:{o.name}")
 
 
+def refuse_order(o, by: str = None, reason: str = "") -> dict:
+    """Commande hors périmètre refusée : annulée dans Vaelan, tâche « rembourser dans Shopify », e-mail FR/EN au client (texte renvoyé)."""
+    st = get_state(o); st["refused"] = {"at": service.now_local().strftime("%d/%m/%Y %H:%M"), "by": by, "reason": reason}
+    o.status = "annulee"; set_state(o, st)
+    for pfx in ("customs", "customs_data", "customs_info"):
+        service.close_tasks_by_key(f"{pfx}:{o.name}")
+    service.add_task("other", f"{o.name} : rembourser la commande dans Shopify (refusée : {reason or 'hors périmètre'})", ref=o.name, key=f"refund:{o.name}",
+                     details="Shopify › Commandes › Rembourser (montant total, restockage). La commande est annulée dans Vaelan ; rien n'a été décompté du stock.")
+    lang = "en" if (o.locale or "fr").lower()[:2] != "fr" else "fr"
+    first = (o.customer or "").split(" ")[0]; cname = X.country_name(o.country, lang)
+    if lang == "en":
+        subject = f"Your oWine order {o.name}: we cannot ship it yet"
+        body = (f"Hello {first},\n\nThank you for your order {o.name}. Unfortunately we cannot ship it to {cname} as placed" + (f" ({reason})" if reason else "") +
+                ".\n\nWe currently deliver to private customers in Switzerland (up to 6 bottles, one case) and to companies in the European Union with a valid EU VAT number; other destinations are coming soon.\n\n"
+                "We are refunding your payment in full today. If you would like to adjust your order to fit these options, reply to this e-mail and we will help you.\n\nWith our apologies,\nJean-Sébastien CHEUNG-AH-SEUNG · oWine")
+    else:
+        subject = f"Votre commande oWine {o.name} : nous ne pouvons pas encore l'expédier"
+        body = (f"Bonjour {first},\n\nMerci pour votre commande {o.name}. Nous ne pouvons malheureusement pas l'expédier en {cname} telle qu'elle a été passée" + (f" ({reason})" if reason else "") +
+                ".\n\nNous livrons aujourd'hui les particuliers en Suisse (6 bouteilles au plus, un carton) et les sociétés de l'Union européenne disposant d'un n° de TVA intracommunautaire valide ; les autres destinations arrivent prochainement.\n\n"
+                "Nous vous remboursons intégralement dès aujourd'hui. Si vous souhaitez adapter votre commande à ces options, répondez à cet e-mail et nous vous aiderons.\n\nAvec nos excuses,\nJean-Sébastien CHEUNG-AH-SEUNG · oWine")
+    return {"subject": subject, "body": body, "lang": lang}
+
+
 # ================================================================== tâches export (synchro) et Shopify : codes SH, origine, poids des sélections
 def export_tasks(log=None) -> int:
     """Commandes internationales à traiter → tâche « formalités » ; vins sans données douanières utilisés par ces commandes → tâche « données douanières »."""
     log = log or (lambda m: None); n = 0
     for o in service.orders():
-        if o.status in ("cloturee", "annulee") or zone(o.country) == "FR":
+        if zone(o.country) == "FR":
+            continue
+        if o.status in ("cloturee", "annulee"):
+            for pfx in ("customs", "customs_data", "customs_info"):
+                service.close_tasks_by_key(f"{pfx}:{o.name}")
             continue
         if o.status in ("a_traiter", "cartons", "etiquettes"):
-            z = zone(o.country)
-            if service.add_task("customs", f"{o.name} : commande {'export (douane)' if z == 'EXPORT' else 'intracommunautaire'} vers {X.country_name(o.country)} — suivre les étapes export sur la commande",
+            z = zone(o.country); zopen_, _ = zone_open(o.country, dest_kind(o))
+            if service.add_task("customs", ("HORS PÉRIMÈTRE — " if not zopen_ else "") + f"{o.name} : commande {'export (douane)' if z == 'EXPORT' else 'intracommunautaire'} vers {X.country_name(o.country)} — " + ("accepter par dérogation ou refuser et rembourser" if not zopen_ else "suivre les étapes export sur la commande"),
                                 ref=o.name, key=f"customs:{o.name}", details="Zone " + zone_label(z) + ". Contrôles automatiques et étapes à cocher sur la page de la commande."):
                 n += 1
             if z == "EXPORT":
@@ -813,9 +923,9 @@ def rate_grid() -> List[dict]:
     for z in zones():
         if z["key"] == "FR" or not (z.get("particulier") or z.get("societe")):
             continue
-        maxb = z.get("max_bottles") or 18
-        steps = [n for n in (6, 12, 18) if n <= maxb]
-        kind = "particulier" if z.get("particulier") else "societe"
+        maxb = int(z.get("max_bottles") or 18)
+        steps = list(range(6, min(maxb, 36) + 1, 6)) or [6]
+        kind = "societe" if z.get("societe") else "particulier"     # coût le plus élevé (DAE pour une société UE) quand la zone est ouverte aux deux
         rows = []
         for n in steps:
             costs = [chronopost_cost(c, z["product"], n, kind=kind) for c in z["countries"]]
@@ -829,7 +939,7 @@ def rate_grid() -> List[dict]:
             step = rs["round_to"] or 1.0
             price = math.ceil(price / step) * step
             rows.append({"bottles": n, "weight": n * config.BOTTLE_KG, "chronopost": worst["total"], "alix": al["total"], "cost": round(cost, 2), "price": round(price, 2),
-                         "window": (round(n * config.BOTTLE_KG - 0.1, 2), round(n * config.BOTTLE_KG + 0.1, 2))})
+                         "window": (round(n * config.BOTTLE_KG - 0.1, 2), round(n * config.BOTTLE_KG + 0.4, 2))})     # + 0,4 kg : tolère le poids du colis par défaut de Shopify
         out.append({"zone": z, "kind": kind, "rows": rows})
     return out
 
@@ -856,7 +966,7 @@ def shopify_shipping_plan() -> dict:
     for e in lg["locationGroupZones"]["edges"]:
         zz = e["node"]["zone"]
         codes = [x["code"]["countryCode"] or ("ROW" if x["code"]["restOfWorld"] else "?") for x in zz["countries"]]
-        current.append({"id": zz["id"], "name": zz["name"], "countries": codes, "keep": set(codes) <= {"FR", "MC"} or codes == ["FR"],
+        current.append({"id": zz["id"], "name": zz["name"], "countries": codes, "keep": bool({"FR", "MC"} & set(codes)),        # toute zone contenant la France est conservée
                         "methods": [{"name": m["node"]["name"], "price": ((m["node"]["rateProvider"] or {}).get("price") or {}).get("amount"),
                                      "conditions": [(x["field"], x["operator"], (x["conditionCriteria"] or {}).get("value")) for x in m["node"]["methodConditions"]]} for m in e["node"]["methodDefinitions"]["edges"]]})
     grid = rate_grid()
@@ -875,7 +985,7 @@ def shopify_shipping_apply(log=None) -> str:
     plan = shopify_shipping_plan(); c = service._shopify()
     zones_create = []
     for zc in plan["create"]:
-        zones_create.append({"name": zc["name"], "countries": [{"code": cc} for cc in zc["countries"]],
+        zones_create.append({"name": zc["name"], "countries": [{"code": cc, "includeAllProvinces": True} for cc in zc["countries"]],
                              "methodDefinitionsToCreate": [{"name": m["name"], "active": True, "rateDefinition": {"price": {"amount": m["price"], "currencyCode": "EUR"}},
                                                             "weightConditionsToCreate": [{"criteria": {"value": m["window"][0], "unit": "KILOGRAMS"}, "operator": "GREATER_THAN_OR_EQUAL_TO"},
                                                                                          {"criteria": {"value": m["window"][1], "unit": "KILOGRAMS"}, "operator": "LESS_THAN_OR_EQUAL_TO"}]} for m in zc["methods"]]})
@@ -925,7 +1035,8 @@ def fill_abv_estimates(results: Optional[dict] = None) -> int:
                 continue
             r = (results or {}).get(it.sku) or {}
             if r.get("abv"):
-                it.abv = float(r["abv"]); it.abv_source = f"{'fiche publique' if r.get('match') == 'exact' else 'millésime voisin'} : {r.get('source', '')}"[:200]; it.abv_status = "estime"
+                note = f" — {r['note']}" if r.get("note") else ""
+                it.abv = float(r["abv"]); it.abv_source = f"{'fiche publique' if r.get('match') == 'exact' else 'millésime voisin'} : {r.get('source', '')}{note}"[:300]; it.abv_status = "estime"
             elif not it.abv:
                 it.abv, it.abv_source = estimate_abv(it); it.abv_status = "estime"
             elif not it.abv_status:
@@ -954,6 +1065,8 @@ def confirm_wine(sku: str, by: str, abv: Optional[float] = None, colour: Optiona
             it.couleur = colour_from_sku(it.sku) or colour_from_title(it.title)
         if not it.hs_code or it.hs_code == X.HS_GENERIC:
             it.hs_code = X.CN_BY_COLOUR.get((it.couleur or "").lower(), X.HS_GENERIC)
+        if not it.abv or not it.couleur:
+            return False                                           # pas de confirmation sans degré ni couleur
         it.abv_status = "confirme"; it.abv_source = source or f"confirmé par {by}"
         it.customs_confirmed_at = datetime.utcnow(); it.customs_confirmed_by = by; it.updated_at = datetime.utcnow()
         s.add(it); s.commit()
@@ -1004,6 +1117,7 @@ def abv_request_email(o, cs) -> dict:
 
 # ================================================================== VIES : n° de TVA intracommunautaire (sociétés UE)
 VIES_URL = "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number"
+_VIES_DOWN: Dict[str, datetime] = {}                                 # panne VIES mémorisée 5 min : pas de rafale d'appels à chaque affichage
 
 
 def vies_check(vat: str, force: bool = False) -> dict:
@@ -1013,86 +1127,114 @@ def vies_check(vat: str, force: bool = False) -> dict:
     if len(v) < 4:
         return {"valid": False, "error": "numéro vide ou trop court", "vat": v}
     cc, num = v[:2], v[2:]
-    if cc == "EL":
-        pass
-    if cc not in X.EU or cc == "FR" and False:
-        if cc not in X.EU:
-            return {"valid": None, "error": f"{cc} : hors VIES (pays non membre de l'UE)", "vat": v, "na": True}
+    if cc == "GR":
+        cc = "EL"                                                   # VIES attend le préfixe fiscal grec
+    if cc not in (X.EU | {"EL", "XI"}) or cc == "GR":
+        return {"valid": None, "error": f"{cc} : n° hors VIES (pays non membre de l'UE)", "vat": v, "na": True}
+    if not re.fullmatch(r"[A-Z0-9]{2,13}", num):
+        return {"valid": False, "error": "format invalide", "vat": v}
     key = f"owine:vies:{v}"
     cached = service._setting_get(key)
     if cached and not force:
         try:
-            if (datetime.utcnow() - datetime.fromisoformat(cached["checked_at"])).days < 30:
+            age = (datetime.utcnow() - datetime.fromisoformat(cached["checked_at"])).days
+            if age < (30 if cached.get("valid") else 1):
                 return cached
         except Exception:
             pass
+    down = _VIES_DOWN.get("until")
+    if down and datetime.utcnow() < down and not force:
+        return {"valid": None, "error": "VIES indisponible (réessai dans quelques minutes)", "vat": v}
     try:
         r = httpx.post(VIES_URL, json={"countryCode": cc, "vatNumber": num}, timeout=15, headers={"Accept": "application/json"})
         if r.status_code >= 400:
             return {"valid": None, "error": f"VIES indisponible (HTTP {r.status_code})", "vat": v}
         d = r.json()
-        out = {"vat": v, "valid": bool(d.get("valid")), "name": (d.get("name") or "").strip() or None, "address": (d.get("address") or "").strip().replace("\n", ", ") or None,
-               "checked_at": datetime.utcnow().isoformat(timespec="seconds"), "error": None if d.get("userError") in (None, "VALID", "INVALID") else d.get("userError")}
-        if d.get("userError") in ("MS_UNAVAILABLE", "SERVICE_UNAVAILABLE", "TIMEOUT", "MS_MAX_CONCURRENT_REQ", "GLOBAL_MAX_CONCURRENT_REQ"):
-            out["valid"] = None; out["error"] = f"VIES : {d['userError']} (réessayer)"
+        errs = [e.get("error") for e in (d.get("errorWrappers") or []) if isinstance(e, dict)]
+        err = errs[0] if errs else (d.get("userError") if d.get("userError") not in (None, "VALID", "INVALID") else None)
+        clean = lambda x: None if (x or "").strip() in ("", "---") else (x or "").strip()
+        out = {"vat": v, "valid": bool(d.get("valid")) if not err else None, "name": clean(d.get("name")), "address": (clean(d.get("address")) or "").replace("\n", ", ") or None,
+               "checked_at": datetime.utcnow().isoformat(timespec="seconds"), "error": None}
+        if err == "INVALID_INPUT":
+            out["valid"] = False; out["error"] = "format refusé par VIES"
+        elif err:
+            out["valid"] = None; out["error"] = f"VIES : {err} (réessayer)"          # panne ou saturation : rien n'est mis en cache
+            _VIES_DOWN["until"] = datetime.utcnow() + timedelta(minutes=5)
         else:
             service._setting_set(key, out)
         return out
     except Exception as e:
+        _VIES_DOWN["until"] = datetime.utcnow() + timedelta(minutes=5)
         return {"valid": None, "error": f"VIES injoignable : {type(e).__name__}", "vat": v}
 
 
 # ================================================================== mise en place : liste des actions JS (tâches), textes du site, extrait de thème
 def setup_items() -> List[dict]:
-    s = settings(); rs = rate_settings()
+    s = settings(); rows = customs_rows(); sc = _scopes()
+    need = {"write_shipping", "read_markets", "write_markets", "read_locales", "write_locales", "read_translations", "write_translations", "read_themes", "write_themes"}
     return [
+        {"id": "chronopost", "title": "Écrire à Corentin Menard (Chronopost) : offres, suppléments, carburant, web service, fiches pays", "done": False,
+         "how": "À confirmer par écrit : Chrono Classic (44) et Chrono Express (17) ouverts sur le contrat 84048903 ; supplément douane Suisse 15 € par expédition et prestation de dédouanement export (21 € TTC ?) ; surcharge carburant du mois (à reporter dans Douane › Zones) ; activation du ShippingServiceWS (étiquettes et enlèvement depuis Vaelan) ; fiches pays Norvège, Hong Kong, Singapour ; avenant Chrono Viti B2C US pour plus tard. Ces réponses conditionnent la grille de port."},
+        {"id": "alix", "title": "Alix : régime d'accise du stock, document d'accompagnement pour les sociétés UE, fournitures", "done": False,
+         "how": "Demander à Alix (entrepositaire agréé, n° d'accise FR 107859E0476 à Beaune) : (1) le stock oWine est-il en droits acquittés ou en suspension ? (2) qui émet le document d'accompagnement pour une société de l'UE : DAES via GAMMA2 si droits acquittés (statut d'expéditeur certifié EC, gratuit, même pour un EA) ou DAE si suspension (vers un entrepositaire agréé) — 15 € HT au tarif Alix ; (3) confirmer qu'Alix lit le degré sur l'étiquette à la préparation et le renvoie par e-mail ; (4) commander les pochettes Chronopost réf. 2010 et les stickers multi-pièces réf. 1068 (gratuits, espace client chronopost.fr). Dans tous les cas le client européen doit lui-même avoir un statut SEED (destinataire certifié ou entrepositaire) : un n° de TVA ne suffit pas — son n° d'accise est demandé dans le formulaire douane. Le pôle d'action économique de la douane de Dijon tranche le régime."},
         {"id": "eori", "title": "Obtenir le n° EORI d'oWine et le saisir dans Réglages douane", "done": bool(s.get("eori")),
-         "how": "douane.gouv.fr › Services en ligne › EORI › « Demander un numéro EORI » (gratuit, réponse sous quelques jours ; format FR + SIRET). Puis page Douane › Exportateur › N° EORI. Sans EORI, aucune facture commerciale n'est valable."},
-        {"id": "signature", "title": "Charger une image de votre signature (PNG)", "done": bool(signature()),
-         "how": "Page Douane › Exportateur › Signature. Elle est apposée sur les 3 exemplaires de chaque facture commerciale ; sans elle, Alix imprime des factures non signées."},
+         "how": "douane.gouv.fr › Services en ligne › SOPRANO-EORI › « Demander un numéro EORI » (gratuit, actif 24 h après délivrance ; depuis 2023 le numéro est au SIREN : FR928409887). Puis page Douane › Exportateur › N° EORI. Sans EORI, aucune facture commerciale n'est valable."},
         {"id": "legal", "title": "Compléter SIRET et capital social (pied de facture)", "done": bool(s.get("siret") and s.get("capital")),
          "how": "Page Douane › Exportateur : SIRET (extrait Kbis) et capital (50 000 € au contrat Chronopost). Le RCS et le n° de TVA sont déjà renseignés."},
-        {"id": "abv", "title": "Valider les degrés d'alcool des vins (ou laisser Alix les confirmer à la première commande)", "done": all(r.get("abv") for r in customs_rows()),
-         "how": "Page Douane › Vins : les degrés sont pré-remplis (fiches publiques ou estimation). Cochez « Confirmer » pour les vins dont vous connaissez l'étiquette ; pour les autres, l'e-mail « degrés à confirmer » est envoyé à Alix à la première commande internationale."},
-        {"id": "scopes", "title": "Accorder à l'application Vaelan les droits Shopify manquants", "done": False,
-         "how": "shopify.dev › Dev Dashboard › app Vaelan › Configuration › Access scopes : ajouter write_shipping, read_markets, write_markets, read_locales, write_locales, read_translations, write_translations, read_themes, write_themes, read_legal_policies. Enregistrer puis réinstaller l'app sur la boutique (Home › Install). Vaelan pourra alors écrire la grille de port, publier l'anglais et traduire."},
+        {"id": "signature", "title": "Charger une image de votre signature (PNG)", "done": bool(signature()),
+         "how": "Page Douane › Exportateur › Signature : apposée sur la facture commerciale. La déclaration d'origine préférentielle exige en plus une signature manuscrite originale (ou le statut d'exportateur agréé, voir plus bas)."},
+        {"id": "ea", "title": "Demander le statut d'exportateur agréé (EA) au pôle d'action économique de la douane de Dijon", "done": False,
+         "how": "Statut gratuit : la déclaration d'origine sur facture n'a plus besoin de signature manuscrite et le plafond de 6 000 € disparaît. En attendant, faire signer à la main les 3 exemplaires, ou accepter que le vin paie le droit de douane plein à destination (faible pour la Suisse)."},
+        {"id": "scopes", "title": "Accorder à l'application Vaelan les droits Shopify manquants", "done": need <= sc if sc else False,
+         "how": "shopify.dev › Dev Dashboard › app Vaelan › Configuration › Access scopes : ajouter write_shipping, read_markets, write_markets, read_locales, write_locales, read_translations, write_translations, read_themes, write_themes. Enregistrer puis réinstaller l'app sur la boutique (Home › Install). Vaelan pourra alors écrire la grille de port, publier l'anglais et traduire. Manquants : " + (", ".join(sorted(need - sc)) if sc else "inconnus (Shopify injoignable)") + "."},
+        {"id": "abv", "title": "Vins : valider les degrés connus, laisser Alix confirmer les autres", "done": bool(rows) and all(r.get("abv") for r in rows),
+         "how": "Page Douane › Vins : les degrés sont pré-remplis (fiche publique du domaine ou estimation) ; cochez « Confirmer » pour ceux dont vous connaissez l'étiquette. Pour les autres, l'e-mail de préparation à Alix demande le degré lu sur l'étiquette et vous saisissez la réponse sur la commande : un vin confirmé n'est plus jamais redemandé. Deux valeurs basses (12 %) sont signalées à vérifier."},
+        {"id": "weights", "title": "Vérifier que chaque article vendable pèse 1,5 kg par bouteille dans Shopify", "done": False,
+         "how": "La grille de port au poids ne fonctionne que si le poids du panier vaut 1,5 kg × bouteilles : Douane › Shopify produits › « Écrire dans Shopify » corrige les sélections (0 kg) ; vérifier à la main les magnums (3 kg) et tout article hors vin (fournitures) qui ne doit pas être vendable à l'international. Paramètres › Expédition › Colis : poids du colis par défaut = 0 kg."},
         {"id": "customs_shopify", "title": "Écrire dans Shopify les codes SH, l'origine et le poids des sélections", "done": False,
-         "how": "Page Douane › Shopify › « Écrire dans Shopify » (après les degrés). Les codes 22042113 / 22042143 et l'origine FR figurent sur les documents Shopify ; les sélections passent de 0 kg à 1,5 kg par bouteille (sinon la grille de port au poids est fausse)."},
-        {"id": "zones", "title": "Vérifier les zones ouvertes et écrire la grille de port dans Shopify", "done": False,
-         "how": "Page Douane › Zones : particuliers en Suisse (6 bouteilles), sociétés UE Ouest (TVA intracommunautaire). Vérifier la marge et la surcharge carburant du mois, puis « Écrire dans Shopify » : les zones UE (22 €) et International (29 €) sont remplacées par des tarifs par carton de 6 (fenêtre de poids ± 0,1 kg : 9 kg, 18 kg…) — un panier de 9 bouteilles ou de 2 cartons en Suisse n'a plus aucun tarif et ne peut pas être payé. Sans write_shipping : reproduire la grille à la main dans Paramètres › Expédition et livraison."},
-        {"id": "checkout", "title": "Paiement : téléphone obligatoire, société et adresse ligne 2 affichées", "done": False,
-         "how": "Shopify › Paramètres › Paiement › Informations client : « Numéro de téléphone de l'adresse d'expédition : Obligatoire » ; « Nom de l'entreprise : Facultatif » ; « Adresse ligne 2 : Facultatif ». Chronopost exige le téléphone à l'international."},
+         "how": "Page Douane › Shopify produits › « Écrire dans Shopify ». Les codes 22042113 / 22042143 et l'origine FR figurent sur les documents Shopify ; les sélections passent de 0 kg à 1,5 kg par bouteille."},
+        {"id": "markets", "title": "Marchés Shopify : Suisse et Union européenne actifs, tout le reste inactif", "done": False,
+         "how": "Shopify › Paramètres › Marchés : « Suisse » (CH, LI) et « Union européenne » (BE LU NL DE IT ES PT AT IE) actifs, en euros, langues fr + en ; désactiver tous les autres pays (AE AU CA HK IL JP KR MY NZ SG US GB NO…) : ils n'apparaissent plus dans le sélecteur de pays ni au paiement. Un pays inactif n'a pas de message « prochainement » : le texte des options de livraison (FAQ, panier) le dit."},
         {"id": "taxes", "title": "Taxes : exclure la TVA française selon le pays du client", "done": False,
-         "how": "Shopify › Paramètres › Taxes et droits › « Inclure ou exclure les taxes selon le pays du client » : activer. Un client suisse ou une société européenne paie alors hors TVA française ; la facture douanière n'a plus de conversion."},
-        {"id": "markets", "title": "Marchés : Suisse et Union européenne en euros, pays fermés désactivés", "done": False,
-         "how": "Shopify › Paramètres › Marchés : créer « Suisse » (CH) et « Union européenne » (BE LU NL DE IT ES PT AT IE) ; laisser les autres pays inactifs (AE AU CA HK IL JP KR MY NZ SG US GB NO…) : ils n'ont aucun tarif de port et ne peuvent pas commander."},
+         "how": "Shopify › Paramètres › Taxes et droits › « Inclure ou exclure les taxes selon le pays du client » : activer. Un client suisse ou une société européenne paie alors hors TVA française. Tant que ce n'est pas fait, Vaelan signale la TVA encaissée sur chaque commande internationale (à rembourser)."},
+        {"id": "checkout", "title": "Paiement : téléphone obligatoire, société et adresse ligne 2 affichées, boutons de paiement rapide masqués", "done": False,
+         "how": "Shopify › Paramètres › Paiement › Informations client : « Numéro de téléphone de l'adresse d'expédition : Obligatoire » ; « Nom de l'entreprise : Facultatif » ; « Adresse ligne 2 : Facultatif ». Boutique en ligne › Thème › Personnaliser : désactiver les boutons de paiement dynamiques (Shop Pay, PayPal, « Acheter maintenant ») sur les pages produit et le panier, pour que le client passe par le panier où les règles s'affichent."},
+        {"id": "zones", "title": "Zones ouvertes et grille de port : vérifier les prix puis écrire dans Shopify", "done": False,
+         "how": "Page Douane › Zones : particuliers en Suisse (6 bouteilles), sociétés UE Ouest (TVA intracommunautaire, 18 bouteilles maximum). Reporter la surcharge carburant et le supplément douane confirmés par Chronopost, choisir la marge, lire les prix obtenus (aujourd'hui de l'ordre de 85 € pour 6 bouteilles en Suisse, 60 € en Allemagne : un choix commercial) puis « Écrire dans Shopify » : les zones UE (22 €) et International (29 €) sont remplacées par des tarifs par carton de 6 (fenêtre de poids 8,9 à 9,4 kg, 17,9 à 18,4 kg…) — un panier hors règle n'a aucun tarif et ne peut pas être payé. Sans write_shipping : reproduire la grille à la main."},
+        {"id": "snippet", "title": "Installer l'extrait de panier (options par pays, règles, n° de TVA vérifié)", "done": False,
+         "how": "Page Douane › Textes du site › télécharger « owine-international.liquid ». Thème › Modifier le code › Snippets › « owine-international », coller le contenu ; ajouter {% render 'owine-international' %} avant le bouton de paiement dans sections/main-cart-footer.liquid ET dans snippets/cart-drawer.liquid. L'extrait lit les règles en direct sur Vaelan (/api/owine/rules) : un changement de zone est appliqué sans le réinstaller. Il guide le client ; le verrou reste la grille de port et le contrôle de Vaelan après commande."},
+        {"id": "policies", "title": "Politique d'expédition, FAQ, note de paiement et notification de commande (FR et EN)", "done": False,
+         "how": "Page Douane › Textes du site : coller les textes dans Paramètres › Politiques › Politique d'expédition (FR, puis la version EN dans l'éditeur de langue), dans la page FAQ, dans Paramètres › Paiement › Contenu (note DAP) et ajouter le paragraphe DAP dans Paramètres › Notifications › Confirmation de commande."},
         {"id": "languages", "title": "Publier l'anglais et traduire la boutique", "done": False,
-         "how": "Après les droits Shopify : page Douane › Traduction › « Traduire en anglais » (Vaelan active la langue en, traduit produits, collections, pages et politiques par Claude et enregistre les traductions). Sinon : Paramètres › Langues › Ajouter l'anglais › Publier, puis l'application gratuite Translate & Adapt. Le sélecteur de langue et de pays s'active dans Boutique en ligne › Thème › Personnaliser › En-tête › Localisation."},
-        {"id": "snippet", "title": "Installer l'extrait de panier (règles d'expédition, n° de TVA vérifié)", "done": False,
-         "how": "Page Douane › Textes du site › télécharger « owine-international.liquid ». Boutique en ligne › Thème › Modifier le code › Snippets › Ajouter un extrait « owine-international », coller le contenu, puis dans sections/main-cart-footer.liquid (ou main-cart-items.liquid) ajouter {% render 'owine-international' %} juste avant le bouton de paiement. Désactiver les boutons de paiement dynamiques sur le panier (Personnaliser › Panier). L'extrait affiche les options par pays, impose 6 bouteilles (Suisse) ou des multiples de 6 (UE) et un n° de TVA vérifié VIES pour les sociétés UE avant d'autoriser le paiement."},
-        {"id": "policies", "title": "Politique d'expédition, FAQ et note de paiement", "done": False,
-         "how": "Page Douane › Textes du site : copier les textes FR et EN dans Paramètres › Politiques › Politique d'expédition, dans la page FAQ et dans Paramètres › Paiement › Contenu (note « hors UE : droits et taxes à régler au transporteur »)."},
+         "how": "Après les droits Shopify : page Douane › Anglais › « Traduire en anglais » (Vaelan active la langue, traduit produits, collections, pages, politiques, menus, options et chaînes du thème par Claude, puis « Publier l'anglais »). Clé ANTHROPIC_API_KEY à créer dans Render (variable d'environnement) au préalable. Sélecteur de langue : Thème › Personnaliser › En-tête › Localisation."},
+        {"id": "pennylane", "title": "Pennylane : mentions des factures export et intracommunautaires, état récapitulatif TVA", "done": False,
+         "how": "Facture d'une vente hors UE : TVA 0 % avec la mention « Exonération de TVA, article 262 I du CGI » ; société UE : TVA 0 %, n° de TVA du client et mention « Autoliquidation, article 262 ter I du CGI ». Déposer chaque mois l'état récapitulatif TVA (ex-DEB) sur douane.gouv.fr pour les livraisons intracommunautaires. À régler avec l'expert-comptable, ainsi que la question OSS pour de futures ventes aux particuliers de l'UE."},
+        {"id": "insurance", "title": "Décider de l'assurance ad valorem Chronopost", "done": False,
+         "how": "La responsabilité contractuelle est limitée à 23 € par kg en Chrono Classic (≈ 200 € pour un carton de 6). Pour les commandes de valeur, souscrire l'option ad valorem à l'édition de l'étiquette (jusqu'à 20 000 €) et reporter la prime dans « Assurance HT » sur la commande."},
         {"id": "age", "title": "Vérification d'âge à l'entrée du site", "done": False,
-         "how": "Application gratuite « Age verification » (Shopify App Store) ou module du thème : fenêtre « Avez-vous l'âge légal pour acheter de l'alcool ? » en français et en anglais."},
-        {"id": "chronopost", "title": "Écrire à Corentin Menard (Chronopost)", "done": False,
-         "how": "Points à confirmer : Chrono Classic et Chrono Express bien ouverts sur le contrat 84048903 ; supplément douane Suisse 15 € par expédition et prestation de dédouanement export (21 € TTC ?) ; surcharge carburant du mois ; activation du ShippingServiceWS (étiquettes et enlèvement depuis Vaelan) ; fiches pays Norvège, Hong Kong, Singapour ; avenant Chrono Viti B2C US pour plus tard."},
-        {"id": "alix", "title": "Alix : régime d'accise du stock et documents pour les sociétés UE", "done": False,
-         "how": "Demander à Alix (entrepositaire agréé, n° d'accise FR 107859E0476 à Beaune) si le stock oWine est en droits acquittés ou en suspension, et confirmer qu'Alix émet le document d'accompagnement (DAE ou e-DSA, 15 € HT au tarif) pour chaque expédition à une société de l'UE. Le pôle d'action économique de la douane de Dijon peut confirmer le régime (expéditeur certifié)."},
-        {"id": "vat_check", "title": "Sociétés UE : décider la conduite si le n° de TVA n'est pas valide", "done": False,
-         "how": "Vaelan vérifie chaque n° sur VIES à la synchronisation ; si invalide ou absent, la commande est bloquée sur la page (contrôle rouge) : demander au client le bon numéro (formulaire douane) ou rembourser. Sur la facture Pennylane : mention « autoliquidation, art. 262 ter I CGI » et n° de TVA du client."},
+         "how": "Application gratuite « Age verification » (Shopify App Store) ou module du thème : « Avez-vous l'âge légal pour acheter de l'alcool ? » en français et en anglais."},
+        {"id": "vat_check", "title": "Sociétés UE : conduite si le n° de TVA n'est pas valide", "done": False,
+         "how": "Vaelan vérifie chaque n° sur VIES ; si invalide ou absent, la commande est bloquée (contrôle rouge) : demander le bon numéro (formulaire douane), accepter par dérogation motivée, ou refuser et rembourser (bouton sur la commande, e-mail FR/EN au client)."},
         {"id": "test", "title": "Commande d'essai en Suisse et commande d'essai société UE", "done": False,
          "how": "Passer une commande test sur le site (adresse suisse, 6 bouteilles ; puis adresse belge avec un n° de TVA valide) pour vérifier de bout en bout : port affiché, paiement, synchronisation Vaelan, carte International, facture commerciale, e-mails. Annuler et rembourser ensuite."},
     ]
 
 
 def setup_tasks(log=None) -> int:
-    """Une tâche Vaelan par action de mise en place (clé setup:<id>) ; les actions détectées comme faites ferment leur tâche."""
+    """Une tâche Vaelan par action de mise en place (clé setup:<id>) ; les actions détectées comme faites ferment leur tâche ; une tâche cochée « fait » à la main n'est jamais rouverte."""
+    from sqlmodel import Session, select
+    from app.core.db import engine
+    from app.models import OwTask
     log = log or (lambda m: None); n = 0
-    for it in setup_items():
+    with Session(engine) as s_:
+        existing = {t.key: t.status for t in s_.exec(select(OwTask).where(OwTask.kind == "customs_setup")).all()}
+    for i, it in enumerate(setup_items(), 1):
         key = f"setup:{it['id']}"
         if it["done"]:
             service.close_tasks_by_key(key); continue
-        if service.add_task("customs_setup", it["title"], ref="export", key=key, details=it["how"]):
+        if key in existing:
+            continue                                               # ouverte : rien à faire ; faite à la main : on ne la rouvre pas
+        if service.add_task("customs_setup", f"{i:02d}. {it['title']}", ref="export", key=key, details=it["how"]):
             n += 1
     log(f"mise en place export : {n} nouvelle(s) tâche(s)")
     return n
@@ -1121,11 +1263,11 @@ def site_texts() -> dict:
     options_fr = "Nous livrons actuellement :\n" + "\n".join("• " + x for x in fr) + "\nLes autres destinations et les particuliers dans l'Union européenne : prochainement. Sociétés hors Europe : sur devis à orders@owine.co."
     options_en = "We currently ship to:\n" + "\n".join("• " + x for x in en) + "\nOther destinations and private customers in the EU: coming soon. Companies outside Europe: quote on request at orders@owine.co."
     policy_fr = (options_fr + "\n\nSuisse — Vos vins partent de notre entrepôt de Beaune par Chronopost Chrono Classic, livraison en 2 à 4 jours ouvrés après l'enlèvement, à une adresse physique (pas de boîte postale) ; un numéro de téléphone est indispensable. "
-                 "La réglementation limite chaque envoi à 6 bouteilles : une commande = un carton de 6. Nos prix s'entendent hors TVA française. Votre commande est livrée « DAP » : la TVA suisse (8,1 %), le droit de douane sur le vin et les frais de dédouanement du transporteur ne sont pas compris dans le prix et vous seront demandés par Chronopost avant la livraison. Vous devez avoir l'âge légal pour acheter de l'alcool.\n\n"
+                 "Notre transporteur limite chaque envoi à 6 bouteilles : une commande = un carton de 6. Nos prix s'entendent hors TVA française. Votre commande est livrée « DAP » : la TVA suisse (8,1 %), le droit de douane sur le vin et les frais de dédouanement du transporteur ne sont pas compris dans le prix et vous seront demandés par Chronopost avant la livraison. Vous devez avoir l'âge légal pour acheter de l'alcool.\n\n"
                  "Union européenne (sociétés) — Livraison par Chronopost Chrono Classic en 2 à 4 jours ouvrés selon le pays, par carton de 6. Facture hors TVA sur présentation d'un numéro de TVA intracommunautaire valide (autoliquidation) ; les accises du pays de destination restent dues par l'acheteur selon la réglementation locale.\n\n"
                  "À la livraison — Ouvrez les cartons devant le livreur, notez toute réserve sur le bon de livraison avant de signer, photographiez et écrivez-nous à contact@owine.co : nous prenons le relais auprès de Chronopost.")
     policy_en = (options_en + "\n\nSwitzerland — Your wines leave our Beaune warehouse with Chronopost Chrono Classic, delivered in 2 to 4 working days after collection, to a physical address (no PO box); a phone number is required. "
-                 "Regulations limit each shipment to 6 bottles: one order = one case of 6. Our prices exclude French VAT. Your order is delivered “DAP”: Swiss VAT (8.1%), the customs duty on wine and the carrier's clearance fee are not included and will be requested by Chronopost before delivery. You must be of legal drinking age.\n\n"
+                 "Our carrier limits each shipment to 6 bottles: one order = one case of 6. Our prices exclude French VAT. Your order is delivered “DAP”: Swiss VAT (8.1%), the customs duty on wine and the carrier's clearance fee are not included and will be requested by Chronopost before delivery. You must be of legal drinking age.\n\n"
                  "European Union (companies) — Chronopost Chrono Classic, 2 to 4 working days depending on the country, in cases of 6. Invoice without VAT against a valid EU VAT number (reverse charge); excise duties in the destination country remain payable by the buyer under local rules.\n\n"
                  "On delivery — Open the cases in front of the driver, write any reservation on the delivery note before signing, take photos and e-mail contact@owine.co: we take over with Chronopost.")
     checkout_fr = "Livraison hors Union européenne : les droits de douane, la TVA et les frais de dédouanement de votre pays ne sont pas compris et vous seront demandés par le transporteur avant la livraison (incoterm DAP)."
@@ -1133,72 +1275,85 @@ def site_texts() -> dict:
     return {"options_fr": options_fr, "options_en": options_en, "policy_fr": policy_fr, "policy_en": policy_en, "checkout_fr": checkout_fr, "checkout_en": checkout_en}
 
 
+def public_rules() -> dict:
+    """Règles lues par l'extrait de thème (JSON public) : zones ouvertes, limites, textes FR/EN."""
+    t = site_texts()
+    return {"zones": {z["key"]: {"countries": z["countries"], "particulier": bool(z.get("particulier")), "societe": bool(z.get("societe")), "max": z.get("max_bottles"), "multiple": z.get("multiple"),
+                                 "vat": bool(z.get("vat_required")), "label": z["label"].split(" (")[0]} for z in zones() if z.get("particulier") or z.get("societe")},
+            "texts": {"fr": t["options_fr"], "en": t["options_en"]}, "bottle_kg": config.BOTTLE_KG}
+
+
 def theme_snippet() -> str:
     """Extrait Liquid + JS pour la page panier : options par pays, règles de bouteilles (max / multiples de 6), n° de TVA vérifié (VIES via Vaelan) pour les sociétés UE, attributs de commande lus par Vaelan."""
     zs = zones(); base = service.admin_url()
     rules = {z["key"]: {"countries": z["countries"], "particulier": bool(z.get("particulier")), "societe": bool(z.get("societe")), "max": z.get("max_bottles"), "multiple": z.get("multiple"), "vat": bool(z.get("vat_required")), "label": z["label"].split(" (")[0]} for z in zs if z.get("particulier") or z.get("societe")}
     t = site_texts()
-    return r'''{%- comment -%} oWine — règles d'expédition internationale (généré par Vaelan, page Douane › Textes du site). À rendre dans le panier, avant le bouton de paiement. {%- endcomment -%}
+    return r'''{%- comment -%} oWine — règles d'expédition internationale (généré par Vaelan, page Douane › Textes du site). À rendre dans le panier (main-cart-footer.liquid) et le tiroir panier (cart-drawer.liquid), avant le bouton de paiement. Les règles sont lues en direct sur Vaelan. {%- endcomment -%}
 {%- if cart.item_count > 0 -%}
-<div id="ow-intl" class="ow-intl" data-country="{{ localization.country.iso_code }}" data-lang="{{ request.locale.iso_code }}" data-items="{{ cart.items | map: 'quantity' | join: ',' }}" data-weight="{{ cart.total_weight }}"
-     data-company="{{ cart.attributes['Société'] | escape }}" data-vat="{{ cart.attributes['N° TVA'] | escape }}" style="margin:16px 0;padding:14px 16px;border:1px solid #d9c9c5;border-radius:8px;font-size:.95rem;">
+<div class="ow-intl" data-country="{{ localization.country.iso_code }}" data-lang="{{ request.locale.iso_code }}" data-company="{{ cart.attributes['Société'] | escape }}" data-vat="{{ cart.attributes['N° TVA'] | escape }}"
+     style="margin:16px 0;padding:14px 16px;border:1px solid #d9c9c5;border-radius:8px;font-size:.95rem;">
   <div class="ow-intl__options" style="white-space:pre-line;color:#4a0d1f;"></div>
   <div class="ow-intl__company" style="display:none;margin-top:10px;">
-    <label style="display:block;margin-bottom:6px;"><input type="checkbox" id="ow-company"> <span data-fr="Je commande pour une société" data-en="I am ordering for a company"></span></label>
-    <div id="ow-vat-wrap" style="display:none;">
-      <label for="ow-vat" style="display:block;font-size:.9rem;"><span data-fr="N° de TVA intracommunautaire (vérifié automatiquement)" data-en="EU VAT number (checked automatically)"></span></label>
-      <input id="ow-vat" type="text" placeholder="BE0123456789 / DE123456789" style="width:100%;max-width:320px;padding:8px;border:1px solid #bbb;border-radius:6px;">
-      <div id="ow-vat-msg" style="font-size:.88rem;margin-top:4px;"></div>
+    <label style="display:block;margin-bottom:6px;"><input type="checkbox" class="ow-company"> <span data-fr="Je commande pour une société" data-en="I am ordering for a company"></span></label>
+    <div class="ow-vat-wrap" style="display:none;">
+      <label style="display:block;font-size:.9rem;"><span data-fr="N° de TVA intracommunautaire (vérifié automatiquement)" data-en="EU VAT number (checked automatically)"></span></label>
+      <input class="ow-vat" type="text" placeholder="BE0123456789 / DE123456789" style="width:100%;max-width:320px;padding:8px;border:1px solid #bbb;border-radius:6px;">
+      <div class="ow-vat-msg" style="font-size:.88rem;margin-top:4px;"></div>
     </div>
   </div>
   <div class="ow-intl__msg" style="margin-top:8px;font-weight:600;color:#8c1a1a;"></div>
 </div>
 <script>
 (function(){
-  var R = ''' + json.dumps(rules, ensure_ascii=False) + r''';
-  var T = ''' + json.dumps({"fr": t["options_fr"], "en": t["options_en"]}, ensure_ascii=False) + r''';
-  var VIES = "''' + base + r'''/api/owine/vies?vat=";
-  var el = document.getElementById('ow-intl'); if (!el) return;
-  var lang = (el.dataset.lang || 'fr').slice(0,2) === 'en' ? 'en' : 'fr', cc = el.dataset.country || 'FR';
-  var bottles = Math.round((parseInt(el.dataset.weight || '0', 10) / 1000) / 1.5);   // 1,5 kg par bouteille (sélections comprises)
-  var zone = null; Object.keys(R).forEach(function(k){ if (R[k].countries.indexOf(cc) >= 0) zone = R[k]; });
-  document.querySelectorAll('#ow-intl [data-fr]').forEach(function(s){ s.textContent = s.dataset[lang]; });
-  el.querySelector('.ow-intl__options').textContent = T[lang];
-  var msg = el.querySelector('.ow-intl__msg'), companyBox = el.querySelector('.ow-intl__company'), chk = document.getElementById('ow-company'), vatWrap = document.getElementById('ow-vat-wrap'), vat = document.getElementById('ow-vat'), vatMsg = document.getElementById('ow-vat-msg');
-  var checkoutBtns = document.querySelectorAll('button[name="checkout"], [name="checkout"], .cart__checkout-button, #checkout');
-  function lock(on, text){ msg.textContent = text || ''; checkoutBtns.forEach(function(b){ b.disabled = !!on; b.style.opacity = on ? .5 : 1; }); }
-  function setAttr(obj){ return fetch('/cart/update.js', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({attributes: obj})}); }
+  if (window.__owIntl) return; window.__owIntl = true;
+  var BASE = "''' + base + r'''";
   var msgs = {
     closed: {fr: "Nous ne livrons pas encore ce pays : livraison prochainement. Choisissez la France, la Suisse (particuliers) ou une société dans l'Union européenne.", en: "We do not ship to this country yet: coming soon. Choose France, Switzerland (private customers) or a company in the European Union."},
-    max: {fr: "Suisse : 6 bouteilles maximum par commande (un carton). Retirez des bouteilles pour continuer.", en: "Switzerland: up to 6 bottles per order (one case). Remove bottles to continue."},
+    max: {fr: "{n} bouteilles maximum par commande vers ce pays (un carton de 6). Retirez des bouteilles pour continuer.", en: "Up to {n} bottles per order to this country (one case of 6). Remove bottles to continue."},
     mult: {fr: "Expédition par carton de 6 : ajustez la quantité à un multiple de 6 bouteilles.", en: "Shipped in cases of 6: adjust the quantity to a multiple of 6 bottles."},
     company_only: {fr: "Dans l'Union européenne, nous livrons pour l'instant les sociétés (n° de TVA intracommunautaire). Cochez « je commande pour une société » et indiquez votre numéro.", en: "In the European Union we currently deliver to companies only (EU VAT number). Tick “I am ordering for a company” and enter your number."},
-    vat_bad: {fr: "Numéro de TVA non reconnu par VIES : vérifiez-le (format pays + chiffres, sans espaces).", en: "VAT number not recognised by VIES: please check it (country code + digits, no spaces)."},
-    vat_ok: {fr: "Numéro de TVA valide : ", en: "Valid VAT number: "},
-    vat_wait: {fr: "Vérification VIES…", en: "Checking VIES…"}
+    vat_bad: {fr: "Numéro de TVA non reconnu par VIES : vérifiez-le (code pays + chiffres, sans espaces).", en: "VAT number not recognised by VIES: please check it (country code + digits, no spaces)."},
+    vat_ok: {fr: "Numéro de TVA valide", en: "Valid VAT number"}, vat_wait: {fr: "Vérification VIES…", en: "Checking VIES…"}
   };
-  if (cc === 'FR' || cc === 'MC') { lock(false); return; }
-  if (!zone) { lock(true, msgs.closed[lang]); return; }
-  if (zone.max && bottles > zone.max) { lock(true, msgs.max[lang]); return; }
-  if (zone.multiple && bottles % zone.multiple !== 0) { lock(true, msgs.mult[lang]); return; }
-  if (zone.societe) {
-    companyBox.style.display = 'block';
-    chk.checked = (el.dataset.company === 'oui'); vat.value = el.dataset.vat || '';
+  var rules = null, cart = null;
+  function setAttr(obj){ return fetch('/cart/update.js', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({attributes: obj})}); }
+  function lock(on, text){ document.querySelectorAll('.ow-intl__msg').forEach(function(m){ m.textContent = text || ''; });
+    document.querySelectorAll('button[name="checkout"], [name="checkout"], .cart__checkout-button, #checkout, #CartDrawer-Checkout').forEach(function(b){ b.disabled = !!on; b.style.opacity = on ? .5 : 1; }); }
+  function evaluate(){
+    var el = document.querySelector('.ow-intl'); if (!el || !rules || !cart) return;
+    var lang = (el.dataset.lang || 'fr').slice(0,2) === 'en' ? 'en' : 'fr', cc = el.dataset.country || 'FR';
+    var bottles = Math.round((cart.total_weight / 1000) / (rules.bottle_kg || 1.5));
+    var zone = null; Object.keys(rules.zones).forEach(function(k){ if (rules.zones[k].countries.indexOf(cc) >= 0) zone = rules.zones[k]; });
+    document.querySelectorAll('.ow-intl [data-fr]').forEach(function(s){ s.textContent = s.dataset[lang]; });
+    document.querySelectorAll('.ow-intl__options').forEach(function(o){ o.textContent = rules.texts[lang]; });
+    if (cc === 'FR' || cc === 'MC') { lock(false); return; }
+    if (!zone) { lock(true, msgs.closed[lang]); return; }
+    if (zone.max && bottles > zone.max) { lock(true, msgs.max[lang].replace('{n}', zone.max)); return; }
+    if (zone.multiple && bottles % zone.multiple !== 0) { lock(true, msgs.mult[lang]); return; }
+    if (!zone.societe) { lock(false); return; }
+    var box = el.querySelector('.ow-intl__company'), chk = el.querySelector('.ow-company'), wrap = el.querySelector('.ow-vat-wrap'), vat = el.querySelector('.ow-vat'), vmsg = el.querySelector('.ow-vat-msg');
+    box.style.display = 'block';
+    if (!chk.dataset.bound) { chk.dataset.bound = '1'; chk.checked = ((cart.attributes || {})['Société'] === 'oui'); vat.value = (cart.attributes || {})['N° TVA'] || '';
+      chk.addEventListener('change', refresh); vat.addEventListener('change', refresh); vat.addEventListener('blur', refresh); }
     function refresh(){
-      vatWrap.style.display = chk.checked ? 'block' : 'none';
+      wrap.style.display = chk.checked ? 'block' : 'none';
       if (!chk.checked) { setAttr({'Société': '', 'N° TVA': '', 'TVA vérifiée': ''}); if (!zone.particulier) lock(true, msgs.company_only[lang]); else lock(false); return; }
       setAttr({'Société': 'oui'});
       if (!zone.vat) { lock(false); return; }
       var v = (vat.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (v.length < 4) { lock(true, msgs.company_only[lang]); vatMsg.textContent = ''; return; }
-      vatMsg.textContent = msgs.vat_wait[lang]; lock(true, '');
-      fetch(VIES + encodeURIComponent(v)).then(function(r){ return r.json(); }).then(function(d){
-        if (d.valid) { vatMsg.textContent = msgs.vat_ok[lang] + (d.name || v); vatMsg.style.color = '#2e6f4b'; setAttr({'N° TVA': v, 'TVA vérifiée': 'oui ' + (d.name || '')}).then(function(){ lock(false); }); }
-        else { vatMsg.textContent = msgs.vat_bad[lang] + (d.error ? ' (' + d.error + ')' : ''); vatMsg.style.color = '#a8261d'; setAttr({'N° TVA': v, 'TVA vérifiée': ''}); lock(true, ''); }
-      }).catch(function(){ vatMsg.textContent = msgs.vat_bad[lang]; lock(true, ''); });
+      if (v.length < 4) { lock(true, msgs.company_only[lang]); vmsg.textContent = ''; return; }
+      vmsg.textContent = msgs.vat_wait[lang]; lock(true, '');
+      fetch(BASE + '/api/owine/vies?vat=' + encodeURIComponent(v)).then(function(r){ return r.json(); }).then(function(d){
+        if (d.valid) { vmsg.textContent = msgs.vat_ok[lang] + (d.name ? ' : ' + d.name : ''); vmsg.style.color = '#2e6f4b'; setAttr({'N° TVA': v, 'TVA vérifiée': 'oui ' + (d.name || '')}).then(function(){ lock(false); }); }
+        else { vmsg.textContent = msgs.vat_bad[lang] + (d.error ? ' (' + d.error + ')' : ''); vmsg.style.color = '#a8261d'; setAttr({'N° TVA': v, 'TVA vérifiée': ''}); lock(true, ''); }
+      }).catch(function(){ vmsg.textContent = msgs.vat_bad[lang]; lock(true, ''); });
     }
-    chk.addEventListener('change', refresh); vat.addEventListener('change', refresh); vat.addEventListener('blur', refresh); refresh();
-  } else { lock(false); }
+    refresh();
+  }
+  function loadCart(){ return fetch('/cart.js').then(function(r){ return r.json(); }).then(function(c){ cart = c; evaluate(); }); }
+  fetch(BASE + '/api/owine/rules').then(function(r){ return r.json(); }).then(function(r){ rules = r; return loadCart(); }).catch(function(){});
+  if (window.subscribe) { try { subscribe('cart-update', loadCart); } catch (e) {} }
+  setInterval(loadCart, 5000);
 })();
 </script>
 {%- endif -%}
@@ -1206,7 +1361,10 @@ def theme_snippet() -> str:
 
 
 # ================================================================== traduction anglaise de la boutique (Claude → translationsRegister) ; nécessite read/write_translations et write_locales
-TRANSLATABLE = [("PRODUCT", ["title", "body_html"]), ("COLLECTION", ["title", "body_html"]), ("ONLINE_STORE_PAGE", ["title", "body_html"]), ("SHOP_POLICY", ["body"])]
+TRANSLATABLE = [("PRODUCT", ["title", "body_html"]), ("COLLECTION", ["title", "body_html"]), ("PAGE", ["title", "body_html"]), ("SHOP_POLICY", ["body"]),
+                ("MENU", None), ("LINK", None), ("PRODUCT_OPTION", None), ("PRODUCT_OPTION_VALUE", None), ("DELIVERY_METHOD_DEFINITION", None),
+                ("ONLINE_STORE_THEME_LOCALE_CONTENT", None), ("ONLINE_STORE_THEME_JSON_TEMPLATE", None), ("ONLINE_STORE_THEME_SECTION_GROUP", None), ("ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS", None)]
+                # None = toutes les clés textuelles de la ressource (chaînes du thème, menus, options)
 
 
 def _scopes() -> set:
@@ -1242,26 +1400,48 @@ def translation_plan(limit: int = 400) -> dict:
         for n in nodes:
             done = {t["key"]: t for t in n.get("translations") or []}
             for tc in n.get("translatableContent") or []:
-                if tc["key"] in keys and (tc.get("value") or "").strip() and (tc["key"] not in done or done[tc["key"]].get("outdated")):
+                val = (tc.get("value") or "").strip()
+                if (keys is None or tc["key"] in keys) and val and not re.fullmatch(r"[\d\W_]*", val) and (tc["key"] not in done or done[tc["key"]].get("outdated")):
                     plan["resources"].append({"type": rtype, "id": n["resourceId"], "key": tc["key"], "digest": tc["digest"], "value": tc["value"]})
     plan["resources"] = plan["resources"][:limit]
     return plan
 
 
 def _translate_fr_en(texts: List[str]) -> List[str]:
-    """Traduction FR → EN par Claude, HTML conservé, vocabulaire du vin (appellations, climats, cépages, millésimes inchangés)."""
+    """Traduction FR → EN par Claude : textes longs un par un (HTML conservé), textes courts par lots JSON (chaînes du thème, menus, options).
+    Vocabulaire du vin inchangé (appellations, climats, cépages, millésimes), variables Liquid {{ … }} conservées."""
     from app.core import assistant
     if not assistant.configured():
         raise RuntimeError("clé Anthropic absente (ANTHROPIC_API_KEY)")
     import anthropic
     client = anthropic.Anthropic()
-    out = []
-    system = ("You translate French e-commerce content for oWine, a Burgundy wine merchant in Dijon, into natural British English for wine lovers. Keep HTML tags and structure exactly, keep proper nouns, appellations, climats, "
-              "producers, vintages and wine terms (Premier Cru, Grand Cru, climat, lieu-dit) untranslated, keep prices and units. Return only the translation, nothing else.")
-    for t in texts:
-        r = client.messages.create(model="claude-sonnet-5", max_tokens=4000, system=system, messages=[{"role": "user", "content": t}])
-        out.append("".join(b.text for b in r.content if getattr(b, "type", "") == "text").strip())
-    return out
+    system = ("You translate French e-commerce content for oWine, a Burgundy wine merchant in Dijon, into natural British English for wine lovers. Keep HTML tags, Liquid placeholders like {{ count }} and structure exactly; "
+              "keep proper nouns, appellations, climats, producers, vintages and wine terms (Premier Cru, Grand Cru, climat, lieu-dit) untranslated; keep prices and units.")
+    out: List[Optional[str]] = [None] * len(texts)
+    short = [i for i, t in enumerate(texts) if len(t) <= 400]
+    for k in range(0, len(short), 40):
+        idx = short[k:k + 40]
+        payload = json.dumps({str(i): texts[i] for i in idx}, ensure_ascii=False)
+        r = client.messages.create(model="claude-sonnet-5", max_tokens=8000, system=system + " You receive a JSON object of id → French text and return ONLY a JSON object with the same ids → English text.",
+                                   messages=[{"role": "user", "content": payload}])
+        txt = "".join(b.text for b in r.content if getattr(b, "type", "") == "text").strip()
+        try:
+            m = re.search(r"\{.*\}", txt, re.S); d = json.loads(m.group(0)) if m else {}
+        except Exception:
+            d = {}
+        for i in idx:
+            v = d.get(str(i))
+            out[i] = v.strip() if isinstance(v, str) and v.strip() else ""
+    for i, t in enumerate(texts):
+        if out[i] is not None:
+            continue
+        r = client.messages.create(model="claude-sonnet-5", max_tokens=12000, system=system + " Return only the translation, nothing else.", messages=[{"role": "user", "content": t}])
+        if getattr(r, "stop_reason", "") == "max_tokens":
+            out[i] = ""                                           # tronqué : on n'enregistre pas une traduction incomplète
+            continue
+        v = "".join(b.text for b in r.content if getattr(b, "type", "") == "text").strip()
+        out[i] = v if v.count("<") == t.count("<") else ""        # balises HTML déséquilibrées : rejeté
+    return [x or "" for x in out]
 
 
 def translation_apply(log=None, batch: int = 20) -> str:
