@@ -180,6 +180,18 @@
     vins (couleur déduite de la référence …RB/…BB, code SH proposé, degré à saisir) ; écriture dans Shopify des codes SH, de l'origine et du poids réel des sélections ; matrice pays.
     <strong>Synchronisation</strong> : langue du client, TVA et port prélevés, attributs de commande (n° TVA / EORI saisis au panier), société de facturation ; tâches « formalités export »
     et « données douanières manquantes » pour les commandes internationales à traiter ; à l'envoi : tâches « suivre le dédouanement » (J+2) et « justificatif d'exportation » (J+15).
+    <br><strong>Zones ouvertes (v0.1.196)</strong> : page Douane › Zones = périmètre de vente (par zone : particuliers / sociétés, maximum de bouteilles par commande, multiple de 6, minimum, n° de TVA requis).
+    Décision JS du 15/09/2026 : France (Chrono 13), <strong>Suisse particuliers, 6 bouteilles = un carton de 6 par commande</strong>, <strong>Union européenne Ouest sociétés</strong> avec n° de TVA intracommunautaire
+    vérifié sur VIES ; tout le reste fermé (« prochainement »). Contrôle bloquant « périmètre ouvert » sur chaque commande internationale ; à l'international uniquement des cartons de 6 pleins (réf. 2036, 38 × 28 × 40 cm) ;
+    grille de port Shopify générée = coût contrat (tarif de la tranche de poids + groupage + douane zone 4 + zone 2 hors UE + dédouanement export + éco + carburant %) + Alix (préparation 0,10 €/btl, minimum 8 €, DAE 15 € pour une société UE)
+    + marge %, un tarif par nombre de cartons de 6 avec fenêtre de poids ± 0,1 kg (panier hors règle = aucun tarif = pas de paiement), écrite dans Shopify (deliveryProfileUpdate, droit write_shipping) en remplaçant
+    les zones UE / International ; la zone France n'est pas touchée. Coût logistique estimé et marge affichés sur chaque commande internationale.
+    <br><strong>Degrés d'alcool</strong> : pré-remplis (fiche publique du domaine, sinon estimation) avec statut « estimé » ; <strong>confirmés vin par vin</strong> (qui, quand, source, historique) sur la page Douane, ou par
+    la réponse d'Alix (e-mail « degrés à confirmer » envoyé depuis la commande pour les seuls vins non confirmés, réponse saisie sur la commande) ; contrôle bloquant « degrés confirmés » avant la facture commerciale ;
+    un vin confirmé n'est plus redemandé. <strong>Sociétés UE</strong> : e-mail Alix demandant le document d'accompagnement accises (DAE / e-DSA, 15 € HT) ; contrôle VIES du n° de TVA (repli manuel « TVA vérifiée » si VIES indisponible).
+    <strong>Site</strong> : textes FR/EN (options, politique, note de paiement) générés depuis les zones ; extrait de thème « owine-international » pour le panier (pays fermé, 6 bouteilles, multiples de 6, n° de TVA VIES via
+    <code>/api/owine/vies</code>, attributs de commande) ; traduction anglaise par Claude enregistrée dans Shopify (translationsRegister) et publication de la langue (droits write_translations / write_locales).
+    <strong>Mise en place</strong> : liste d'actions JS = tâches « Export : mise en place » (clé setup:&lt;id&gt;), certaines fermées automatiquement (EORI, signature, SIRET/capital, degrés).
   {% endcall %}
 
   {% call sec('gl', 'Grand-livre client (Paiements)') %}

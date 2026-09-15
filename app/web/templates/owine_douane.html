@@ -2,64 +2,156 @@
 {% block title %}Douane · OWINE{% endblock %}
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Douane &amp; export</li></ol></nav>
-<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><h1 class="h4 mb-0"><i class="bi bi-globe2"></i> Douane &amp; export</h1><span class="small text-muted">réglages de l'exportateur, données douanières des vins, Shopify, règles Chrono Viti par pays</span></div>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><h1 class="h4 mb-0"><i class="bi bi-globe2"></i> Douane &amp; export</h1><span class="small text-muted">zones ouvertes, mise en place, données douanières des vins, exportateur, Shopify, textes du site, règles Chrono Viti</span></div>
 {% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+{% set setup_open = setup|rejectattr('closed')|list|length %}
 <ul class="nav nav-tabs small mb-3" role="tablist">
-  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#t-vins">Données douanières des vins {% if missing %}<span class="badge text-bg-warning">{{ missing }} à compléter</span>{% endif %}</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-reglages">Exportateur (EORI, signature, cartons)</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-shopify">Shopify {% if plan and (plan.hs or plan.weight) %}<span class="badge text-bg-info">{{ plan.hs|length + plan.weight|length }}</span>{% endif %}</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-pays">Pays &amp; offres Chrono Viti</button></li>
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#t-setup">Mise en place {% if setup_open %}<span class="badge text-bg-warning">{{ setup_open }}</span>{% endif %}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-zones">Zones ouvertes &amp; grille de port</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-vins">Vins {% if unconfirmed %}<span class="badge text-bg-secondary">{{ unconfirmed }} à confirmer</span>{% endif %}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-reglages">Exportateur</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-shopify">Shopify produits {% if plan and (plan.hs or plan.weight) %}<span class="badge text-bg-info">{{ plan.hs|length + plan.weight|length }}</span>{% endif %}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-textes">Textes du site</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-langue">Anglais</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-pays">Pays Chrono Viti</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-log">Historique</button></li>
 </ul>
 <div class="tab-content">
-<div class="tab-pane fade show active" id="t-vins">
-  <p class="small text-muted">La facture commerciale exige pour chaque vin : couleur, millésime, contenance, <strong>degré d'alcool</strong> (sur l'étiquette de la bouteille), pays d'origine et code SH. Couleur et code SH sont proposés (référence oWine : …RB = rouge, …BB = blanc ; NC 22042113 blanc / 22042143 rouge, AOP Bourgogne ≤ 15 % vol) ; le degré doit être saisi. <a href="?tous=1">Afficher aussi les vins inactifs</a></p>
-  <form method="post" action="/c/{{ company.code }}/owine/douane/vins">
-  <div class="table-responsive"><table class="table table-sm small align-middle"><thead><tr class="text-muted"><th>Vin</th><th>Couleur</th><th>Millésime</th><th style="width:90px">% vol</th><th style="width:70px">cl</th><th style="width:110px">Code SH / NC</th><th style="width:70px">Origine</th></tr></thead><tbody>
-  {% for r in rows %}<tr class="{{ 'table-warning' if r.missing else '' }}">
-    <td><a href="/c/{{ company.code }}/owine/stock/{{ r.sku }}" class="text-decoration-none">{{ r.title }}</a><div class="text-muted" style="font-size:.7rem">{{ r.sku }}{% if r.missing %} · manque : {{ r.missing|join(', ') }}{% endif %}</div></td>
+
+{# ---------------------------------------------------------------- mise en place #}
+<div class="tab-pane fade show active" id="t-setup">
+  <p class="small text-muted">Chaque action est une tâche Vaelan (« Export : mise en place »). Les actions que Vaelan peut constater se ferment seules (EORI saisi, signature chargée…) ; les autres se cochent ici. <form method="post" action="/c/{{ company.code }}/owine/douane/setup/refresh" class="d-inline"><button class="btn btn-sm btn-link p-0">Actualiser la liste</button></form></p>
+  <div class="list-group small">
+  {% for it in setup %}
+    <div class="list-group-item d-flex gap-3 align-items-start {{ 'opacity-50' if it.closed else '' }}">
+      <div class="pt-1">{% if it.closed %}<i class="bi bi-check-circle-fill text-success fs-5"></i>{% else %}<i class="bi bi-circle text-muted fs-5"></i>{% endif %}</div>
+      <div class="flex-grow-1"><div class="fw-semibold">{{ loop.index }}. {{ it.title }}</div><div class="text-muted" style="font-size:.8rem">{{ it.how }}</div>
+        {% if it.task and it.task.status == 'done' %}<div class="text-success" style="font-size:.72rem">fait le {{ it.task.done_at.strftime('%d/%m/%Y') if it.task.done_at else '' }}</div>{% endif %}</div>
+      <form method="post" action="/c/{{ company.code }}/owine/douane/setup/{{ it.id }}" class="text-nowrap">{% if it.closed %}{% if not it.done %}<button class="btn btn-sm btn-outline-secondary" name="reopen" value="1">Rouvrir</button>{% endif %}{% else %}<button class="btn btn-sm btn-success">Fait</button>{% endif %}</form>
+    </div>
+  {% endfor %}
+  </div>
+</div>
+
+{# ---------------------------------------------------------------- zones ouvertes & grille #}
+<div class="tab-pane fade" id="t-zones">
+  <p class="small text-muted">Périmètre de vente appliqué par Vaelan à chaque commande (contrôle « périmètre ouvert », bloquant) et traduit en grille de port Shopify : un tarif par nombre de cartons de 6 avec une fenêtre de poids de ± 0,1 kg, si bien qu'un panier hors règle (9 bouteilles, 2 cartons en Suisse, pays fermé) n'a aucun tarif et ne peut pas être payé. Le contrôle du n° de TVA des sociétés se fait sur VIES (extrait de thème au panier, puis Vaelan à la synchronisation).</p>
+  <form method="post" action="/c/{{ company.code }}/owine/douane/zones">
+  <div class="table-responsive"><table class="table table-sm small align-middle"><thead><tr class="text-muted"><th>Zone</th><th>Pays</th><th>Produit</th><th>Particuliers</th><th>Sociétés</th><th style="width:90px">Max btl / cde</th><th style="width:90px">Multiple</th><th style="width:100px">Minimum € HT</th><th>TVA requise</th></tr></thead><tbody>
+  {% for z in zones %}<tr>
+    <td><strong>{{ z.label }}</strong><div class="text-muted" style="font-size:.7rem">{{ z.note }}</div></td>
+    <td style="font-size:.75rem">{{ z.countries|join(' ') }}</td>
+    <td><select class="form-select form-select-sm" name="product_{{ z.key }}" {% if z.key == 'FR' %}disabled{% endif %}>{% for k, p in products.items() %}<option value="{{ k }}" {% if z.product == k %}selected{% endif %}>{{ p.label }}</option>{% endfor %}</select></td>
+    <td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="particulier_{{ z.key }}" value="1" {% if z.particulier %}checked{% endif %}></div></td>
+    <td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="societe_{{ z.key }}" value="1" {% if z.societe %}checked{% endif %}></div></td>
+    <td><input class="form-control form-control-sm" name="max_{{ z.key }}" value="{{ z.max_bottles or '' }}" {% if z.key == 'FR' %}disabled{% endif %}></td>
+    <td><input class="form-control form-control-sm" name="multiple_{{ z.key }}" value="{{ z.multiple or '' }}" {% if z.key == 'FR' %}disabled{% endif %}></td>
+    <td><input class="form-control form-control-sm" name="min_{{ z.key }}" value="{{ z.min_order or '' }}"></td>
+    <td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="vat_{{ z.key }}" value="1" {% if z.vat_required %}checked{% endif %}></div></td>
+  </tr>{% endfor %}</tbody></table></div>
+  <div class="row g-2 small align-items-end mb-2">
+    <div class="col-md-2"><label class="form-label mb-0 text-muted">Marge sur le coût (%)</label><input class="form-control form-control-sm" name="margin_pct" value="{{ rates.margin_pct }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0 text-muted">Surcharge carburant (%)</label><input class="form-control form-control-sm" name="fuel_pct" value="{{ rates.fuel_pct }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0 text-muted">Alix : minimum préparation (€)</label><input class="form-control form-control-sm" name="alix_prep_min" value="{{ rates.alix_prep_min }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0 text-muted">Alix : par bouteille (€)</label><input class="form-control form-control-sm" name="alix_prep_per_bottle" value="{{ rates.alix_prep_per_bottle }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0 text-muted">Alix : DAE / e-DSA (€)</label><input class="form-control form-control-sm" name="alix_dae" value="{{ rates.alix_dae }}"></div>
+    <div class="col-md-2"><label class="form-label mb-0 text-muted">Dédouanement export (€ HT)</label><input class="form-control form-control-sm" name="export_declaration" value="{{ rates.export_declaration }}"></div>
+  </div>
+  <button class="btn btn-sm btn-dark">Enregistrer les zones et les réglages</button>
+  </form>
+  <h3 class="h6 mt-4">Grille de port proposée (hors France) — coût contrat Chronopost + Alix, marge, arrondi à l'euro</h3>
+  <div class="table-responsive"><table class="table table-sm small"><thead><tr class="text-muted"><th>Zone</th><th>Pour</th><th>Bouteilles</th><th>Poids</th><th class="text-end">Chronopost HT</th><th class="text-end">Alix HT</th><th class="text-end">Coût</th><th class="text-end">Prix client HT</th><th>Fenêtre Shopify</th></tr></thead><tbody>
+  {% for g in grid %}{% for r in g.rows %}<tr><td>{% if loop.first %}<strong>{{ g.zone.label }}</strong>{% endif %}</td><td>{% if loop.first %}{{ 'particuliers' if g.kind == 'particulier' else 'sociétés' }}{% endif %}</td><td>{{ r.bottles }} ({{ r.bottles // 6 }} carton{{ 's' if r.bottles > 6 else '' }})</td><td>{{ r.weight }} kg</td><td class="text-end">{{ '%.2f'|format(r.chronopost) }}</td><td class="text-end">{{ '%.2f'|format(r.alix) }}</td><td class="text-end">{{ '%.2f'|format(r.cost) }}</td><td class="text-end fw-semibold">{{ '%.0f'|format(r.price) }} €</td><td class="text-muted">{{ r.window[0] }} – {{ r.window[1] }} kg</td></tr>{% endfor %}{% else %}<tr><td colspan="9" class="text-muted">Aucune zone ouverte hors France.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if ship_plan.error %}<div class="alert alert-warning small py-2">Shopify : {{ ship_plan.error }}</div>{% else %}
+  <div class="small"><strong>Écriture dans Shopify</strong> : zones actuelles {% for zc in ship_plan.current %}<span class="badge text-bg-{{ 'light border' if zc.keep else 'danger' }}">{{ zc.name }} ({{ zc.countries|length }} pays{% if not zc.keep %}, supprimée{% endif %})</span> {% endfor %} → créées : {% for zc in ship_plan.create %}<span class="badge text-bg-success">{{ zc.name }} · {{ zc.methods|length }} tarif(s)</span> {% endfor %}. La zone France n'est pas touchée.
+    {% if 'write_shipping' in scopes %}<form method="post" action="/c/{{ company.code }}/owine/douane/zones/shopify" class="d-inline"><button class="btn btn-sm btn-primary ms-2" onclick="return confirm('Remplacer les zones internationales Shopify par la grille ci-dessus ?')"><i class="bi bi-cloud-upload"></i> Écrire dans Shopify</button></form>{% else %}<span class="text-danger ms-2">droit write_shipping absent : accorder le droit (Mise en place) ou reproduire la grille à la main dans Paramètres › Expédition.</span>{% endif %}</div>{% endif %}
+</div>
+
+{# ---------------------------------------------------------------- vins #}
+<div class="tab-pane fade" id="t-vins">
+  <p class="small text-muted">Chaque vin doit être <strong>confirmé</strong> une fois (degré lu sur l'étiquette, couleur, code SH) : la facture commerciale exige le degré exact. Les degrés sont pré-remplis (fiche publique du domaine ou estimation) : validez ceux que vous connaissez ; pour les autres, la demande part à Alix à la première commande internationale et la réponse se saisit sur la commande. Codes : 22042113 blanc / 22042143 rouge (vins AOP de Bourgogne ≤ 15 % vol, nomenclature combinée UE). <a href="?tous=1">Afficher aussi les vins inactifs</a>
+    <form method="post" action="/c/{{ company.code }}/owine/douane/vins/estimer" class="d-inline"><button class="btn btn-sm btn-link p-0">Pré-remplir les degrés manquants</button></form></p>
+  <form method="post" action="/c/{{ company.code }}/owine/douane/vins" id="wines-form">
+  <div class="table-responsive"><table class="table table-sm small align-middle"><thead><tr class="text-muted"><th><input type="checkbox" onclick="document.querySelectorAll('.selw').forEach(c=>c.checked=this.checked)"></th><th>Vin</th><th>Couleur</th><th>Mill.</th><th style="width:80px">% vol</th><th style="width:60px">cl</th><th style="width:100px">Code SH</th><th style="width:60px">Orig.</th><th>État</th><th></th></tr></thead><tbody>
+  {% for r in rows %}<tr class="{{ 'table-warning' if r.missing else ('table-light' if r.abv_status != 'confirme' else '') }}">
+    <td><input type="checkbox" class="selw" name="sel" value="{{ r.sku }}" form="confirm-form"></td>
+    <td><a href="/c/{{ company.code }}/owine/stock/{{ r.sku }}" class="text-decoration-none">{{ r.title }}</a><div class="text-muted" style="font-size:.7rem">{{ r.sku }}{% if r.missing %} · manque : {{ r.missing|join(', ') }}{% endif %}{% if r.abv_source %} · {{ r.abv_source }}{% endif %}</div></td>
     <td><select class="form-select form-select-sm" name="colour_{{ r.sku }}"><option value="">?</option>{% for c in ('rouge', 'blanc', 'rosé') %}<option value="{{ c }}" {% if r.colour == c %}selected{% endif %}>{{ c }}{% if r.colour == c and not r.colour_saved %} (déduit){% endif %}</option>{% endfor %}</select></td>
     <td>{{ r.vintage or '—' }}</td>
     <td><input class="form-control form-control-sm" name="abv_{{ r.sku }}" value="{{ r.abv if r.abv else '' }}" placeholder="13"></td>
     <td><input class="form-control form-control-sm" name="vol_{{ r.sku }}" value="{{ r.volume_cl }}"></td>
     <td><input class="form-control form-control-sm" name="hs_{{ r.sku }}" value="{{ r.hs }}" title="{{ 'saisi' if r.hs_saved else 'proposé' }}"></td>
     <td><input class="form-control form-control-sm" name="origin_{{ r.sku }}" value="{{ r.origin }}"></td>
+    <td>{% if r.abv_status == 'confirme' %}<span class="badge text-bg-success">confirmé</span><div class="text-muted" style="font-size:.68rem">{{ r.confirmed_by }}, {{ r.confirmed_at.strftime('%d/%m/%Y') if r.confirmed_at else '' }}</div>{% elif r.abv %}<span class="badge text-bg-secondary">estimé</span>{% else %}<span class="badge text-bg-warning">manquant</span>{% endif %}</td>
+    <td class="text-nowrap">{% if r.abv_status == 'confirme' %}<button class="btn btn-sm btn-link p-0 text-danger" formaction="/c/{{ company.code }}/owine/douane/vins/{{ r.sku }}/confirmer" formmethod="post" name="undo" value="1">retirer</button>{% else %}<button class="btn btn-sm btn-outline-success py-0" formaction="/c/{{ company.code }}/owine/douane/vins/{{ r.sku }}/confirmer" formmethod="post" title="confirme avec les valeurs saisies sur cette ligne">Confirmer</button>{% endif %}</td>
   </tr>{% endfor %}</tbody></table></div>
-  <button class="btn btn-sm btn-dark">Enregistrer toutes les lignes</button>
+  <button class="btn btn-sm btn-dark">Enregistrer les lignes (sans confirmer)</button>
   </form>
+  <form method="post" action="/c/{{ company.code }}/owine/douane/vins/confirmer-selection" id="confirm-form" class="mt-2"><button class="btn btn-sm btn-success" onclick="return confirm('Confirmer les vins cochés avec leurs valeurs actuelles ?')">Confirmer les vins cochés</button> <span class="small text-muted">(le degré doit être celui de l'étiquette)</span></form>
 </div>
+
+{# ---------------------------------------------------------------- exportateur #}
 <div class="tab-pane fade" id="t-reglages">
   <div class="row g-3"><div class="col-lg-7">
     <form method="post" action="/c/{{ company.code }}/owine/douane/reglages" class="small">
       <div class="row g-2">
-        <div class="col-md-6"><label class="form-label mb-0 text-muted">N° EORI d'oWine (obligatoire pour exporter ; à demander sur douane.gouv.fr si absent)</label><input class="form-control form-control-sm" name="eori" value="{{ settings.eori }}" placeholder="FR928409887000xx"></div>
+        <div class="col-md-6"><label class="form-label mb-0 text-muted">N° EORI d'oWine (obligatoire pour exporter ; douane.gouv.fr)</label><input class="form-control form-control-sm" name="eori" value="{{ settings.eori }}" placeholder="FR928409887000xx"></div>
         <div class="col-md-6"><label class="form-label mb-0 text-muted">SIRET (pied de facture)</label><input class="form-control form-control-sm" name="siret" value="{{ settings.siret }}"></div>
-        <div class="col-md-4"><label class="form-label mb-0 text-muted">Capital social (ex. 10 000 €)</label><input class="form-control form-control-sm" name="capital" value="{{ settings.capital }}"></div>
+        <div class="col-md-4"><label class="form-label mb-0 text-muted">Capital social (ex. 50 000 €)</label><input class="form-control form-control-sm" name="capital" value="{{ settings.capital }}"></div>
         <div class="col-md-4"><label class="form-label mb-0 text-muted">RCS</label><input class="form-control form-control-sm" name="rcs" value="{{ settings.rcs }}"></div>
         <div class="col-md-4"><label class="form-label mb-0 text-muted">Téléphone (facture)</label><input class="form-control form-control-sm" name="phone" value="{{ settings.phone }}"></div>
         <div class="col-md-6"><label class="form-label mb-0 text-muted">Signataire</label><input class="form-control form-control-sm" name="contact" value="{{ settings.contact }}"></div>
         <div class="col-md-6"><label class="form-label mb-0 text-muted">Lieu de signature</label><input class="form-control form-control-sm" name="sign_place" value="{{ settings.sign_place }}"></div>
-        {% for k, lab in (('2031', 'Carton 1 btl 2031'), ('2033', 'Carton 3 btl 2033'), ('2036', 'Carton 6 btl 2036')) %}<div class="col-md-4"><label class="form-label mb-0 text-muted">Dimensions {{ lab }} (L×l×h cm)</label><input class="form-control form-control-sm" name="dims_{{ k }}" value="{{ settings.box_dims[k] }}" placeholder="ex. 40x27x36"></div>{% endfor %}
+        {% for k, lab in (('2036', 'Carton 6 btl 2036 (international)'), ('2033', 'Carton 3 btl 2033'), ('2031', 'Carton 1 btl 2031')) %}<div class="col-md-4"><label class="form-label mb-0 text-muted">Dimensions {{ lab }} (L×l×h cm)</label><input class="form-control form-control-sm" name="dims_{{ k }}" value="{{ settings.box_dims[k] }}" placeholder="38x28x40"></div>{% endfor %}
       </div>
-      <div class="mt-2"><button class="btn btn-sm btn-dark">Enregistrer</button> <span class="text-muted">TVA {{ settings.vat }} · {{ settings.rcs }}</span></div>
+      <div class="mt-2"><button class="btn btn-sm btn-dark">Enregistrer</button> <span class="text-muted">TVA {{ settings.vat }} · {{ settings.rcs }} · carton 2036 : 1,258 kg vide, mêmes emballages Chrono Viti pour la France, l'Europe et le monde</span></div>
     </form>
   </div><div class="col-lg-5">
     <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Signature (image PNG, fond transparent de préférence)</div><div class="card-body py-2 small">
-      {% if has_sig %}<img src="/c/{{ company.code }}/owine/douane/signature.png" alt="signature" style="max-height:70px;border:1px solid #dee2e6;border-radius:.3rem;padding:4px;background:#fff"><div class="text-success mt-1"><i class="bi bi-check2"></i> apposée automatiquement sur les 3 exemplaires de chaque facture commerciale</div>{% else %}<div class="text-warning-emphasis mb-1">Aucune signature : les factures devront être signées à la main (Alix imprime, mais seul l'exportateur signe) — chargez une image de votre signature.</div>{% endif %}
+      {% if has_sig %}<img src="/c/{{ company.code }}/owine/douane/signature.png" alt="signature" style="max-height:70px;border:1px solid #dee2e6;border-radius:.3rem;padding:4px;background:#fff"><div class="text-success mt-1"><i class="bi bi-check2"></i> apposée sur les 3 exemplaires de chaque facture commerciale</div>{% else %}<div class="text-warning-emphasis mb-1">Aucune signature : chargez une image, sinon Alix imprime des factures non signées.</div>{% endif %}
       <form method="post" action="/c/{{ company.code }}/owine/douane/signature" enctype="multipart/form-data" class="d-flex gap-2 mt-2"><input type="file" name="file" accept="image/png,image/jpeg" class="form-control form-control-sm"><button class="btn btn-sm btn-dark">Charger</button></form>
       {% if has_sig %}<form method="post" action="/c/{{ company.code }}/owine/douane/signature" class="mt-1"><button class="btn btn-sm btn-link p-0 text-danger" onclick="return confirm('Retirer la signature ?')">Retirer</button></form>{% endif %}
     </div></div>
   </div></div>
 </div>
+
+{# ---------------------------------------------------------------- shopify produits #}
 <div class="tab-pane fade" id="t-shopify">
   {% if plan.error %}<div class="alert alert-warning small py-2">Shopify : {{ plan.error }}</div>{% else %}
-  <p class="small text-muted">Vaelan peut écrire dans Shopify le <strong>code SH</strong> et l'<strong>origine FR</strong> de chaque variante vin (Shopify les imprime sur ses propres documents douaniers et les exige pour les Markets) et corriger le <strong>poids des sélections</strong> (1,5 kg par bouteille contenue, aujourd'hui 0 kg pour la plupart : les frais de port au poids sont faux).</p>
+  <p class="small text-muted">Codes SH et origine FR sur chaque variante vin ; poids réel des sélections (1,5 kg par bouteille contenue, aujourd'hui 0 kg pour la plupart : la grille de port au poids est fausse tant que ce n'est pas corrigé).</p>
   <div class="row g-3"><div class="col-lg-6"><div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Codes SH + origine à écrire ({{ plan.hs|length }})</div><div class="card-body py-2 small" style="max-height:320px;overflow:auto">{% for x in plan.hs %}<div>{{ x.title }} <span class="text-muted">{{ x.from[0] }}/{{ x.from[1] }} → <strong>{{ x.hs }}/{{ x.origin }}</strong></span></div>{% else %}<span class="text-success">à jour</span>{% endfor %}</div></div></div>
   <div class="col-lg-6"><div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Poids des sélections à corriger ({{ plan.weight|length }})</div><div class="card-body py-2 small" style="max-height:320px;overflow:auto">{% for x in plan.weight %}<div>{{ x.title }} <span class="text-muted">{{ x.bottles }} btl : {{ x.from }} kg → <strong>{{ x.to }} kg</strong></span></div>{% else %}<span class="text-success">à jour</span>{% endfor %}</div></div></div></div>
   {% if plan.hs or plan.weight %}<form method="post" action="/c/{{ company.code }}/owine/douane/shopify" class="mt-2"><button class="btn btn-sm btn-primary" onclick="return confirm('Écrire ces {{ plan.hs|length + plan.weight|length }} modifications dans Shopify ?')"><i class="bi bi-cloud-upload"></i> Écrire dans Shopify</button></form>{% endif %}
   {% endif %}
 </div>
+
+{# ---------------------------------------------------------------- textes du site #}
+<div class="tab-pane fade" id="t-textes">
+  <p class="small text-muted">Textes dérivés des zones ouvertes, en français et en anglais : à coller dans Shopify (politique d'expédition, FAQ, note de paiement) ; l'extrait de thème applique les règles au panier. <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/douane/snippet.liquid"><i class="bi bi-download"></i> owine-international.liquid</a></p>
+  <div class="row g-3">
+    {% for lab, k in (('Options de livraison (FAQ, panier) — FR', 'options_fr'), ('Delivery options — EN', 'options_en'), ('Politique d\'expédition — FR', 'policy_fr'), ('Shipping policy — EN', 'policy_en'), ('Note de paiement — FR', 'checkout_fr'), ('Checkout note — EN', 'checkout_en')) %}
+    <div class="col-lg-6"><label class="form-label small mb-0 fw-semibold">{{ lab }}</label><textarea class="form-control form-control-sm" rows="{{ 10 if 'policy' in k else 5 }}" readonly onclick="this.select()">{{ texts[k] }}</textarea></div>
+    {% endfor %}
+  </div>
+  <p class="small text-muted mt-3">Installation de l'extrait : Boutique en ligne › Thème › Modifier le code › Snippets › « owine-international » ; puis <code>{% raw %}{% render 'owine-international' %}{% endraw %}</code> avant le bouton de paiement du panier (sections/main-cart-footer.liquid) ; désactiver les boutons de paiement dynamiques du panier. Il lit le pays sélectionné (Markets), affiche les options, bloque le paiement hors règle (6 bouteilles en Suisse, multiples de 6, société UE sans n° de TVA valide) et vérifie le n° de TVA sur VIES via <code>{{ '/api/owine/vies' }}</code>.</p>
+</div>
+
+{# ---------------------------------------------------------------- anglais #}
+<div class="tab-pane fade" id="t-langue">
+  {% if tr_plan.error %}<div class="alert alert-warning small py-2">{{ tr_plan.error }}</div>{% endif %}
+  <p class="small text-muted">Site en français et en anglais (décision JS). Vaelan active la langue anglaise, traduit avec Claude (produits, collections, pages, politiques : HTML conservé, appellations et noms de domaines inchangés) et enregistre les traductions dans Shopify ; la langue est ensuite publiée (owine.co/en, sélecteur de langue du thème).</p>
+  {% if tr_plan.missing_scopes %}<div class="alert alert-warning small py-2">Droits Shopify à accorder d'abord : {{ tr_plan.missing_scopes|join(', ') }} (voir Mise en place).</div>{% else %}
+  <div class="small mb-2">Langue anglaise : {% if tr_plan.locale_en %}activée{% if tr_plan.locale_en.published %}, publiée{% else %}, non publiée{% endif %}{% else %}non activée{% endif %} · champs à traduire détectés : <strong>{{ tr_plan.resources|length }}</strong>{% if tr_plan.resources|length >= 50 %}+{% endif %}</div>
+  <form method="post" action="/c/{{ company.code }}/owine/douane/traduction" class="d-inline"><button class="btn btn-sm btn-primary" onclick="return confirm('Lancer la traduction anglaise (Claude) et l\'enregistrer dans Shopify ?')"><i class="bi bi-translate"></i> Traduire en anglais</button></form>
+  <form method="post" action="/c/{{ company.code }}/owine/douane/traduction?what=publish" class="d-inline"><button class="btn btn-sm btn-outline-dark" onclick="return confirm('Publier la langue anglaise sur le site ?')">Publier l'anglais</button></form>
+  {% endif %}
+  <div class="small text-muted mt-2">Droits actuels de l'application : {{ scopes|join(', ') }}</div>
+</div>
+
+{# ---------------------------------------------------------------- pays #}
 <div class="tab-pane fade" id="t-pays">
-  <p class="small text-muted">Lecture des fiches pays du <em>Guide export Chrono Viti 2024</em> (calques du PDF) et des zonings Chrono Classic / Chrono Express. « n.c. » = non communiqué dans le guide : demander confirmation à Chronopost avant d'ouvrir le pays sur Shopify. Destinations interdites Chrono Viti : {{ forbidden|join(', ') }}.</p>
+  <p class="small text-muted">Fiches pays du <em>Guide export Chrono Viti 2024</em> (calques du PDF) et zonings Chrono Classic / Express. « n.c. » = non communiqué : confirmer avec Chronopost avant d'ouvrir. Destinations interdites Chrono Viti : {{ forbidden|join(', ') }}.</p>
   <div class="table-responsive"><table class="table table-sm small align-middle"><thead><tr class="text-muted"><th>Pays</th><th>Zone</th><th>Particulier · Classic</th><th>Particulier · Express</th><th>Société · Classic</th><th>Société · Express</th><th>Notes</th></tr></thead><tbody>
   {% for m in matrix %}<tr>
     <td><strong>{{ m.name }}</strong> <span class="text-muted">{{ m.code }}</span></td><td>{{ 'UE' if m.zone == 'UE' else 'hors UE · douane' }}</td>
@@ -67,5 +159,14 @@
     <td style="font-size:.72rem">{% for n in m.notes %}<div>• {{ n }}</div>{% endfor %}</td>
   </tr>{% endfor %}</tbody></table></div>
 </div>
+
+{# ---------------------------------------------------------------- historique #}
+<div class="tab-pane fade" id="t-log">
+  <p class="small text-muted">Confirmations des données douanières des vins : qui, quand, quelles valeurs.</p>
+  <table class="table table-sm small"><thead><tr class="text-muted"><th>Date</th><th>Par</th><th>Vin</th><th>% vol</th><th>Couleur</th><th>Code SH</th><th>Source</th></tr></thead><tbody>
+  {% for e in log %}<tr><td>{{ e.at }}</td><td>{{ e.by }}</td><td>{{ e.title or e.sku }}</td><td>{{ e.abv or '' }}</td><td>{{ e.colour or '' }}</td><td>{{ e.hs or '' }}</td><td class="text-muted">{{ e.source }}</td></tr>{% else %}<tr><td colspan="7" class="text-muted">Aucune confirmation pour l'instant.</td></tr>{% endfor %}
+  </tbody></table>
 </div>
+</div>
+<script>if (location.hash) { const b = document.querySelector('[data-bs-target="' + location.hash + '"]'); if (b) new bootstrap.Tab(b).show(); }</script>
 {% endblock %}

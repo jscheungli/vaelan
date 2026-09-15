@@ -168,7 +168,6 @@ EXPORTER = {"name": "OWINE SAS", "contact": "Jean-Sébastien CHEUNG-AH-SEUNG", "
             "phone": "+33 7 84 50 86 19", "email": "contact@owine.co", "eori": "", "siret": "", "capital": "", "sign_place": "Dijon"}
 
 # dimensions (cm) des cartons Chrono Viti, à mesurer une fois pour toutes (Réglages douane) — exigées sur chronopost.fr pour l'international
-BOX_DIMS_DEFAULT = {"2031": "", "2033": "", "2036": ""}
 
 # ---------------------------------------------------------------- zoning Chronopost (zone tarifaire, meilleur délai en jours ouvrés) — PDF « Zoning Europe » (Chrono Classic) et « Zoning Export » (Chrono Express)
 ZONING = {
@@ -436,3 +435,54 @@ def zoning(product: str, country: str):
     """(nom, zone tarifaire, délai indicatif en jours ouvrés) ou None si non desservi / inconnu."""
     v = ZONING.get(product, {}).get((country or "").upper())
     return v if v and v[1] is not None else None
+
+
+# ---------------------------------------------------------------- tarifs du contrat Chrono Viti Easy n° 84048903 (effet 01/04/2025), € HT par expédition, hors surcharge carburant
+# tranches de poids (borne haute incluse, kg) ; au-delà de la dernière tranche : + prix par kg supplémentaire
+TARIFF_BRACKETS_ROAD = [1, 3, 7, 12, 17, 22, 27, 28, 29, 30]
+TARIFF_BRACKETS_AIR = [0.5, 1, 3, 7, 12, 17, 22, 27, 28, 29, 30, 31, 32, 33]
+TARIFFS = {
+    "chrono13": {"brackets": TARIFF_BRACKETS_ROAD, "zones": {"FR": ([11.29, 15.30, 18.40, 21.10, 26.73, 29.43, 37.75, 38.39, 39.03, 39.67], 0.64)}},
+    "classic": {"brackets": TARIFF_BRACKETS_ROAD, "zones": {
+        1: ([11.29, 15.30, 19.46, 24.28, 32.04, 36.86, 45.18, 45.82, 46.46, 47.10], 0.64),
+        2: ([11.29, 15.30, 19.46, 24.28, 32.04, 36.86, 45.18, 45.82, 46.46, 47.10], 0.64),
+        3: ([13.42, 18.50, 24.79, 31.74, 40.56, 47.51, 55.83, 56.89, 57.95, 59.01], 1.06),
+        4: ([11.29, 15.30, 19.46, 24.28, 32.04, 36.86, 51.56, 52.20, 52.84, 53.48], 0.64)}},
+    "express": {"brackets": TARIFF_BRACKETS_AIR, "zones": {
+        1: ([12.35, 12.35, 19.55, 27.96, 42.35, 60.75, 74.08, 108.99, 111.12, 113.25, 115.38, 117.51, 119.64, 121.77], 2.13),
+        2: ([12.35, 12.35, 19.55, 27.96, 42.35, 60.75, 74.08, 108.99, 111.12, 113.25, 115.38, 117.51, 119.64, 121.77], 2.13),
+        3: ([16.61, 16.61, 25.94, 39.67, 63.64, 83.10, 106.00, 140.91, 143.56, 146.21, 148.86, 151.51, 154.16, 156.81], 2.65),
+        4: ([23.54, 23.54, 30.74, 43.41, 68.44, 87.90, 110.80, 145.71, 148.69, 151.67, 154.65, 157.63, 160.61, 163.59], 2.98),
+        5: ([26.73, 26.73, 40.31, 61.49, 89.71, 125.12, 153.34, 188.25, 192.19, 196.13, 200.07, 204.01, 207.95, 211.89], 3.94),
+        6: ([26.73, 26.73, 41.38, 66.81, 95.03, 130.44, 158.66, 193.57, 197.82, 202.07, 206.32, 210.57, 214.82, 219.07], 4.25),
+        7: ([26.73, 26.73, 42.44, 68.93, 100.34, 135.75, 163.97, 198.88, 203.13, 207.38, 211.63, 215.88, 220.13, 224.38], 4.25),
+        8: ([23.67, 23.67, 31.94, 54.18, 79.21, 103.99, 116.26, 151.17, 154.57, 157.97, 161.37, 164.77, 168.17, 171.57], 3.40),
+        9: ([32.05, 32.05, 49.89, 77.45, 110.99, 146.40, 179.94, 214.85, 220.17, 225.49, 230.81, 236.13, 241.45, 246.77], 5.32)}},
+}
+SUPPLEMENTS = {"groupage_classic": {1: 6.0, 2: 6.0, 3: 8.0, 4: 5.0},   # par colis supplémentaire d'une expédition Chrono Classic
+               "customs_classic_zone4": 15.0,                            # par expédition Chrono Classic zone 4 (Suisse)
+               "zone2_non_eu": 5.0,                                      # par expédition Classic / Express vers la zone 2 hors UE (Royaume-Uni)
+               "eco": 0.18,                                              # participation éco-responsable par colis
+               "export_declaration_ht": 17.5,                            # prestation de dédouanement (21 € TTC) par déclaration d'export — hypothèse à confirmer avec Chronopost
+               "fuel_pct_default": 12.0}                                 # surcharge carburant (variable chaque mois, réglable dans Réglages)
+# Alix Logistique — tarifs 2024 (V2 du 18/03/2024, « REMI SERY V2.pdf ») : ce qu'Alix facture par commande préparée
+ALIX = {"prep_per_bottle": 0.10, "prep_min": 8.0, "dae_out": 15.0, "dae_extra_ref": 0.50, "ex_douane": 120.0, "storage_week_per_bottle": 0.033, "insurance_pct": 0.0008,
+        "accise": {"BEAUNE_6": "FR 107859E0476", "BEAUNE_10": "FR 207859E0476", "CORPEAU": "FR 007859E0476"}}
+
+# ---------------------------------------------------------------- zones de vente : périmètre ouvert par défaut (décision JS du 15/09/2026 : particuliers en Suisse ≤ 6 btl, sociétés en UE)
+ZONES_DEFAULT = [
+    {"key": "FR", "label": "France métropolitaine et Monaco", "countries": ["FR", "MC"], "product": "chrono13", "particulier": True, "societe": True, "max_bottles": None, "multiple": None, "min_order": None, "vat_required": False,
+     "note": "circuit actuel : Chrono 13, grille de port au poids existante"},
+    {"key": "CH", "label": "Suisse (Chrono Classic, douane)", "countries": ["CH", "LI"], "product": "classic", "particulier": True, "societe": False, "max_bottles": 6, "multiple": 6, "min_order": None, "vat_required": False,
+     "note": "particuliers : 6 bouteilles et 10 kg par envoi (fiche pays), un carton de 6 par commande ; sociétés fermées pour l'instant"},
+    {"key": "UE_OUEST", "label": "Union européenne — Ouest (Chrono Classic)", "countries": ["BE", "LU", "NL", "DE", "IT", "ES", "PT", "AT", "IE"], "product": "classic", "particulier": False, "societe": True, "max_bottles": None, "multiple": 6, "min_order": None, "vat_required": True,
+     "note": "sociétés avec n° de TVA intracommunautaire valide (VIES) ; particuliers fermés tant que l'OSS et un représentant fiscal ne sont pas en place"},
+    {"key": "UE_EST", "label": "Union européenne — Nord et Est (Chrono Express)", "countries": ["DK", "FI", "EE", "LV", "LT", "CZ", "SK", "PL", "HU", "HR", "RO", "GR", "SI", "BG", "CY", "MT"], "product": "express", "particulier": False, "societe": False, "max_bottles": None, "multiple": 6, "min_order": None, "vat_required": True,
+     "note": "Chrono Classic interdit dans les pays nordiques et baltes : Chrono Express ; fermé au démarrage"},
+    {"key": "GB", "label": "Royaume-Uni (Chrono Express, douane)", "countries": ["GB"], "product": "express", "particulier": False, "societe": False, "max_bottles": 12, "multiple": 6, "min_order": 160.0, "vat_required": False,
+     "note": "TVA britannique due par le vendeur sous 135 £ : minimum de commande ; fermé au démarrage"},
+    {"key": "US", "label": "États-Unis (Chrono Express, avenant Viti US)", "countries": ["US"], "product": "express", "particulier": False, "societe": False, "max_bottles": 12, "multiple": 6, "min_order": None, "vat_required": False,
+     "note": "avenant Chrono Viti B2C US à signer ; fermé"},
+]
+BOX_DIMS_DEFAULT = {"2031": "", "2033": "", "2036": "38x28x40"}       # carton 6 bouteilles Chrono Viti : 38 × 28 × 40 cm, 1,258 kg (mesure JS)
+INTL_BOX = "2036"                                                     # règle JS : à l'international, uniquement des cartons de 6

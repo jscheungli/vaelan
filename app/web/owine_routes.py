@@ -1,5 +1,6 @@
 """OWINE : tableau de bord, commandes (cartons → Chronopost → Alix / client → réception), stock, emballages, tâches, dépôt-vente LMB."""
 import json
+import re
 from collections import defaultdict
 from datetime import date, datetime
 
@@ -123,6 +124,8 @@ def _order_ctx(request, company, o, msg=""):
     from app.packs.owine import export as _owx
     exp = _owx.state(o, cs) if (_owx.zone(o.country) != "FR" and o.mode != "retrait") else None
     xsheet = docs.export_sheet(o, cs, exp) if (exp and cs) else None
+    if exp:
+        exp["cost"] = _owx.logistics_cost(o, cs); exp["unconfirmed"] = _owx.unconfirmed_wines(o, cs); exp["abv_email"] = _owx.abv_request_email(o, cs) if exp["unconfirmed"] else None
     return _base(request, company, o=o, lines=lines, cartons=cs, carton_lines=service.carton_lines, proposal=proposal, sheet=sheet, msg=msg, editor=json.dumps(editor, ensure_ascii=False),
                  exp=exp, xsheet=xsheet, products=_owx.X.PRODUCTS, incoterms=_owx.X.INCOTERMS, stored_invoice=(_owx.stored_invoice(o) is not None),
                  missing=docs.missing_vars(o, cs) if cs else [], invoice=invoice,
@@ -847,8 +850,24 @@ def owine_douane(request: Request, code: str, msg: str = "", tous: int = 0):
                        "notes": (r.get("notes") or []) + ((r.get("b2c") or {}).get("notes") or []) + ((r.get("b2b") or {}).get("notes") or []),
                        "zoning": {p: owx.X.zoning(p, c) for p in ("classic", "express")}})
     matrix.sort(key=lambda m: ({"UE": 0, "EXPORT": 1}.get(m["zone"], 2), m["name"]))
+    try:
+        ship_plan = owx.shopify_shipping_plan()
+    except Exception as e:
+        ship_plan = {"error": str(e)[:200], "current": [], "delete": [], "create": []}
+    try:
+        tr_plan = owx.translation_plan(limit=50)
+    except Exception as e:
+        tr_plan = {"error": str(e)[:200], "resources": [], "missing_scopes": []}
+    setup = owx.setup_items()
+    open_keys = {t.key: t for t in service.tasks("open") if t.kind == "customs_setup"}
+    done_keys = {t.key: t for t in service.tasks("done") if t.kind == "customs_setup"}
+    for it in setup:
+        k = f"setup:{it['id']}"; it["task"] = open_keys.get(k) or done_keys.get(k); it["closed"] = it["done"] or (k not in open_keys and k in done_keys)
+    scopes = sorted(owx._scopes())
     return templates.TemplateResponse(request, "owine_douane.html", _base(request, company, msg=msg, rows=rows, tous=tous, settings=owx.settings(), has_sig=bool(owx.signature()), plan=plan, matrix=matrix,
-                                                                         products=owx.X.PRODUCTS, forbidden=sorted(owx.X.country_name(c) for c in owx.X.FORBIDDEN), missing=sum(1 for r in rows if r["missing"])))
+                                                                         products=owx.X.PRODUCTS, forbidden=sorted(owx.X.country_name(c) for c in owx.X.FORBIDDEN), missing=sum(1 for r in rows if r["missing"]),
+                                                                         unconfirmed=sum(1 for r in rows if r.get("abv_status") != "confirme"), zones=owx.zones(), rates=owx.rate_settings(), grid=owx.rate_grid(),
+                                                                         ship_plan=ship_plan, setup=setup, log=owx.customs_log()[:60], texts=owx.site_texts(), tr_plan=tr_plan, scopes=scopes, country_name=owx.X.country_name))
 
 
 @router.post("/c/{code}/owine/douane/reglages")
@@ -939,3 +958,151 @@ async def owine_customs_form_submit(request: Request, token: str):
     fwd = request.headers.get("x-forwarded-for")
     owx.apply_customs_form(o, dict(f), ip=(fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")))
     return RedirectResponse(f"/douane/{token}?lang={lang}&done=1", status_code=303)
+
+
+# ============================== EXPORT v2 : zones ouvertes, mise en place, degrés confirmés, textes du site, traduction, VIES
+from fastapi.responses import JSONResponse, PlainTextResponse
+
+
+@router.post("/c/{code}/owine/douane/zones")
+async def owine_douane_zones(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = await request.form()
+    owx.save_zones(dict(f)); owx.save_rate_settings(dict(f))
+    return RedirectResponse(f"/c/{code}/owine/douane?msg=Zones et réglages de la grille enregistrés.#t-zones", status_code=303)
+
+
+@router.post("/c/{code}/owine/douane/zones/shopify")
+def owine_douane_zones_shopify(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    start_job("owine_shipping", ow_jobs.run_shipping_apply, company_id=company.id, pack="owine", label="OWINE — Shopify : grille de port des zones ouvertes", user=current_user(request))
+    return RedirectResponse(f"/c/{code}/owine/douane?msg=Écriture de la grille de port lancée (résultat dans les tâches).#t-zones", status_code=303)
+
+
+@router.post("/c/{code}/owine/douane/vins/{sku}/confirmer")
+async def owine_douane_confirm(request: Request, code: str, sku: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = await request.form()
+    if f.get("undo"):
+        owx.unconfirm_wine(sku, by=_who(request)); msg = f"{sku} : confirmation retirée."
+    else:
+        abv = (f.get("abv") or "").replace(",", ".").strip()
+        owx.confirm_wine(sku, by=_who(request), abv=float(abv) if abv else None, colour=(f.get("colour") or "").strip().lower() or None, hs=re.sub(r"[^0-9]", "", f.get("hs") or "") or None, source=(f.get("source") or "").strip() or None)
+        msg = f"{sku} : données douanières confirmées."
+    return RedirectResponse(f"/c/{code}/owine/douane?msg={msg}#t-vins", status_code=303)
+
+
+@router.post("/c/{code}/owine/douane/vins/confirmer-selection")
+async def owine_douane_confirm_many(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = await request.form(); n = 0
+    for sku in f.getlist("sel"):
+        if owx.confirm_wine(sku, by=_who(request)):
+            n += 1
+    return RedirectResponse(f"/c/{code}/owine/douane?msg={n} vin(s) confirmé(s).#t-vins", status_code=303)
+
+
+@router.post("/c/{code}/owine/douane/vins/estimer")
+def owine_douane_estimate(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    n = owx.fill_abv_estimates()
+    return RedirectResponse(f"/c/{code}/owine/douane?msg={n} vin(s) : degrés pré-remplis (à confirmer).#t-vins", status_code=303)
+
+
+@router.post("/c/{code}/owine/douane/setup/{item}")
+async def owine_douane_setup(request: Request, code: str, item: str):
+    """Mise en place : « fait » ferme la tâche setup:<id>, « rouvrir » la recrée."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = await request.form()
+    if item == "refresh":
+        n = owx.setup_tasks(); return RedirectResponse(f"/c/{code}/owine/douane?msg=Liste de mise en place actualisée ({n} nouvelle(s)).#t-setup", status_code=303)
+    if f.get("reopen"):
+        from sqlmodel import Session, select
+        from app.models import OwTask
+        with Session(engine) as s:
+            t = s.exec(select(OwTask).where(OwTask.key == f"setup:{item}")).first()
+            if t:
+                t.status, t.done_at = "open", None; s.add(t); s.commit()
+        return RedirectResponse(f"/c/{code}/owine/douane?msg=Étape rouverte.#t-setup", status_code=303)
+    service.close_tasks_by_key(f"setup:{item}")
+    return RedirectResponse(f"/c/{code}/owine/douane?msg=Étape marquée faite.#t-setup", status_code=303)
+
+
+@router.get("/c/{code}/owine/douane/snippet.liquid")
+def owine_douane_snippet(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    return Response(owx.theme_snippet(), media_type="text/plain; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="owine-international.liquid"'})
+
+
+@router.post("/c/{code}/owine/douane/traduction")
+def owine_douane_translate(request: Request, code: str, what: str = "apply"):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    if what == "publish":
+        try:
+            msg = owx.publish_english()
+        except Exception as e:
+            msg = str(e)
+        return RedirectResponse(f"/c/{code}/owine/douane?msg={msg}#t-langue", status_code=303)
+    start_job("owine_translate", ow_jobs.run_translation, company_id=company.id, pack="owine", label="OWINE — Shopify : traduction anglaise (Claude → translationsRegister)", user=current_user(request))
+    return RedirectResponse(f"/c/{code}/owine/douane?msg=Traduction lancée (plusieurs minutes ; résultat dans les tâches).#t-langue", status_code=303)
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/demande-degres")
+def owine_export_ask_abv(request: Request, code: str, name: str):
+    """E-mail à Alix : confirmer les degrés (étiquette) des vins non confirmés de la commande, avant la facture commerciale."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); cs = service.cartons(o.id)
+    em = owx.abv_request_email(o, cs)
+    if not em["wines"]:
+        return _exp_redirect(code, name, "Tous les degrés sont déjà confirmés.")
+    ok, m = gmail_imap.send_mail(CODE, em["to"], em["subject"], em["body"] + "\n\n" + _signature(), cc=em["cc"], from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
+    if not ok:
+        return _exp_redirect(code, name, f"Envoi impossible : {m}")
+    st = owx.get_state(o); st["abv_request_sent_at"] = service.now_local().strftime("%d/%m/%Y %H:%M"); owx.set_state(o, st)
+    return _exp_redirect(code, name, f"Demande envoyée à Alix pour {len(em['wines'])} vin(s).")
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/degres")
+async def owine_export_confirm_abv(request: Request, code: str, name: str):
+    """Réponse d'Alix reportée : un degré par vin non confirmé → vins confirmés (source « Alix, commande OWxxxx »)."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); f = await request.form(); n = 0
+    for k, v in f.items():
+        if k.startswith("abv_") and (v or "").strip():
+            sku = k[4:]
+            try:
+                owx.confirm_wine(sku, by=f"{_who(request)} (réponse Alix, commande {o.name})", abv=float(str(v).replace(",", ".")), source=f"étiquette lue par Alix, commande {o.name}"); n += 1
+            except ValueError:
+                pass
+    return _exp_redirect(code, name, f"{n} degré(s) confirmé(s).")
+
+
+@router.get("/api/owine/vies")
+def owine_api_vies(request: Request, vat: str = ""):
+    """Vérification VIES pour la page panier du site (extrait de thème) : {valid, name}. Réponse mise en cache 30 jours côté Vaelan."""
+    r = owx.vies_check(vat)
+    origin = request.headers.get("origin") or ""
+    headers = {"Cache-Control": "no-store"}
+    if origin.endswith("owine.co") or origin.endswith(".myshopify.com"):
+        headers["Access-Control-Allow-Origin"] = origin
+    return JSONResponse({"valid": r.get("valid"), "name": r.get("name"), "error": r.get("error"), "vat": r.get("vat")}, headers=headers)

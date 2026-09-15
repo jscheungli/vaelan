@@ -249,7 +249,7 @@ def box_plan(n: int) -> List[int]:
     return caps
 
 
-def propose_cartons(lines: List[dict], stock_map: dict = None) -> List[dict]:
+def propose_cartons(lines: List[dict], stock_map: dict = None, intl: bool = False) -> List[dict]:
     """Répartit les bouteilles (une par une, les plus chères d'abord) dans les cartons pour équilibrer la valeur assurée.
     Chaque bouteille porte son propriétaire (dépôt-vente LMB en priorité si le stock OWINE ne suffit pas)."""
     bottles = []
@@ -269,7 +269,7 @@ def propose_cartons(lines: List[dict], stock_map: dict = None) -> List[dict]:
                     owner = "LMB"
             bottles.append({"sku": l["sku"], "title": l.get("title", ""), "cost": cost, "price": float(l.get("price") or 0), "owner": owner})
     n = len(bottles)
-    caps = box_plan(n)
+    caps = [6] * math.ceil(n / 6) if intl and n else box_plan(n)      # international : uniquement des cartons de 6 (réf. 2036)
     boxes = [{"cap": c, "bottles": [], "value": 0.0} for c in caps]
     for b in sorted(bottles, key=lambda x: -x["cost"]):
         cands = [bx for bx in boxes if len(bx["bottles"]) < bx["cap"]]

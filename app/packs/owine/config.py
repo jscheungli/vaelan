@@ -43,7 +43,7 @@ TASK_KINDS = {
     "pennylane_invoice": "Facture client Pennylane à vérifier et valider", "packaging": "Réception d'emballages à confirmer",
     "cost_missing": "Coût d'achat manquant", "stock": "Écart de stock à vérifier", "purchase_pending": "Achat facturé, livraison à confirmer / à saisir", "other": "Autre",
     "customs": "Export : formalités douanières", "customs_info": "Export : informations à obtenir du client", "customs_data": "Export : données douanières des vins",
-    "export_proof": "Export : justificatif d'exportation à archiver",
+    "export_proof": "Export : justificatif d'exportation à archiver", "customs_setup": "Export : mise en place (à faire une fois)",
 }
 ALIX_EMAIL = "beaune@transportsalix.com"
 ALIX_CC = ["remi.sery@gmail.com"]

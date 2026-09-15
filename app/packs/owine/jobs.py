@@ -25,7 +25,7 @@ def run_sync(ctx=None) -> str:
     except Exception as e:
         log(f"Pennylane : {e}"); n3 = 0
     from . import export
-    for fn in (service.pennylane_purchase_tasks, service.lmb_drafts_sync, service.shopify_fulfill_due, export.export_tasks):
+    for fn in (service.pennylane_purchase_tasks, service.lmb_drafts_sync, service.shopify_fulfill_due, export.export_tasks, export.setup_tasks):
         try:
             fn(log=log)
         except Exception as e:
@@ -75,3 +75,15 @@ def run_shopify_customs(ctx=None) -> str:
     """Écrit dans Shopify les codes SH + origine FR des vins et le poids réel des sélections (page Douane, bouton)."""
     from . import export
     return export.shopify_customs_apply(log=ctx.log if ctx else None)
+
+
+def run_shipping_apply(ctx=None) -> str:
+    """Écrit dans le profil de livraison Shopify les zones ouvertes et leurs tarifs par carton de 6 (page Douane › Zones)."""
+    from . import export
+    return export.shopify_shipping_apply(log=ctx.log if ctx else None)
+
+
+def run_translation(ctx=None) -> str:
+    """Traduit en anglais produits, collections, pages et politiques (Claude) et enregistre les traductions dans Shopify."""
+    from . import export
+    return export.translation_apply(log=ctx.log if ctx else None)

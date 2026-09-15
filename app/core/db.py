@@ -66,6 +66,10 @@ _COLUMN_ADDS = [
     "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS attributes VARCHAR",
     "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS export_json VARCHAR",
     "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS customs_token VARCHAR",
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS abv_status VARCHAR",
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS abv_source VARCHAR",
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS customs_confirmed_at TIMESTAMP",
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS customs_confirmed_by VARCHAR",
 ]
 
 

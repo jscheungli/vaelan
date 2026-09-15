@@ -749,6 +749,8 @@ def export_alix_instructions(o, cs, exp: dict) -> str:
         lines.append("Ne pas utiliser de caisse en bois ; étiquette collée à plat sur le dessus, jamais sur une arête (code-barres).")
     else:
         lines.append("Pas de document douanier (Union européenne) : lettre de transport seule sur chaque colis" + (f" ; sticker multi-pièces 1/{n}, 2/{n}… à côté de l'étiquette." if n > 1 else "."))
+        if exp["kind"] == "societe":
+            lines.append(f"Destinataire professionnel dans l'UE (n° de TVA {o.vat_number or '—'}) : merci d'émettre le document d'accompagnement accises (DAE ou e-DSA) pour cette expédition, comme convenu, et de nous en transmettre la référence.")
     return "\n".join(lines)
 
 
