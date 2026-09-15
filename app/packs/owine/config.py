@@ -12,13 +12,13 @@ LOCATIONS = {"ALIX": "Entrepôt Alix Transport, Beaune", "CHAUX": "La Mémoire d
 OWNERS = {"OWINE": "OWINE SAS", "LMB": "La Mémoire de Bourgogne (dépôt-vente)"}
 
 # emballages (références Chronopost Viti) — suivis comme des articles, lieu ALIX, propriétaire OWINE
-PACKAGING = {
-    "2030": {"title": "Carton 2 btl. Réf. 2030", "bottles": 2},
-    "2031": {"title": "Carton 1 btl. Réf. 2031", "bottles": 1},
-    "2033": {"title": "Carton 3 btl. Réf. 2033", "bottles": 3},
-    "2036": {"title": "Carton 6 btl. Réf. 2036", "bottles": 6},
-    "8025": {"title": "Feuille A4 adhésive Réf. 8025", "bottles": 0},
-    "2010": {"title": "Pochette Chronopost Réf. 2010", "bottles": 0},
+PACKAGING = {   # kg = poids de l'emballage vide (kit de démarrage Chrono Viti) → poids net déclaré en douane = brut − emballage
+    "2030": {"title": "Carton 2 btl. Réf. 2030", "bottles": 2, "kg": 0.405},
+    "2031": {"title": "Carton 1 btl. Réf. 2031", "bottles": 1, "kg": 0.277},
+    "2033": {"title": "Carton 3 btl. Réf. 2033", "bottles": 3, "kg": 0.714},
+    "2036": {"title": "Carton 6 btl. Réf. 2036", "bottles": 6, "kg": 1.258},
+    "8025": {"title": "Feuille A4 adhésive Réf. 8025", "bottles": 0, "kg": 0},
+    "2010": {"title": "Pochette Chronopost Réf. 2010", "bottles": 0, "kg": 0},
 }
 BOX_FOR = {6: "2036", 3: "2033", 1: "2031"}      # carton choisi selon le nombre de bouteilles qu'il contient
 LABEL_SHEET = "8025"                            # une feuille adhésive par carton
@@ -42,6 +42,8 @@ TASK_KINDS = {
     "reception": "Confirmer la réception avec le client", "lmb_invoice": "Facture LMB → OWINE à établir (dépôt-vente)",
     "pennylane_invoice": "Facture client Pennylane à vérifier et valider", "packaging": "Réception d'emballages à confirmer",
     "cost_missing": "Coût d'achat manquant", "stock": "Écart de stock à vérifier", "purchase_pending": "Achat facturé, livraison à confirmer / à saisir", "other": "Autre",
+    "customs": "Export : formalités douanières", "customs_info": "Export : informations à obtenir du client", "customs_data": "Export : données douanières des vins",
+    "export_proof": "Export : justificatif d'exportation à archiver",
 }
 ALIX_EMAIL = "beaune@transportsalix.com"
 ALIX_CC = ["remi.sery@gmail.com"]

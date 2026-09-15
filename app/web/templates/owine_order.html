@@ -63,6 +63,8 @@
   {% else %}<span class="text-muted">Aucune ligne.</span>{% endif %}
   </div></div>
 
+  {% if exp %}{% include "_owine_export_card.html" %}{% endif %}
+
   {# ---- étape 2 : Chronopost #}
   {% if cartons and o.mode == 'chronopost' %}
   <div class="card shadow-sm mb-3 {{ 'border-warning' if step == 2 else '' }}"><div class="card-header py-2 small fw-semibold">2. Chronopost — à saisir sur chronopost.fr (Expédier → Étape par étape) {% if o.status not in ('a_traiter', 'cartons') %}<span class="badge text-bg-success">étiquettes reçues</span>{% endif %}</div><div class="card-body py-2 small">
@@ -71,6 +73,12 @@
       <div class="col-md-7"><div class="text-muted">Colis : {{ sheet.count }} · référence commande <strong>{{ sheet.order_ref }}</strong> · total {{ sheet.total_weight }} kg · assuré {{ sheet.total_insured }} €</div>
         <table class="table table-sm table-bordered mb-0"><thead><tr><th>Réf. colis</th><th>Poids</th><th>Valeur assurée</th><th>Bouteilles</th></tr></thead><tbody>
         {% for p in sheet.parcels %}<tr><td><strong>{{ p.ref }}</strong> <span class="text-muted">({{ p.reference }})</span></td><td>{{ p.weight_kg }} kg</td><td>{{ p.insured|int }} €</td><td>{{ p.bottles }}</td></tr>{% endfor %}</tbody></table></div>
+      {% if xsheet %}<div class="col-12"><div class="border rounded p-2" style="background:#fdf8f8"><strong>International — à saisir en plus sur chronopost.fr :</strong>
+        produit <strong>{{ xsheet.product }}</strong> (code {{ xsheet.product_code }}) · destinataire <strong>{{ 'professionnel' if exp.kind == 'societe' else 'particulier' }}</strong> · incoterm <strong>{{ xsheet.incoterm }}</strong> · EORI expéditeur <strong>{{ xsheet.eori }}</strong>
+        {% if xsheet.customs %}· valeur en douane <strong>{{ '%.2f'|format(xsheet.customs_value) }} EUR</strong> (marchandise HT, jamais 0 €) · description « {{ xsheet.content }} »{% endif %}
+        · dimensions : 2031 {{ xsheet.dims['2031'] }} / 2033 {{ xsheet.dims['2033'] }} / 2036 {{ xsheet.dims['2036'] }} · code postal sans espace ni caractère spécial.
+        {% if xsheet.shipments|length > 1 %}<div class="mt-1 text-danger fw-semibold">{{ xsheet.shipments|length }} envois séparés à créer (limite de la fiche pays) : {% for sh in xsheet.shipments %}carton {{ sh.cartons|join('+') }} = envoi {{ sh.suffix }} ({{ sh.bottles }} btl, {{ sh.kg }} kg, valeur {{ '%.2f'|format(sh.value) }} EUR){% if not loop.last %} · {% endif %}{% endfor %}</div>{% else %}<div class="mt-1">Un seul envoi multi-colis ({{ cartons|length }} colis) : cocher « multi-colis », référence {{ o.name }}.</div>{% endif %}
+      </div></div>{% endif %}
     </div>
     <form method="post" action="/c/{{ company.code }}/owine/commandes/{{ o.name }}/etiquettes" enctype="multipart/form-data" class="mt-2">
       <div class="row g-2 align-items-end">

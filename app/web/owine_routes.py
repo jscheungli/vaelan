@@ -120,7 +120,11 @@ def _order_ctx(request, company, o, msg=""):
             invoice = service.pennylane_invoice_for(o.name, force=(o.status == "a_facturer"))
         except Exception:
             invoice = None
+    from app.packs.owine import export as _owx
+    exp = _owx.state(o, cs) if (_owx.zone(o.country) != "FR" and o.mode != "retrait") else None
+    xsheet = docs.export_sheet(o, cs, exp) if (exp and cs) else None
     return _base(request, company, o=o, lines=lines, cartons=cs, carton_lines=service.carton_lines, proposal=proposal, sheet=sheet, msg=msg, editor=json.dumps(editor, ensure_ascii=False),
+                 exp=exp, xsheet=xsheet, products=_owx.X.PRODUCTS, incoterms=_owx.X.INCOTERMS, stored_invoice=(_owx.stored_invoice(o) is not None),
                  missing=docs.missing_vars(o, cs) if cs else [], invoice=invoice,
                  email_alix=docs.email_alix(o, cs) if cs else None, email_client=docs.email_client(o, cs) if cs else None,
                  tasks=[t for t in service.tasks("open") if t.ref == o.name], moves=service.moves(ref=o.name))
@@ -332,6 +336,11 @@ def owine_order_doc(request: Request, code: str, name: str, what: str):
         return Response(docs.packing_list_pdf(o, cs), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename=\"Detail {o.name}.pdf\"; filename*=UTF-8''D%C3%A9tail%20{o.name}.pdf"})
     if what == "alix":
         return Response(docs.alix_xlsx(o, cs), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{o.name}.xlsx"'})
+    if what == "facture-commerciale":
+        inv = owx.stored_invoice(o) if not request.query_params.get("live") else None
+        data = inv[1] if inv else docs.commercial_invoice_pdf(o, cs)
+        fname = (inv[0] if inv else f"Facture commerciale {owx.invoice_number(o)} (apercu).pdf").encode("ascii", "ignore").decode()
+        return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{fname}"'})
     if what.startswith("etiquette"):
         return Response("?", status_code=404)
     if what == "zip":
@@ -381,6 +390,11 @@ def owine_order_emails(request: Request, code: str, name: str, msg: str = ""):
     base = f"/c/{code}/owine/commandes/{name}/doc"
     att_alix = [(f"Détail {o.name}.pdf", f"{base}/colisage", size(pl)), (f"{o.name}.xlsx", f"{base}/alix", size(xl))] + [(n, f"{base}/etiquette/{i}", size(d)) for i, (n, d) in enumerate(labels)]
     att_client = [(f"Détail {o.name}.pdf", f"{base}/colisage", size(pl))] + [(n, f"{base}/etiquette/{i}", size(d)) for i, (n, d) in enumerate(labels)]
+    from app.packs.owine import export as _owx
+    if _owx.zone(o.country) == "EXPORT":
+        inv = _owx.stored_invoice(o)
+        if inv:
+            att_alix.append((inv[0] + " (3 exemplaires)", f"{base}/facture-commerciale", size(inv[1]))); att_client.append((inv[0], f"{base}/facture-commerciale", size(inv[1])))
     return templates.TemplateResponse(request, "owine_emails.html", _base(request, company, o=o, em=em, ed=ed, msg=msg, gmail_ok=gmail_imap.configured(CODE), labels=[n for n, _ in labels],
                                                                          att_alix=att_alix, att_client=att_client, sent=o.status in ("envoye", "attente_reception", "a_facturer", "cloturee")))
 
@@ -413,6 +427,12 @@ def _send_emails(request, code, o, ed):
     logo = [("logo", open(docs.LOGO, "rb").read(), "image/png")]
     att_alix = [(f"Détail {o.name}.pdf", pl, "application/pdf"), (f"{o.name}.xlsx", xl, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] + [(n, d, "application/pdf") for n, d in labels]
     att_cli = [(f"Détail {o.name}.pdf", pl, "application/pdf")] + [(n, d, "application/pdf") for n, d in labels]
+    from app.packs.owine import export as _owx
+    if _owx.zone(o.country) == "EXPORT":
+        inv = _owx.stored_invoice(o)
+        if not inv or not (_owx.get_state(o).get("invoice") or {}).get("final"):
+            return RedirectResponse(f"/c/{code}/owine/commandes/{o.name}?msg=Export : générez la facture commerciale définitive (étiquettes reçues) avant l'envoi.#export", status_code=303)
+        att_alix.append((inv[0], inv[1], "application/pdf")); att_cli.append((inv[0], inv[1], "application/pdf"))
     ok1, m1 = gmail_imap.send_mail(CODE, em["alix"]["to"], em["alix"]["subject"], em["alix"]["text"], cc=em["alix"]["cc"], attachments=att_alix, html=em["alix"]["html"], inline=logo,
                                    from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
     ok2, m2 = gmail_imap.send_mail(CODE, em["client"]["to"], em["client"]["subject"], em["client"]["text"], cc=em["client"]["cc"], attachments=att_cli, html=em["client"]["html"], inline=logo,
@@ -722,3 +742,200 @@ def owine_order_shopify_fulfill(request: Request, code: str, name: str):
     except Exception as e:
         msg = f"{name} : {e}"
     return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={msg}", status_code=303)
+
+
+# ============================== EXPORT / international (v0.1.195) : formalités sur la commande, page Douane, formulaire public
+from app.packs.owine import export as owx
+
+
+def _exp_redirect(code, name, msg):
+    return RedirectResponse(f"/c/{code}/owine/commandes/{name}?msg={msg}#export", status_code=303)
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/infos")
+async def owine_export_infos(request: Request, code: str, name: str):
+    """Réglages export de la commande : type de client, n° TVA / EORI / identifiant fiscal, produit Chronopost, incoterm, n° et date de facture, port HT, notes."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); f = await request.form()
+    g = lambda k: (f.get(k) or "").strip()
+    fields = {"customer_type": g("customer_type") or None, "vat_number": g("vat_number"), "eori": g("eori"), "tax_id": g("tax_id"), "billing_company": g("billing_company"),
+              "product": g("product") or None, "incoterm": g("incoterm") or "DAP", "invoice_no": g("invoice_no"), "invoice_date": g("invoice_date"), "notes": g("notes"), "content_desc": g("content_desc")}
+    sh = g("shipping_ht").replace(",", ".")
+    fields["shipping_ht"] = float(sh) if sh else None
+    ins = g("insurance_ht").replace(",", ".")
+    fields["insurance_ht"] = float(ins) if ins else 0
+    if g("company"):
+        o.company = g("company")
+    owx.set_info(o, by=_who(request), **fields)
+    return _exp_redirect(code, name, "Réglages export enregistrés.")
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/check/{key}")
+async def owine_export_check(request: Request, code: str, name: str, key: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); f = await request.form()
+    owx.toggle_check(o, key, (f.get("done") or "") == "1", by=_who(request), note=(f.get("note") or "").strip() or None)
+    return _exp_redirect(code, name, "Étape mise à jour.")
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/facture")
+def owine_export_invoice_make(request: Request, code: str, name: str):
+    """Génère et archive la facture commerciale (3 exemplaires par envoi) ; « définitive » quand tous les cartons ont leur n° Chronopost."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name); cs = service.cartons(o.id)
+    if not cs:
+        return _exp_redirect(code, name, "Validez d'abord les cartons.")
+    try:
+        pdf = docs.commercial_invoice_pdf(o, cs)
+    except Exception as e:
+        return _exp_redirect(code, name, f"Facture impossible : {e}")
+    final = all(c.tracking for c in cs)
+    meta = owx.store_invoice(o, pdf, by=_who(request), final=final)
+    return _exp_redirect(code, name, f"Facture commerciale {meta['no']} générée (version {meta['version']}, {'définitive' if final else 'PROVISOIRE : numéros de colis manquants'}).")
+
+
+@router.post("/c/{code}/owine/commandes/{name}/export/demande-infos")
+def owine_export_ask_info(request: Request, code: str, name: str):
+    """Envoie au client (FR ou EN) le lien du formulaire public « informations douanières » et crée la tâche de suivi."""
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    o = service.get_order(name)
+    if not o.email:
+        return _exp_redirect(code, name, "Pas d'e-mail client.")
+    url = owx.customs_url(o); lang = "en" if (o.locale or "fr").lower()[:2] != "fr" else "fr"
+    cname = owx.X.country_name(o.country, lang); first = (o.customer or "").split(" ")[0]
+    if lang == "en":
+        subject = f"Your oWine order {o.name}: information needed for shipping to {cname}"
+        body = (f"Hello {first},\n\nThank you for your order {o.name}. To ship it to {cname} with Chronopost, customs require a few details that the online checkout does not collect: "
+                f"a phone number, and for a company its VAT / EORI number. It takes one minute here:\n\n{url}\n\nYour order is shipped Incoterm DAP: import duties, VAT and clearance fees of your country are payable to the carrier before delivery.\n\n"
+                "Thank you, and see you very soon,\nJean-Sébastien CHEUNG-AH-SEUNG · oWine")
+    else:
+        subject = f"Votre commande oWine {o.name} : informations nécessaires pour l'expédition en {cname}"
+        body = (f"Bonjour {first},\n\nMerci pour votre commande {o.name}. Pour l'expédier en {cname} avec Chronopost, la douane exige quelques informations que la commande en ligne ne collecte pas : "
+                f"un numéro de téléphone et, pour une société, le n° de TVA / EORI. Cela prend une minute ici :\n\n{url}\n\nVotre commande voyage en incoterm DAP : les droits, la TVA et les frais de dédouanement de votre pays sont réglés au transporteur avant la livraison.\n\n"
+                "Merci, et à très bientôt,\nJean-Sébastien CHEUNG-AH-SEUNG · oWine")
+    ok, m = gmail_imap.send_mail(CODE, [o.email], subject, body, cc=list(cfg.CLIENT_CC), from_name="Jean-Sébastien CHEUNG-AH-SEUNG · oWine", reply_to=cfg.CONTACT_EMAIL)
+    if not ok:
+        return _exp_redirect(code, name, f"Envoi impossible : {m}. Lien à transmettre vous-même : {url}")
+    owx.mark_form_sent(o, by=_who(request))
+    return _exp_redirect(code, name, f"Demande envoyée à {o.email} ({'anglais' if lang == 'en' else 'français'}).")
+
+
+# ------------------------------ page Douane : réglages exportateur, signature, données douanières des vins, Shopify, matrice pays
+@router.get("/c/{code}/owine/douane", response_class=HTMLResponse)
+def owine_douane(request: Request, code: str, msg: str = "", tous: int = 0):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    rows = owx.customs_rows(active_only=not tous)
+    plan = None
+    try:
+        plan = owx.shopify_customs_plan()
+    except Exception as e:
+        plan = {"error": str(e)[:200], "hs": [], "weight": [], "skipped": []}
+    matrix = []
+    for c, r in owx.X.COUNTRY_RULES.items():
+        matrix.append({"code": c, "name": owx.X.country_name(c), "zone": owx.zone(c), "customs": bool(r.get("customs")),
+                       "b2c": {p: owx.product_status(c, "particulier", p) for p in ("classic", "express")}, "b2b": {p: owx.product_status(c, "societe", p) for p in ("classic", "express")},
+                       "notes": (r.get("notes") or []) + ((r.get("b2c") or {}).get("notes") or []) + ((r.get("b2b") or {}).get("notes") or []),
+                       "zoning": {p: owx.X.zoning(p, c) for p in ("classic", "express")}})
+    matrix.sort(key=lambda m: ({"UE": 0, "EXPORT": 1}.get(m["zone"], 2), m["name"]))
+    return templates.TemplateResponse(request, "owine_douane.html", _base(request, company, msg=msg, rows=rows, tous=tous, settings=owx.settings(), has_sig=bool(owx.signature()), plan=plan, matrix=matrix,
+                                                                         products=owx.X.PRODUCTS, forbidden=sorted(owx.X.country_name(c) for c in owx.X.FORBIDDEN), missing=sum(1 for r in rows if r["missing"])))
+
+
+@router.post("/c/{code}/owine/douane/reglages")
+async def owine_douane_settings(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = await request.form()
+    owx.save_settings(eori=f.get("eori"), siret=f.get("siret"), capital=f.get("capital"), phone=f.get("phone"), contact=f.get("contact"), sign_place=f.get("sign_place"), rcs=f.get("rcs"),
+                      box_dims={k: f.get(f"dims_{k}") for k in ("2031", "2033", "2036")})
+    return RedirectResponse(f"/c/{code}/owine/douane?msg=Réglages enregistrés.", status_code=303)
+
+
+@router.post("/c/{code}/owine/douane/signature")
+async def owine_douane_signature(request: Request, code: str, file: UploadFile = File(None)):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    data = await file.read() if file else b""
+    if not data:
+        owx.set_signature(None)
+        return RedirectResponse(f"/c/{code}/owine/douane?msg=Signature retirée.", status_code=303)
+    if not (data[:8].startswith(b"\x89PNG") or data[:3] == b"\xff\xd8\xff"):
+        return RedirectResponse(f"/c/{code}/owine/douane?msg=La signature doit être une image PNG ou JPEG.", status_code=303)
+    owx.set_signature(data, file.filename or "signature.png")
+    return RedirectResponse(f"/c/{code}/owine/douane?msg=Signature enregistrée ({len(data) // 1024} Ko) : elle sera apposée sur les factures commerciales.", status_code=303)
+
+
+@router.get("/c/{code}/owine/douane/signature.png")
+def owine_douane_signature_png(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    sig = owx.signature()
+    return Response(sig or b"", media_type="image/png" if sig else "text/plain", status_code=200 if sig else 404)
+
+
+@router.post("/c/{code}/owine/douane/vins")
+async def owine_douane_wines(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    f = await request.form()
+    n = owx.save_customs_rows(dict(f))
+    return RedirectResponse(f"/c/{code}/owine/douane?msg={n} vin(s) mis à jour.", status_code=303)
+
+
+@router.post("/c/{code}/owine/douane/shopify")
+def owine_douane_shopify(request: Request, code: str):
+    company, redir = _guard(request, code)
+    if redir:
+        return redir
+    start_job("owine_shopify_customs", ow_jobs.run_shopify_customs, company_id=company.id, pack="owine", label="OWINE — Shopify : codes SH, origine, poids des sélections", user=current_user(request))
+    return RedirectResponse(f"/c/{code}/owine/douane?msg=Écriture Shopify lancée (résultat dans les tâches).", status_code=303)
+
+
+# ------------------------------ formulaire PUBLIC « informations douanières » (lien envoyé au client, FR / EN)
+def _pub_lang(request: Request, o) -> str:
+    q = request.query_params.get("lang")
+    if q in ("fr", "en"):
+        return q
+    return "en" if (o and (o.locale or "fr").lower()[:2] != "fr") else "fr"
+
+
+@router.get("/douane/{token}", response_class=HTMLResponse)
+def owine_customs_form(request: Request, token: str, done: int = 0, err: str = ""):
+    o = owx.by_token(token)
+    lang = _pub_lang(request, o)
+    if not o:
+        return templates.TemplateResponse(request, "owine_douane_public.html", {"o": None, "lang": lang, "done": 0, "err": "", "cfg": cfg}, status_code=404)
+    exp = owx.state(o, service.cartons(o.id))
+    return templates.TemplateResponse(request, "owine_douane_public.html", {"o": o, "lang": lang, "done": done, "err": err, "cfg": cfg, "exp": exp, "kind": owx.dest_kind(o),
+                                                                            "country": owx.X.country_name(o.country, lang), "tax_id_label": exp["tax_id_label"], "token": token})
+
+
+@router.post("/douane/{token}")
+async def owine_customs_form_submit(request: Request, token: str):
+    o = owx.by_token(token)
+    if not o:
+        return RedirectResponse(f"/douane/{token}", status_code=303)
+    f = await request.form(); lang = (f.get("lang") or "fr")
+    if not (f.get("phone") or "").strip():
+        return RedirectResponse(f"/douane/{token}?lang={lang}&err=phone", status_code=303)
+    if (f.get("kind") == "societe") and not ((f.get("vat") or "").strip() or (f.get("eori") or "").strip()):
+        return RedirectResponse(f"/douane/{token}?lang={lang}&err=company", status_code=303)
+    if f.get("dap") != "1":
+        return RedirectResponse(f"/douane/{token}?lang={lang}&err=dap", status_code=303)
+    fwd = request.headers.get("x-forwarded-for")
+    owx.apply_customs_form(o, dict(f), ip=(fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")))
+    return RedirectResponse(f"/douane/{token}?lang={lang}&done=1", status_code=303)

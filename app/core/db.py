@@ -49,17 +49,39 @@ _COLUMN_ADDS = [
     "ALTER TABLE lp_store_months ADD COLUMN IF NOT EXISTS profit_after_tax FLOAT DEFAULT 0",
     "ALTER TABLE lp_forecasts ADD COLUMN IF NOT EXISTS set_id INTEGER",
     "ALTER TABLE lp_forecasts ADD COLUMN IF NOT EXISTS scenario VARCHAR",
+    # OWINE export (v0.1.195)
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS abv FLOAT",
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS volume_cl INTEGER DEFAULT 75",
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS hs_code VARCHAR",
+    "ALTER TABLE ow_items ADD COLUMN IF NOT EXISTS origin VARCHAR DEFAULT 'FR'",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS locale VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS customer_type VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS billing_company VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS vat_number VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS eori VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS tax_id VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS tax_total FLOAT DEFAULT 0",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS tax_rate FLOAT DEFAULT 0",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS shipping_paid FLOAT DEFAULT 0",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS attributes VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS export_json VARCHAR",
+    "ALTER TABLE ow_orders ADD COLUMN IF NOT EXISTS customs_token VARCHAR",
 ]
 
 
 def _ensure_columns() -> None:
     from sqlalchemy import text
+    sqlite = engine.dialect.name == "sqlite"
     with engine.begin() as conn:
         for stmt in _COLUMN_ADDS:
             try:
+                if sqlite:
+                    if "ADD COLUMN IF NOT EXISTS" not in stmt:
+                        continue                              # ALTER TYPE… : Postgres seulement
+                    stmt = stmt.replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN")   # SQLite n'a pas IF NOT EXISTS : « duplicate column » avalé ci-dessous
                 conn.execute(text(stmt))
             except Exception:
-                pass  # SQLite (dev, base fraîche) ou colonne déjà présente
+                pass  # colonne déjà présente (ou base fraîche où la table n'existe pas encore)
 
 
 def get_session():

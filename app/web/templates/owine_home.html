@@ -8,6 +8,7 @@
   <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/stock">Stock</a>
   <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/emballages">Emballages</a>
   <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/lmb">Dépôt-vente LMB</a>
+  <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/douane"><i class="bi bi-globe2"></i> Douane &amp; export</a>
   <a class="btn btn-sm btn-outline-dark" href="/c/{{ company.code }}/owine/taches">Tâches {% if tasks %}<span class="badge text-bg-warning">{{ tasks|length }}</span>{% endif %}</a>
   <form method="post" action="/c/{{ company.code }}/owine/sync" class="ms-auto"><button class="btn btn-sm btn-dark"><i class="bi bi-arrow-repeat"></i> Synchroniser Shopify</button></form>
 </div>

@@ -529,6 +529,10 @@ class OwItem(SQLModel, table=True):
     couleur: Optional[str] = None
     millesime: Optional[int] = None
     format: str = "75CL"
+    abv: Optional[float] = None                          # degré d'alcool (% vol) — facture douanière
+    volume_cl: int = 75                                  # contenance (cl)
+    hs_code: Optional[str] = None                        # code SH / NC (export) — 22042113 blanc, 22042143 rouge (AOP Bourgogne)
+    origin: Optional[str] = "FR"                         # pays d'origine (ISO 2)
     price: Optional[float] = None                        # prix de vente TTC Shopify
     cost: Optional[float] = None                         # coût d'achat OWINE (Shopify unitCost, sinon Sheet)
     cost_source: Optional[str] = None
@@ -589,6 +593,19 @@ class OwOrder(SQLModel, table=True):
     closed_at: Optional[datetime] = None
     note: Optional[str] = None
     source: str = "shopify"
+    # ---- international / export (v0.1.195) : identité fiscale du destinataire, montants Shopify, état des formalités
+    locale: Optional[str] = None                         # customerLocale Shopify (fr-FR, en, de…) → langue des e-mails client
+    customer_type: Optional[str] = None                  # particulier / societe
+    billing_company: Optional[str] = None
+    vat_number: Optional[str] = None                     # n° de TVA du destinataire (société)
+    eori: Optional[str] = None                           # n° EORI du destinataire (société, hors UE)
+    tax_id: Optional[str] = None                         # identifiant fiscal du particulier quand le pays l'exige
+    tax_total: float = 0                                 # TVA facturée par Shopify (0 = vente hors taxes)
+    tax_rate: float = 0                                  # taux appliqué par Shopify (0.2 = TVA française)
+    shipping_paid: float = 0                             # frais de port facturés au client (TTC si tax_total > 0)
+    attributes: Optional[str] = None                     # attributs de commande Shopify (JSON [{key, value}])
+    export_json: Optional[str] = None                    # formalités export : produit, incoterm, facture, contrôles cochés (JSON)
+    customs_token: Optional[str] = None                  # jeton du formulaire public « informations douanières »
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 

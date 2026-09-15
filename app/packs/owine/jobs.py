@@ -24,7 +24,8 @@ def run_sync(ctx=None) -> str:
             log(f"{n4} commande(s) clôturée(s) (facture validée)")
     except Exception as e:
         log(f"Pennylane : {e}"); n3 = 0
-    for fn in (service.pennylane_purchase_tasks, service.lmb_drafts_sync, service.shopify_fulfill_due):
+    from . import export
+    for fn in (service.pennylane_purchase_tasks, service.lmb_drafts_sync, service.shopify_fulfill_due, export.export_tasks):
         try:
             fn(log=log)
         except Exception as e:
@@ -68,3 +69,9 @@ def weekly_digest(ctx=None) -> str:
     ok, info = mailer.send(config.DIGEST_TO, f"OWINE — {len(ts)} tâche(s) ouverte(s), {len(pending)} commande(s) en cours", "\n".join(lines))
     log(f"rappel hebdomadaire : {'envoyé' if ok else info}")
     return f"{len(ts)} tâche(s), {len(pending)} commande(s) — e-mail {'envoyé' if ok else 'non envoyé : ' + info}"
+
+
+def run_shopify_customs(ctx=None) -> str:
+    """Écrit dans Shopify les codes SH + origine FR des vins et le poids réel des sélections (page Douane, bouton)."""
+    from . import export
+    return export.shopify_customs_apply(log=ctx.log if ctx else None)

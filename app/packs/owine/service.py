@@ -352,7 +352,7 @@ def sync_items(log=None) -> dict:
     if not c:
         raise RuntimeError("Shopify non configuré pour OWINE")
     q = """query($first:Int!,$after:String){ productVariants(first:$first, after:$after) { pageInfo{hasNextPage endCursor} edges{ node{
-      id sku title price product{ id title status vendor productType } inventoryItem{ unitCost{amount} } } } } }"""
+      id sku title price product{ id title status vendor productType } inventoryItem{ unitCost{amount} harmonizedSystemCode countryCodeOfOrigin } } } } }"""
     n, missing = 0, []
     for v in c.pages(q, "productVariants", first=100):
         sku = (v.get("sku") or "").strip()
@@ -367,6 +367,12 @@ def sync_items(log=None) -> dict:
             fields.update(cost=cost, cost_source="shopify")
         elif kind == "wine":
             missing.append(sku)
+        ii = v.get("inventoryItem") or {}
+        cur = get_item(sku)
+        if ii.get("harmonizedSystemCode") and not (cur and cur.hs_code):
+            fields["hs_code"] = re.sub(r"[^0-9]", "", ii["harmonizedSystemCode"]) or None
+        if ii.get("countryCodeOfOrigin") and not (cur and cur.origin and cur.origin != "FR"):
+            fields["origin"] = ii["countryCodeOfOrigin"]
         upsert_item(sku, **fields)
         n += 1
     ensure_packaging()
@@ -389,9 +395,10 @@ def shopify_inventory() -> Dict[str, dict]:
     return out
 
 
-ORDER_NODE = """id name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus note tags
-  shippingLine{ title } totalPriceSet{shopMoney{amount}}
-  customer{ displayName email phone } shippingAddress{ name company address1 address2 zip city countryCodeV2 phone }
+ORDER_NODE = """id name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus note tags customerLocale taxesIncluded
+  shippingLine{ title } totalPriceSet{shopMoney{amount}} totalTaxSet{shopMoney{amount}} totalShippingPriceSet{shopMoney{amount}} taxLines{ rate }
+  customAttributes{ key value } billingAddress{ company name countryCodeV2 }
+  customer{ displayName email phone metafields(first:10, namespace:"custom"){ edges{ node{ key value } } } } shippingAddress{ name company address1 address2 zip city countryCodeV2 phone }
   lineItems(first:50){ edges{ node{ title quantity sku originalUnitPriceSet{shopMoney{amount}} discountedUnitPriceAfterAllDiscountsSet{shopMoney{amount}} variant{ price inventoryItem{ unitCost{amount} } } } } }
   fulfillments{ status trackingInfo{ number company } }"""
 ORDER_Q = "query($first:Int!,$after:String){ orders(first:$first, after:$after, sortKey:CREATED_AT, reverse:true) { pageInfo{hasNextPage endCursor} edges{ node{ " + ORDER_NODE + " } } } }"
@@ -433,12 +440,35 @@ def _order_payload(o: dict, imap: Dict[str, OwItem]) -> Tuple[dict, List[dict]]:
         orig = float(((li.get("originalUnitPriceSet") or {}).get("shopMoney") or {}).get("amount") or 0) or float(v.get("price") or 0)    # prix catalogue au jour de la commande
         netp = float(((li.get("discountedUnitPriceAfterAllDiscountsSet") or {}).get("shopMoney") or {}).get("amount") or 0)                # prix réellement encaissé (toutes remises)
         lines.append({"sku": sku, "title": li["title"], "qty": int(li["quantity"]), "price": orig, "net": netp, "cost": cost})
+    ba = o.get("billingAddress") or {}
+    attrs = [{"key": a.get("key"), "value": a.get("value")} for a in (o.get("customAttributes") or []) if a.get("key")]
+    mf = {e["node"]["key"]: e["node"]["value"] for e in ((cu.get("metafields") or {}).get("edges") or [])}
+
+    def attr(*names):
+        for a in attrs:
+            k = (a["key"] or "").lower()
+            if any(n in k for n in names) and (a.get("value") or "").strip():
+                return a["value"].strip()
+        return None
+    money = lambda k: float((((o.get(k) or {}).get("shopMoney") or {}).get("amount")) or 0)
+    rates = [float(t.get("rate") or 0) for t in (o.get("taxLines") or [])]
+    vat = attr("tva", "vat") or (mf.get("vat_number") or mf.get("tva") or "").strip() or None
+    eori = attr("eori") or (mf.get("eori") or "").strip() or None
+    is_company = bool(sa.get("company") or ba.get("company") or vat or eori or (attr("société", "societe", "company", "entreprise", "professionnel") or "").lower() in ("oui", "yes", "1", "true", "société", "societe"))
     fields = dict(shopify_id=o["id"], created_at=datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).replace(tzinfo=None),
                   customer=sa.get("name") or cu.get("displayName"), email=cu.get("email"), phone=sa.get("phone") or cu.get("phone"), company=sa.get("company"),
                   address1=sa.get("address1"), address2=sa.get("address2"), zip=sa.get("zip"), city=sa.get("city"), country=sa.get("countryCodeV2") or "FR",
                   shipping_title=(o.get("shippingLine") or {}).get("title"), financial_status=o.get("displayFinancialStatus"), fulfillment_status=o.get("displayFulfillmentStatus"),
-                  total=float(o["totalPriceSet"]["shopMoney"]["amount"]), lines=json.dumps(lines, ensure_ascii=False), note=o.get("note"))
+                  total=float(o["totalPriceSet"]["shopMoney"]["amount"]), lines=json.dumps(lines, ensure_ascii=False), note=o.get("note"),
+                  # international : langue du client, TVA et port prélevés par Shopify, attributs de commande (n° TVA / EORI saisis au panier), société de facturation
+                  locale=o.get("customerLocale"), tax_total=money("totalTaxSet"), tax_rate=max(rates) if rates else 0.0, shipping_paid=money("totalShippingPriceSet"),
+                  attributes=json.dumps(attrs, ensure_ascii=False) if attrs else None, billing_company=ba.get("company") or None,
+                  vat_number=vat, eori=eori, customer_type="societe" if is_company else None)
     return fields, lines
+
+
+IDENTITY_FIELDS = ("vat_number", "eori", "customer_type", "tax_id")     # jamais écrasés par Shopify une fois saisis dans Vaelan (formulaire douane, saisie manuelle)
+LIVE_FIELDS = ("locale", "tax_total", "tax_rate", "shipping_paid", "attributes", "billing_company")   # toujours rafraîchis
 
 
 def _apply_shopify_order(existing: OwOrder, o: dict, fields: dict, lines: List[dict], refresh_head: bool = False) -> None:
@@ -447,11 +477,19 @@ def _apply_shopify_order(existing: OwOrder, o: dict, fields: dict, lines: List[d
     sauf `refresh_head` (bouton de la commande) qui reprend aussi client, adresse, livraison et total ; la note n'est remplacée que si Shopify en porte une."""
     if existing.status == "a_traiter":
         for k, v in fields.items():
+            if k in IDENTITY_FIELDS and getattr(existing, k, None) and not v:
+                continue                                   # n° TVA / EORI / type déjà saisis dans Vaelan : Shopify ne les efface pas
             setattr(existing, k, v)
         existing.mode = existing.mode if existing.mode != "manuel" else mode_of(fields["shipping_title"], fields["zip"])
     else:
         existing.financial_status, existing.fulfillment_status = fields["financial_status"], fields["fulfillment_status"]
         existing.lines = _merge_line_prices(existing.lines, lines)   # prix historiques (catalogue du jour, net après remises) rafraîchis sur les commandes déjà traitées
+        for k in LIVE_FIELDS:
+            if fields.get(k) is not None:
+                setattr(existing, k, fields[k])
+        for k in IDENTITY_FIELDS:
+            if fields.get(k) and not getattr(existing, k, None):
+                setattr(existing, k, fields[k])
         if refresh_head:
             for k in ORDER_HEAD:
                 setattr(existing, k, fields[k])
@@ -588,6 +626,13 @@ def mark_sent(o: OwOrder, by: str = None) -> None:
         due = (o.delivery_date or (o.pickup_date + timedelta(days=1) if o.pickup_date else date.today() + timedelta(days=3))) + timedelta(days=1)
         add_task("reception", f"{o.name} : vérifier avec le client que tout est bien arrivé", ref=o.name, due=due, key=f"reception:{o.name}")
     save_order(o)
+    from . import export
+    if export.zone(o.country) == "EXPORT":
+        base = o.pickup_date or date.today()
+        add_task("customs", f"{o.name} : suivre le dédouanement ({export.X.country_name(o.country)}) puis cocher « dédouané et livré » sur la commande", ref=o.name, due=base + timedelta(days=2), key=f"cleared:{o.name}",
+                 details="Chronotrace : douane export puis import ; en DAP le destinataire règle droits et taxes au transporteur avant la remise.")
+        add_task("export_proof", f"{o.name} : archiver le justificatif d'exportation (déclaration Chronopost / MRN) — preuve de l'exonération de TVA", ref=o.name, due=base + timedelta(days=15), key=f"proof:{o.name}")
+        close_tasks_by_key(f"customs:{o.name}"); close_tasks_by_key(f"customs_data:{o.name}")
 
 
 def confirm_reception(o: OwOrder, by: str = None) -> None:
@@ -608,6 +653,8 @@ def close_order(o: OwOrder, by: str = None) -> None:
     save_order(o)
     close_tasks_by_key(f"reception:{o.name}")
     close_tasks_by_key(f"pennylane_invoice:{o.name}")
+    for pfx in ("customs", "customs_data", "customs_info", "cleared", "proof"):
+        close_tasks_by_key(f"{pfx}:{o.name}")
 
 
 _INV_CACHE = {"at": None, "items": []}

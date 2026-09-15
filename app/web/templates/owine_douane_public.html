@@ -1,0 +1,34 @@
+{% extends "owine_public_base.html" %}
+{% set en = lang == 'en' %}
+{% block title %}oWine · {{ 'Shipping information' if en else 'Informations pour votre expédition' }}{% endblock %}
+{% block lang %}{% if o %}<a href="?lang={{ 'fr' if en else 'en' }}">{{ 'Français' if en else 'English' }}</a>{% endif %}{% endblock %}
+{% block content %}
+{% if not o %}
+  <div class="card"><div class="card-body p-4"><h1 class="h4">{{ 'Link not valid' if en else 'Lien invalide' }}</h1><p class="hint mb-0">{{ 'This link is not valid any more. Please contact contact@owine.co.' if en else 'Ce lien n\'est plus valable. Écrivez-nous à contact@owine.co.' }}</p></div></div>
+{% elif done %}
+  <div class="card"><div class="card-body p-4"><h1 class="h4">{{ 'Thank you!' if en else 'Merci !' }}</h1><p class="mb-0">{{ 'We have everything we need to ship order ' ~ o.name ~ ' to ' ~ country ~ '. You will receive the tracking numbers as soon as Chronopost has collected the parcels.' if en else 'Nous avons tout ce qu\'il faut pour expédier la commande ' ~ o.name ~ ' en ' ~ country ~ '. Vous recevrez les numéros de suivi dès l\'enlèvement par Chronopost.' }}</p></div></div>
+{% else %}
+  <div class="card"><div class="card-body p-4">
+    <h1 class="h4">{{ ('Order ' ~ o.name ~ ' — shipping to ' ~ country) if en else ('Commande ' ~ o.name ~ ' — expédition en ' ~ country) }}</h1>
+    <p class="hint">{{ 'Customs and Chronopost require a few details that the online checkout does not collect. One minute is enough.' if en else 'La douane et Chronopost exigent quelques informations que la commande en ligne ne collecte pas. Une minute suffit.' }}</p>
+    {% if err %}<div class="alert alert-danger py-2 small">{% if err == 'phone' %}{{ 'A phone number is required.' if en else 'Le numéro de téléphone est obligatoire.' }}{% elif err == 'company' %}{{ 'For a company, the VAT or EORI number is required.' if en else 'Pour une société, le n° de TVA ou EORI est obligatoire.' }}{% else %}{{ 'Please confirm the customs terms.' if en else 'Merci de confirmer les conditions douanières.' }}{% endif %}</div>{% endif %}
+    <form method="post" action="/douane/{{ token }}"><input type="hidden" name="lang" value="{{ lang }}">
+      <div class="mb-3"><label class="form-label">{{ 'Recipient name' if en else 'Nom du destinataire' }}</label><input class="form-control" name="name" value="{{ o.customer or '' }}" required></div>
+      <div class="mb-3"><label class="form-label">{{ 'Mobile phone (with country code)' if en else 'Téléphone portable (avec indicatif)' }} *</label><input class="form-control" name="phone" value="{{ o.phone or '' }}" placeholder="+41 79 …" required><div class="hint">{{ 'Chronopost uses it for delivery and to collect import charges.' if en else 'Chronopost l\'utilise pour la livraison et le règlement des frais d\'importation.' }}</div></div>
+      <div class="mb-3"><label class="form-label">{{ 'Address details (door code, floor, company reception…)' if en else 'Précisions d\'adresse (code porte, étage, accueil…)' }}</label><input class="form-control" name="address2" placeholder="{{ 'optional' if en else 'facultatif' }}"><div class="hint">{{ o.address1 }}{% if o.address2 %}, {{ o.address2 }}{% endif %}, {{ o.zip }} {{ o.city }} — {{ 'no PO box for international shipments' if en else 'pas de boîte postale à l\'international' }}</div></div>
+      <div class="mb-3"><label class="form-label">{{ 'You are' if en else 'Vous commandez en tant que' }}</label>
+        <select class="form-select" name="kind" id="kind" onchange="document.getElementById('co').style.display=this.value==='societe'?'block':'none'"><option value="particulier" {% if kind == 'particulier' %}selected{% endif %}>{{ 'a private individual (personal use)' if en else 'particulier (usage personnel)' }}</option><option value="societe" {% if kind == 'societe' %}selected{% endif %}>{{ 'a company / professional' if en else 'société / professionnel' }}</option></select></div>
+      <div id="co" style="display:{{ 'block' if kind == 'societe' else 'none' }}">
+        <div class="mb-3"><label class="form-label">{{ 'Company name' if en else 'Raison sociale' }}</label><input class="form-control" name="company" value="{{ o.company or o.billing_company or '' }}"></div>
+        <div class="mb-3"><label class="form-label">{{ 'VAT number' if en else 'N° de TVA' }}</label><input class="form-control" name="vat" value="{{ o.vat_number or '' }}" placeholder="CHE-123.456.789 TVA / DE123456789 / GB123456789"></div>
+        <div class="mb-3"><label class="form-label">{{ 'EORI number (customs identification of your company)' if en else 'N° EORI (identifiant douanier de votre société)' }}</label><input class="form-control" name="eori" value="{{ o.eori or '' }}"><div class="hint">{{ 'Required outside the EU; in the EU the VAT number is enough.' if en else 'Exigé hors UE ; dans l\'UE le n° de TVA suffit.' }}</div></div>
+      </div>
+      {% if tax_id_label %}<div class="mb-3"><label class="form-label">{{ tax_id_label }}</label><input class="form-control" name="tax_id" value="{{ o.tax_id or '' }}"><div class="hint">{{ 'Required by the customs of your country for private individuals.' if en else 'Exigé par la douane de votre pays pour les particuliers.' }}</div></div>{% endif %}
+      {% if exp.customs %}
+      <div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="dap" value="1" id="dap" required><label class="form-check-label small" for="dap">{{ 'I understand that my order is shipped Incoterm DAP: the import duties, VAT and customs clearance fees of my country are not included in the order and will be requested by Chronopost (or its local partner) before delivery.' if en else 'J\'ai compris que ma commande voyage en incoterm DAP : les droits de douane, la TVA et les frais de dédouanement de mon pays ne sont pas compris dans la commande et me seront demandés par Chronopost (ou son partenaire local) avant la livraison.' }}</label></div>
+      {% else %}<input type="hidden" name="dap" value="1">{% endif %}
+      <button class="btn btn-ow w-100">{{ 'Send' if en else 'Envoyer' }}</button>
+    </form>
+  </div></div>
+{% endif %}
+{% endblock %}

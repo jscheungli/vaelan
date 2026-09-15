@@ -58,6 +58,13 @@ def missing_vars(o, cs) -> List[str]:
         miss.append("e-mail du client")
     if not o.customer:
         miss.append("nom du client")
+    from . import export as _x
+    if o.mode == "chronopost" and _x.zone(o.country) != "FR":
+        exp = _x.state(o, cs)
+        for c in exp["blocking"]:
+            miss.append(f"export : {c['label'].lower()}")
+        if exp["customs"] and not (exp["invoice"] or {}).get("final"):
+            miss.append("facture commerciale (3 exemplaires) à générer après les étiquettes")
     return miss
 
 
@@ -109,7 +116,16 @@ def packing_list_pdf(o, cs) -> bytes:
     pg.insert_text((x2, y), "EXPÉDITION", fontname="hebo", fontsize=8.5, color=WINE)
     total_b = sum(sum(int(l["qty"]) for l in service.carton_lines(c)) for c in cs)
     info = [f"{len(cs)} carton{'s' if len(cs) > 1 else ''} · {total_b} bouteille{'s' if total_b > 1 else ''}"]
-    if o.mode == "chronopost":
+    intl = o.mode == "chronopost" and _export.zone(o.country) != "FR"
+    if o.mode == "chronopost" and intl:
+        exp = _export.state(o, cs)
+        info.append(f"Transporteur : Chronopost {exp['product_label'].split(' ·')[0]} — {exp['country_name']}")
+        if o.pickup_date:
+            info.append(f"Enlèvement le {fr_date(o.pickup_date)}")
+        info.append(f"Livraison estimée : {exp['delay'] or 'selon zoning Chronopost'}")
+        if exp["customs"]:
+            info.append(f"Incoterm {exp['incoterm']} · facture commerciale {_export.invoice_number(o)} (3 ex. sur le colis A)")
+    elif o.mode == "chronopost":
         info.append("Transporteur : Chronopost (Chrono Viti)")
         if o.pickup_date:
             info.append(f"Enlèvement le {fr_date(o.pickup_date)}")
@@ -128,7 +144,8 @@ def packing_list_pdf(o, cs) -> bytes:
         pg.draw_rect(fitz.Rect(M, y, W - M, y + 20), color=None, fill=LIGHT)
         pg.draw_rect(fitz.Rect(M, y, M + 22, y + 20), color=None, fill=DARK)
         pg.insert_text((M + 7, y + 14.5), c.ref, fontname="hebo", fontsize=11, color=(1, 1, 1))
-        pg.insert_text((M + 30, y + 14), f"Carton {c.ref} · {nb} bouteille{'s' if nb > 1 else ''}", fontname="hebo", fontsize=9.5, color=DARK)
+        pos = f" · colis {cs.index(c) + 1}/{len(cs)}" if intl and len(cs) > 1 else ""
+        pg.insert_text((M + 30, y + 14), f"Carton {c.ref} · {nb} bouteille{'s' if nb > 1 else ''}{pos}", fontname="hebo", fontsize=9.5, color=DARK)
         if c.tracking:
             t = f"N° Chronopost {c.tracking}"
             pg.insert_text((W - M - 6 - fitz.get_text_length(t, fontname="helv", fontsize=9), y + 14), t, fontname="helv", fontsize=9, color=GREY)
@@ -265,14 +282,19 @@ def email_alix(o, cs) -> dict:
     else:
         slot = f"Enlèvement n° {o.pickup_no or '…'} | {fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'} entre {o.pickup_slot or '14:00 et 17:00'} | 21200 BEAUNE"
         rappel = "Rappel : Attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.\n\n" if len(cs) > 1 else ""
+        intl = ""
+        if _export.zone(o.country) != "FR":
+            intl = export_alix_instructions(o, cs, _export.state(o, cs)) + "\n\n"
         body = (f"Bonjour,\n\nJe vous prie de trouver ci-joint le détail et {lab(len(cs))} pour cette nouvelle commande à préparer ({desc}, {nb} bouteille{'s' if nb > 1 else ''}).\n\n"
-                + rappel + f"L'enlèvement a été réservé sur le créneau suivant :\n\n{slot}\n\nEn vous remerciant pour votre confirmation une fois que ce sera prêt.\n\nA bientôt,")
-        subject = f"Commande OWINE #{o.name}"
+                + intl + rappel + f"L'enlèvement a été réservé sur le créneau suivant :\n\n{slot}\n\nEn vous remerciant pour votre confirmation une fois que ce sera prêt.\n\nA bientôt,")
+        subject = f"Commande OWINE #{o.name}" + (f" — INTERNATIONAL {_export.X.country_name(o.country)}" if _export.zone(o.country) != "FR" else "")
     return {"to": [config.ALIX_EMAIL], "cc": config.ALIX_CC, "subject": subject, "body": body}
 
 
 def email_client(o, cs) -> dict:
     first = (o.customer or "").split(" ")[0]
+    if o.mode != "retrait" and _export.zone(o.country) != "FR":
+        return export_client_email(o, cs, _export.state(o, cs))
     if o.mode == "retrait":
         body = (f"Bonjour {first},\n\nJ'ai le plaisir de vous confirmer que votre commande {o.name} sera prête pour être collectée à notre entrepôt "
                 f"à partir du {fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'}.\n\n"
@@ -306,6 +328,9 @@ def bundle_zip(o, cs, labels: List[Tuple[str, bytes]] = None) -> bytes:
     with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(f"Détail {o.name}.pdf", packing_list_pdf(o, cs))
         z.writestr(f"{o.name}.xlsx", alix_xlsx(o, cs))
+        if _export.zone(o.country) == "EXPORT":
+            inv = _export.stored_invoice(o)
+            z.writestr(inv[0] if inv else f"Facture commerciale {o.name} (provisoire).pdf", inv[1] if inv else commercial_invoice_pdf(o, cs))
         for name, data in (labels or []):
             z.writestr(f"Etiquettes/{name}", data)
         ea, ec = email_alix(o, cs), email_client(o, cs)
@@ -375,6 +400,8 @@ def _delivery_box() -> str:
 
 
 def email_client_html(o, cs, extra: str = "") -> str:
+    if o.mode != "retrait" and _export.zone(o.country) != "FR":
+        return export_client_email_html(o, cs, _export.state(o, cs), extra)
     first = _esc((o.customer or "").split(" ")[0])
     extra_html = f"<p>{_esc(extra).replace(chr(10), '<br>')}</p>" if extra else ""
     if o.mode == "retrait":
@@ -407,9 +434,329 @@ def email_alix_html(o, cs, extra: str = "") -> str:
         return _shell(f"Commande OWINE #{o.name} — retrait client", inner)
     slot = f"Enlèvement n° {_esc(o.pickup_no or '…')} · {_esc(fr_date(o.pickup_date)) if o.pickup_date else '(date à confirmer)'} entre {_esc(o.pickup_slot or '14:00 et 17:00')} · 21200 BEAUNE"
     rappel = f"<p style=\"background:#fff3cd;border-radius:6px;padding:10px 14px;color:#222;\"><strong>Rappel :</strong> attention comme toujours à bien respecter le contenu de chaque carton selon l'étiquette référencée.</p>" if len(cs) > 1 else ""
+    intl = ""
+    if _export.zone(o.country) != "FR":
+        txt = export_alix_instructions(o, cs, _export.state(o, cs)).split("\n")
+        intl = (f"<div style=\"border:2px solid {CSS_WINE};border-radius:8px;padding:10px 14px;margin:12px 0;background:#fdf8f8;color:#222;\"><div style=\"font-weight:bold;color:{CSS_WINE};\">{_esc(txt[0])}</div>"
+                + "".join(f"<p style=\"margin:6px 0 0 0;\">{_esc(t)}</p>" for t in txt[1:]) + "</div>")
     inner = (f"<p>Bonjour,</p><p>Je vous prie de trouver ci-joint le détail et {lab(len(cs))} pour cette nouvelle commande à préparer ({len(cs)} carton{'s' if len(cs) > 1 else ''}, {nb} bouteille{'s' if nb > 1 else ''}).</p>"
-             + rappel
+             + intl + rappel
              + _cartons_table(o, cs, with_tracking=True)
              + f"<p style=\"background:{CSS_LIGHT};border-radius:6px;padding:10px 14px;margin-top:14px;color:#222;\"><strong>L'enlèvement a été réservé sur le créneau suivant :</strong><br>{slot}</p>"
              + extra_html + "<p>En vous remerciant pour votre confirmation une fois que ce sera prêt.</p><p>A bientôt,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
-    return _shell(f"Commande OWINE #{o.name}", inner)
+    return _shell(f"Commande OWINE #{o.name}" + (f" — {_export.X.country_name(o.country)}" if _export.zone(o.country) != "FR" else ""), inner)
+
+
+# ================================================================== EXPORT : facture commerciale (modèle Chrono Viti « Facture commerciale Viti to B »)
+from . import export as _export
+
+def _clean(txt) -> str:
+    """Les polices de base (Helvetica) n'ont ni tiret cadratin ni points de suspension : on les remplace pour éviter les « ? »."""
+    return str(txt).replace("\u2014", "-").replace("\u2013", "-").replace("\u2026", "...").replace("\u2019", "'").replace("\u00a0", " ")
+
+
+def _t(pg, x, y, txt, font="helv", size=8.5, color=(0.1, 0.1, 0.1)):
+    pg.insert_text((x, y), _clean(txt), fontname=font, fontsize=size, color=color)
+
+
+def _tr(pg, xr, y, txt, font="helv", size=8.5, color=(0.1, 0.1, 0.1)):
+    t = _clean(txt)
+    pg.insert_text((xr - fitz.get_text_length(t, fontname=font, fontsize=size), y), t, fontname=font, fontsize=size, color=color)
+
+
+def _fit(txt, width, font="helv", size=8.5, min_size=6.0):
+    while fitz.get_text_length(_clean(txt), fontname=font, fontsize=size) > width and size > min_size:
+        size -= 0.25
+    return size
+
+
+def _wrap(txt, width, font="helv", size=7.2):
+    """Retour à la ligne par mots (les zones de texte de fitz refusent un texte trop long au lieu de le couper)."""
+    out, cur = [], ""
+    for w in _clean(txt).split(" "):
+        cand = (cur + " " + w).strip()
+        if fitz.get_text_length(cand, fontname=font, fontsize=size) <= width or not cur:
+            cur = cand
+        else:
+            out.append(cur); cur = w
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _para(pg, rect, txt, font="helv", size=7.2, color=(0.1, 0.1, 0.1), lh=1.25):
+    """Paragraphe(s) dans un rectangle, par retour à la ligne manuel ; renvoie l'ordonnée finale."""
+    y = rect.y0 + size
+    for para in _clean(txt).split("\n"):
+        for line in _wrap(para, rect.width, font, size):
+            pg.insert_text((rect.x0, y), line, fontname=font, fontsize=size, color=color); y += size * lh
+    return y
+
+
+def _money(v) -> str:
+    return f"{float(v or 0):,.2f}".replace(",", " ").replace(".", ",")
+
+
+def commercial_invoice_pdf(o, cs, copies: int = 3) -> bytes:
+    """Facture commerciale bilingue pour la douane : expéditeur (EORI, TVA), destinataire (téléphone, e-mail, EORI/TVA ou identifiant fiscal), numéros de
+    colis et positions dans le groupage, poids brut / net, description complète de chaque vin (couleur, millésime, contenance, degré, origine, code SH),
+    prix unitaires et totaux HT en EUR, port et assurance à part, incoterm, usage final, exonération de TVA, déclaration d'origine sur facture datée,
+    localisée et signée. Un bloc par envoi (Suisse particuliers : un envoi par carton), chaque envoi en `copies` exemplaires (3 pour Chronopost)."""
+    d = _export.invoice_data(o, cs)
+    sig = _export.signature()
+    provisional = any(not p["tracking"] for sh in d["shipments"] for p in sh["parcels"])
+    doc = fitz.open()
+    W, H, M = 595, 842, 40
+    INK, GREY, LINE = (0.1, 0.1, 0.1), (0.42, 0.42, 0.42), (0.75, 0.75, 0.75)
+    snd, rcp = d["sender"], d["recipient"]
+
+    def header(pg, sh, copy_no):
+        try:
+            pg.insert_image(fitz.Rect(M, 28, M + 118, 28 + 41), filename=LOGO, keep_proportion=True)
+        except Exception:
+            _t(pg, M, 55, "oWine", "tibo", 20, WINE)
+        _tr(pg, W - M, 44, "FACTURE COMMERCIALE", "hebo", 14, DARK)
+        _tr(pg, W - M, 58, "COMMERCIAL INVOICE", "helv", 9.5, GREY)
+        _tr(pg, W - M, 74, f"N° / No. {sh['no']}", "hebo", 9.5, INK)
+        _tr(pg, W - M, 86, f"Date : {d['date']:%d/%m/%Y}   ·   Exemplaire / Copy {copy_no}/{copies}", "helv", 8.5, INK)
+        pg.draw_line((M, 96), (W - M, 96), color=WINE, width=1.2)
+        if provisional:
+            pg.draw_rect(fitz.Rect(M, 100, W - M, 116), color=None, fill=(1, 0.93, 0.93))
+            _t(pg, M + 6, 111.5, "PROVISOIRE — numéros de colis Chronopost à compléter / DRAFT — parcel numbers missing", "hebo", 8.5, (0.7, 0.1, 0.1))
+
+    def party(pg, x, y, w, title, rows):
+        pg.draw_rect(fitz.Rect(x, y, x + w, y + 16), color=None, fill=LIGHT)
+        _t(pg, x + 6, y + 11.5, title, "hebo", 8.5, DARK)
+        yy = y + 16
+        for lab, val in rows:
+            if val in (None, ""):
+                continue
+            yy += 10.5
+            _t(pg, x + 6, yy, lab, "helv", 6.8, GREY)
+            size = _fit(val, w - 12 - 88, "helv", 8.5)
+            _t(pg, x + 94, yy, val, "helv" if lab else "hebo", size, INK)
+        pg.draw_rect(fitz.Rect(x, y, x + w, yy + 6), color=LINE, width=0.5)
+        return yy + 6
+
+    def footer(pg, page_no, pages):
+        legal = f"{snd['company']}" + (f" — SAS au capital de {snd['capital']}" if snd.get("capital") else "") + f" — {snd['rcs']}" + (f" — SIRET {snd['siret']}" if snd.get("siret") else "") + f" — TVA {snd['vat']}"
+        legal2 = f"{snd['address1']}, {snd['address2']}, {snd['zip']} {snd['city']}, France — {snd['email']} — {snd['phone']}" + (f" — EORI {snd['eori']}" if snd.get("eori") else "")
+        pg.draw_line((M, H - 44), (W - M, H - 44), color=LINE, width=0.5)
+        _t(pg, W / 2 - fitz.get_text_length(legal, fontname="helv", fontsize=7) / 2, H - 33, legal, "helv", 7, GREY)
+        _t(pg, W / 2 - fitz.get_text_length(legal2, fontname="helv", fontsize=7) / 2, H - 23, legal2, "helv", 7, GREY)
+        _tr(pg, W - M, H - 23, f"{page_no}/{pages}", "helv", 7, GREY)
+
+    for sh in d["shipments"]:
+        for copy_no in range(1, copies + 1):
+            pages_of_copy = []                                   # indices : doc.new_page() invalide les objets Page déjà créés
+            pg = doc.new_page(width=W, height=H); pages_of_copy.append(doc.page_count - 1)
+            header(pg, sh, copy_no)
+            y = 124 if provisional else 108
+            colw = (W - 2 * M - 10) / 2
+            y1 = party(pg, M, y, colw, "EXPÉDITEUR / SENDER (exporter)", [
+                ("Société / Company", snd["company"]), ("Contact", snd["contact"]), ("Adresse / Address", f"{snd['address1']}, {snd['address2']}"), ("CP Ville / City", f"{snd['zip']} {snd['city']}"),
+                ("Pays / Country", snd["country"]), ("Téléphone / Phone", snd["phone"]), ("E-mail", snd["email"]), ("N° EORI", snd["eori"] or "(à renseigner / to be filled)"), ("N° TVA / VAT No.", snd["vat"])])
+            rrows = [("Nom / Name", rcp["name"]), ("Société / Company", rcp["company"]), ("Adresse / Address", rcp["address1"]), ("", rcp["address2"]), ("CP Ville / City", f"{rcp['zip']} {rcp['city']}"),
+                     ("Pays / Country", rcp["country"]), ("Téléphone / Phone", rcp["phone"] or "(obligatoire / required)"), ("E-mail", rcp["email"] or "(obligatoire / required)")]
+            if d["kind"] == "societe":
+                rrows += [("N° EORI", rcp["eori"]), ("N° TVA / VAT No.", rcp["vat"])]
+            elif rcp["tax_id"]:
+                rrows += [(rcp["tax_id_label"] or "Identifiant / Tax ID", rcp["tax_id"])]
+            y2 = party(pg, M + colw + 10, y, colw, "DESTINATAIRE / CONSIGNEE" + (" (professionnel / business)" if d["kind"] == "societe" else " (particulier / private individual)"), rrows)
+            y = max(y1, y2) + 10
+            # ---- expédition
+            pg.draw_rect(fitz.Rect(M, y, W - M, y + 16), color=None, fill=LIGHT)
+            _t(pg, M + 6, y + 11.5, "EXPÉDITION / SHIPMENT", "hebo", 8.5, DARK)
+            yy = y + 28
+            info = [f"Transporteur / Carrier : Chronopost {d['product']['label']} ({d['product']['mode']})", f"Incoterm ICC 2020 : {d['incoterm']} {d['incoterm_place']}",
+                    f"Commande / Order : {d['order']}" + (f" du {d['order_date']:%d/%m/%Y}" if d["order_date"] else "") + f"   ·   Nombre de colis / Number of parcels : {len(sh['parcels'])}",
+                    f"Poids brut / Gross weight : {sh['gross_kg']} kg   ·   Poids net / Net weight : {sh['net_kg']} kg   ·   {sh['bottles']} bouteilles / bottles",
+                    f"Nature / Content : {d['content_desc']}"]
+            for line in info:
+                _t(pg, M + 6, yy, line, "helv", 8, INK); yy += 10
+            yy += 2
+            _t(pg, M + 6, yy, "Numéros de colis / Parcel numbers (lettres de transport) :", "helv", 7, GREY); yy += 10
+            for p in sh["parcels"]:
+                _t(pg, M + 14, yy, f"Colis {p['ref']} ({p['pos']}) : {p['tracking'] or '__________________'}   -   {p['bottles']} btl · {p['kg']} kg", "hebo" if p["tracking"] else "helv", 8, INK); yy += 10
+            pg.draw_rect(fitz.Rect(M, y, W - M, yy + 2), color=LINE, width=0.5)
+            y = yy + 12
+            # ---- tableau des marchandises
+            cols = [("Désignation des marchandises\nDescription of goods", 185), ("Origine\nOrigin", 30), ("Code SH\nHS code", 46), ("% vol", 26), ("Cont.\nContent", 28),
+                    ("Couleur\nColour", 36), ("Mill.\nVintage", 28), ("Qté\nQty", 24), ("PU HT EUR\nUnit price", 52), ("Total HT EUR\nTotal", 60)]
+            xs = [M]
+            for _, w in cols:
+                xs.append(xs[-1] + w)
+
+            def table_head(pg, y):
+                pg.draw_rect(fitz.Rect(M, y, W - M, y + 22), color=None, fill=DARK)
+                for i, (lab, w) in enumerate(cols):
+                    parts = lab.split("\n")
+                    for j, part in enumerate(parts):
+                        size = _fit(part, w - 4, "hebo", 6.8)
+                        if i == 0:
+                            _t(pg, xs[i] + 3, y + 9 + j * 8.5, part, "hebo", size, (1, 1, 1))
+                        else:
+                            _tr(pg, xs[i + 1] - 3, y + 9 + j * 8.5, part, "hebo", size, (1, 1, 1))
+                return y + 22
+
+            y = table_head(pg, y)
+            for ln in sh["lines"]:
+                t_lines = _wrap(ln["desc_lines"][0], cols[0][1] - 6, "hebo", 7.4)
+                d_lines = _wrap(ln["desc_lines"][1], cols[0][1] - 6, "helv", 6.8)
+                rh = 7 + 8.5 * (len(t_lines) + len(d_lines))
+                if y + rh > H - 210:
+                    pg = doc.new_page(width=W, height=H); pages_of_copy.append(doc.page_count - 1); header(pg, sh, copy_no)
+                    y = table_head(pg, 124 if provisional else 108)
+                yy = y + 10.5
+                for line in t_lines:
+                    _t(pg, xs[0] + 3, yy, line, "hebo", 7.4, INK); yy += 8.5
+                for line in d_lines:
+                    _t(pg, xs[0] + 3, yy, line, "helv", 6.8, INK); yy += 8.5
+                col = {"rouge": "Rouge / Red", "blanc": "Blanc / White", "rosé": "Rosé", "rose": "Rosé"}.get(ln.get("colour") or "", "-")
+                vals = [ln.get("origin") or "FR", ln.get("hs") or "", f"{ln['abv']:g} %" if ln.get("abv") else "-", f"{ln.get('volume_cl') or 75} cl", col, str(ln.get("vintage") or "-"), str(ln["qty"]), _money(ln["unit_ht"]), _money(ln["total_ht"])]
+                for i, v in enumerate(vals, 1):
+                    _tr(pg, xs[i + 1] - 3, y + 10.5, v, "hebo" if i >= 8 else "helv", _fit(v, cols[i][1] - 6, "helv", 7.6), INK)
+                pg.draw_line((M, y + rh), (W - M, y + rh), color=LINE, width=0.4)
+                y += rh
+            for x in xs:
+                pg.draw_line((x, y), (x, y), color=LINE, width=0.4)
+            y += 6
+            # ---- totaux (droite) et mentions (gauche)
+            tx = xs[5]
+            rows = [("Marchandises HT / Goods excl. taxes", sh["goods_ht"], False), ("Port et manutention HT / Shipping & handling", sh["shipping_ht"], False),
+                    ("Assurance / Insurance", sh["insurance_ht"], False), ("TOTAL HT EUR / Total excl. taxes", sh["total_ht"], True)]
+            ty = y + 4
+            for lab, val, bold in rows:
+                if bold:
+                    pg.draw_rect(fitz.Rect(tx, ty - 10, W - M, ty + 4), color=None, fill=LIGHT)
+                _t(pg, tx + 4, ty, lab, "hebo" if bold else "helv", _fit(lab, (W - M) - tx - 84, "helv", 7.6), INK)
+                _tr(pg, W - M - 4, ty, _money(val) + " EUR", "hebo" if bold else "helv", 8.2, INK); ty += 13
+            box = fitz.Rect(M, y, tx - 10, ty + 40)
+            mentions = ["Devise / Currency : EUR - prix hors taxes / prices excl. taxes", d["final_use"], d["vat_mention"],
+                        f"Incoterm ICC 2020 : {d['incoterm']} - droits et taxes à l'import à la charge du destinataire / import duties and taxes payable by the consignee" if d["incoterm"] == "DAP" else f"Incoterm ICC 2020 : {d['incoterm']}"]
+            if sh["eur1"]:
+                mentions.append("Valeur > 6 000 EUR : certificat d'origine EUR.1 joint / EUR.1 movement certificate attached")
+            if d.get("notes"):
+                mentions.append(d["notes"])
+            ym = _para(pg, box, "\n".join(mentions), "helv", 6.9, INK, 1.3)
+            y = max(ty, ym) + 8
+            # ---- déclaration d'origine, signature
+            oh = 84
+            if y + oh > H - 50:
+                pg = doc.new_page(width=W, height=H); pages_of_copy.append(doc.page_count - 1); header(pg, sh, copy_no); y = 124 if provisional else 108
+            pg.draw_rect(fitz.Rect(M, y, W - M, y + oh), color=LINE, width=0.5)
+            _t(pg, M + 6, y + 11, "DÉCLARATION D'ORIGINE / ORIGIN DECLARATION", "hebo", 8, DARK)
+            _para(pg, fitz.Rect(M + 6, y + 14, W - M - 150, y + oh - 2), d["origin_fr"] + "\n" + d["origin_en"], "heit", 7, INK, 1.2)
+            sx = W - M - 140
+            _t(pg, sx, y + 26, f"Lieu / Place : {snd['sign_place']}", "helv", 7.5, INK)
+            _t(pg, sx, y + 37, f"Date : {d['date']:%d/%m/%Y}", "helv", 7.5, INK)
+            _t(pg, sx, y + 48, f"Signature — {snd['contact']}", "helv", 7.5, INK)
+            if sig:
+                try:
+                    pg.insert_image(fitz.Rect(sx, y + 50, sx + 120, y + oh - 3), stream=sig, keep_proportion=True)
+                except Exception:
+                    pass
+            for i, idx in enumerate(pages_of_copy, 1):
+                footer(doc[idx], i, len(pages_of_copy))
+    return doc.tobytes()
+
+
+# ================================================================== EXPORT : e-mails (client FR / EN, Alix), fiche de saisie, pièces
+def _lang(o) -> str:
+    return "en" if (o.locale or "fr").lower()[:2] not in ("fr",) else "fr"
+
+
+def export_client_email(o, cs, exp: dict) -> dict:
+    """E-mail client pour une commande internationale : enlèvement, délai indicatif (fiche pays / zoning), DAP (droits et taxes payés au transporteur),
+    suivi, réserves à la livraison. Français ou anglais selon la langue du client sur Shopify."""
+    lang = _lang(o); first = (o.customer or "").split(" ")[0]; n = len(cs)
+    cname = _export.X.country_name(o.country, lang)
+    delay = _export.delay_text(o.country, exp["kind"], exp["product"], lang)
+    customs = exp["customs"]
+    if lang == "en":
+        body = (f"Hello {first},\n\nYour order {o.name} has been booked for collection by Chronopost ({exp['product_label'].split(' ·')[0].replace('Chrono ', 'Chrono ')}) on "
+                f"{o.pickup_date:%A %d %B %Y}" if o.pickup_date else f"Hello {first},\n\nYour order {o.name} has been booked for collection by Chronopost")
+        body += f". Estimated delivery to {cname}: {delay or 'a few working days'}, barring transport or customs delays.\n\n"
+        body += f"Please find attached the packing list ({n} parcel{'s' if n > 1 else ''}) and the shipping label{'s' if n > 1 else ''}; each parcel can be tracked on chronopost.fr with its number.\n\n"
+        if customs:
+            body += ("IMPORTANT — CUSTOMS (Incoterm DAP)\nYour order is shipped duty unpaid: the import duties, VAT and customs clearance fees of your country are not included in your order and are payable by you to Chronopost "
+                     "(or its local partner) before delivery. Chronopost will contact you by e-mail or SMS to settle them. A copy of the commercial invoice used for customs is attached; three originals travel with the first parcel.\n\n")
+        body += ("ON DELIVERY: three reflexes that protect you\n1. Open each parcel in front of the driver, before signing, and check that the bottles are intact and match the packing list.\n"
+                 "2. Write any damage or missing bottle on the delivery note before signing (parcel and bottle concerned). A note signed without reservation means the carrier considers the parcel complete and in good condition, and no claim is possible afterwards.\n"
+                 f"3. Photograph the bottle, the parcel and the annotated note and send them to {config.CONTACT_EMAIL}: we open the claim with Chronopost and guarantee a replacement, or a refund if a replacement is not possible.\n\n"
+                 "We remain at your disposal and wish you a wonderful tasting.\n\nKind regards,")
+        subject = f"Your oWine order {o.name}: collection booked, delivery to {cname} {delay}".strip()
+    else:
+        body = (f"Bonjour {first},\n\nJ'ai le plaisir de vous confirmer que l'enlèvement de votre commande {o.name} par Chronopost ({exp['product_label'].split(' ·')[0]}) est réservé pour le "
+                f"{fr_date(o.pickup_date) if o.pickup_date else '(date à confirmer)'}. Livraison estimée en {cname} : {delay or 'quelques jours ouvrés'}, sauf aléa de transport ou de douane.\n\n"
+                f"Vous trouverez ci-joint{'e' if n <= 1 else 's'} la liste de colisage ({n} colis) et {lab(n)} ; chaque colis se suit sur chronopost.fr avec son numéro.\n\n")
+        if customs:
+            body += ("IMPORTANT — DOUANE (incoterm DAP)\nVotre commande voyage droits non acquittés : les droits de douane, la TVA et les frais de dédouanement de votre pays ne sont pas compris dans votre commande et vous seront demandés par Chronopost "
+                     "(ou son partenaire local) avant la livraison, par e-mail ou SMS. La copie de la facture commerciale servant au dédouanement est jointe ; trois originaux voyagent avec le premier colis.\n\n")
+        body += ("À LA LIVRAISON : trois réflexes qui vous protègent\n1. Ouvrez chaque carton devant le livreur, avant de signer, et vérifiez que les bouteilles sont intactes et conformes à la liste de colisage.\n"
+                 "2. Écrivez toute anomalie sur le bon de livraison avant de signer (carton et bouteille concernés). Un bon signé sans réserve vaut acceptation d'un colis complet et en bon état : plus aucun recours n'est possible ensuite.\n"
+                 f"3. Photographiez la bouteille, le carton et le bon annoté et envoyez-les à {config.CONTACT_EMAIL} : nous ouvrons la réclamation auprès de Chronopost et vous garantissons un remplacement, ou un remboursement si un remplacement n'est pas possible.\n\n"
+                 "Nous restons à votre disposition et vous souhaitons une excellente dégustation.\n\nTrès cordialement,")
+        subject = f"Votre commande {o.name} : enlèvement Chronopost réservé, livraison en {cname} {delay}".strip()
+    return {"to": [o.email] if o.email else [], "cc": list(config.CLIENT_CC), "subject": subject, "body": body, "lang": lang}
+
+
+def export_client_email_html(o, cs, exp: dict, extra: str = "") -> str:
+    lang = _lang(o); first = _esc((o.customer or "").split(" ")[0]); n = len(cs)
+    cname = _esc(_export.X.country_name(o.country, lang)); delay = _esc(_export.delay_text(o.country, exp["kind"], exp["product"], lang))
+    extra_html = f"<p>{_esc(extra).replace(chr(10), '<br>')}</p>" if extra else ""
+    prod = _esc(exp["product_label"].split(" ·")[0])
+    if lang == "en":
+        pick = f"{o.pickup_date:%A %d %B %Y}" if o.pickup_date else "(date to be confirmed)"
+        inner = (f"<p>Hello {first},</p><p>Your order <strong>{_esc(o.name)}</strong> has been booked for collection by Chronopost ({prod}) on <strong>{pick}</strong>. "
+                 f"Estimated delivery to {cname}: <strong>{delay or 'a few working days'}</strong>, barring transport or customs delays.</p>" + extra_html + _cartons_table(o, cs, with_tracking=True))
+        if exp["customs"]:
+            inner += (f'<div style="border:1px solid {CSS_WINE};border-radius:8px;background:#fdf8f8;padding:12px 16px;margin:16px 0;"><div style="font-weight:bold;color:{CSS_WINE};font-size:13px;margin-bottom:4px;">IMPORTANT — CUSTOMS (Incoterm DAP)</div>'
+                      '<div style="font-size:13.5px;color:#222;">Your order is shipped duty unpaid: the import duties, VAT and customs clearance fees of your country are <strong>not included</strong> in your order and are payable by you to Chronopost (or its local partner) before delivery. '
+                      'Chronopost will contact you by e-mail or SMS to settle them. A copy of the commercial invoice used for customs is attached; three originals travel with the first parcel.</div></div>')
+        inner += (f'<p style="font-size:13px;color:#555;">Attached: the packing list and the shipping label{"s" if n > 1 else ""} (one tracking number per parcel, clickable above).</p>'
+                  f'<div style="border:1px solid {CSS_WINE};border-radius:8px;background:#fdf8f8;padding:14px 16px;margin:18px 0;"><div style="font-weight:bold;color:{CSS_WINE};font-size:13px;margin-bottom:6px;">ON DELIVERY: THREE REFLEXES THAT PROTECT YOU</div>'
+                  '<ol style="font-size:13.5px;margin:0;padding-left:18px;"><li><strong>Open each parcel in front of the driver, before signing</strong>, and check that the bottles are intact and match the packing list.</li>'
+                  '<li><strong>Write any damage or missing bottle on the delivery note before signing</strong> (parcel and bottle concerned). A note signed without reservation means the carrier considers the parcel complete and in good condition: no claim is possible afterwards.</li>'
+                  f'<li><strong>Photograph and tell us</strong>: the bottle, the parcel and the annotated note, to <a href="mailto:{config.CONTACT_EMAIL}" style="color:{CSS_WINE};">{config.CONTACT_EMAIL}</a>. We open the claim with Chronopost and guarantee a replacement, or a refund if a replacement is not possible.</li></ol></div>'
+                  "<p>We remain at your disposal and wish you a wonderful tasting.</p><p>Kind regards,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+        return _shell(f"Order {o.name} · collection booked", inner)
+    pick = _esc(fr_date(o.pickup_date)) if o.pickup_date else "(date à confirmer)"
+    inner = (f"<p>Bonjour {first},</p><p>J'ai le plaisir de vous confirmer que l'enlèvement de votre commande <strong>{_esc(o.name)}</strong> par Chronopost ({prod}) est réservé pour le <strong>{pick}</strong>. "
+             f"Livraison estimée en {cname} : <strong>{delay or 'quelques jours ouvrés'}</strong>, sauf aléa de transport ou de douane.</p>" + extra_html + _cartons_table(o, cs, with_tracking=True))
+    if exp["customs"]:
+        inner += (f'<div style="border:1px solid {CSS_WINE};border-radius:8px;background:#fdf8f8;padding:12px 16px;margin:16px 0;"><div style="font-weight:bold;color:{CSS_WINE};font-size:13px;margin-bottom:4px;">IMPORTANT — DOUANE (incoterm DAP)</div>'
+                  '<div style="font-size:13.5px;color:#222;">Votre commande voyage droits non acquittés : les droits de douane, la TVA et les frais de dédouanement de votre pays <strong>ne sont pas compris</strong> dans votre commande et vous seront demandés par Chronopost (ou son partenaire local) avant la livraison, par e-mail ou SMS. '
+                  'La copie de la facture commerciale servant au dédouanement est jointe ; trois originaux voyagent avec le premier colis.</div></div>')
+    inner += (f'<p style="font-size:13px;color:#555;">Ci-joint{"e" if n <= 1 else "s"} : la liste de colisage et {lab(n)} (un numéro de suivi par colis, cliquable ci-dessus).</p>' + _delivery_box()
+              + "<p>Nous restons à votre disposition et vous souhaitons une excellente dégustation.</p><p>Très cordialement,<br><strong>Jean-Sébastien CHEUNG-AH-SEUNG</strong><br>oWine</p>")
+    return _shell(f"Commande {o.name} · enlèvement réservé", inner)
+
+
+def export_alix_instructions(o, cs, exp: dict) -> str:
+    """Consignes de préparation propres à l'international (texte, pour l'e-mail Alix)."""
+    cname = _export.X.country_name(o.country); n = len(cs); ships = exp["shipments"]
+    lines = [f"ENVOI INTERNATIONAL — {cname} ({exp['zone_label']}) — produit Chronopost : {exp['product_label'].split(' ·')[0]}."]
+    if exp["customs"]:
+        if len(ships) > 1:
+            lines.append(f"Chaque carton est un ENVOI SÉPARÉ (limite {cname} : 6 bouteilles / 10 kg par envoi) : imprimer la facture commerciale de CHAQUE carton en 3 exemplaires (PDF joint, un bloc par carton) "
+                         "et glisser les 3 exemplaires dans une pochette Chronopost (réf. 2010) collée sur le carton concerné, à côté de l'étiquette.")
+        else:
+            lines.append("Imprimer la facture commerciale en 3 EXEMPLAIRES (PDF joint, 3 pages identiques) et glisser les 3 exemplaires dans une pochette Chronopost (réf. 2010) collée sur le colis A "
+                         + (f"(1/{n}), à côté de l'étiquette. Rien sur les autres colis. " if n > 1 else ", à côté de l'étiquette. "))
+            if n > 1:
+                lines.append(f"Coller sur chaque colis le sticker multi-pièces Chronopost avec sa position dans le groupage (1/{n}, 2/{n}…) : colis " + ", ".join(f"{c.ref} = {i + 1}/{n}" for i, c in enumerate(cs)) + ".")
+        lines.append("Ne pas utiliser de caisse en bois ; étiquette collée à plat sur le dessus, jamais sur une arête (code-barres).")
+    else:
+        lines.append("Pas de document douanier (Union européenne) : lettre de transport seule sur chaque colis" + (f" ; sticker multi-pièces 1/{n}, 2/{n}… à côté de l'étiquette." if n > 1 else "."))
+    return "\n".join(lines)
+
+
+def export_sheet(o, cs, exp: dict) -> dict:
+    """Compléments de la fiche de saisie chronopost.fr pour l'international : produit, valeur en douane, description, dimensions, incoterm, EORI."""
+    s = exp["settings"]
+    return {"product": exp["product_label"].split(" ·")[0], "product_code": _export.X.PRODUCTS[exp["product"]]["code"], "incoterm": exp["incoterm"], "eori": s.get("eori") or "(à renseigner dans Réglages douane)",
+            "customs_value": exp["totals"]["goods_ht"], "content": "Vin de Bourgogne AOP en bouteilles (75 cl) / Burgundy PDO wine", "dims": {k: (s.get("box_dims") or {}).get(k) or "à mesurer (Réglages douane)" for k in ("2031", "2033", "2036")},
+            "shipments": [{"suffix": sh["suffix"] or "—", "cartons": [c.ref for c in sh["cartons"]], "bottles": sum(int(l["qty"]) for c in sh["cartons"] for l in service.carton_lines(c)), "kg": round(sum(c.weight_kg for c in sh["cartons"]), 1),
+                           "value": round(sum(l["total_ht"] for l in exp["totals"]["lines"]) * (sum(int(l["qty"]) for c in sh["cartons"] for l in service.carton_lines(c)) / max(exp["totals"]["bottles"], 1)), 2)} for sh in exp["shipments"]],
+            "customs": exp["customs"], "invoice_desc": exp["invoice_desc"]}

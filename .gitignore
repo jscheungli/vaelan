@@ -12,3 +12,5 @@ __pycache__/
 
 # CSV d'import générés (éphémères)
 data/exports/
+.claude/
+app/web/static/_test/

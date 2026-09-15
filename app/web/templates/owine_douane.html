@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Douane · OWINE{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/c/{{ company.code }}">{{ company.name }}</a></li><li class="breadcrumb-item"><a href="/c/{{ company.code }}/owine">OWINE</a></li><li class="breadcrumb-item active">Douane &amp; export</li></ol></nav>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><h1 class="h4 mb-0"><i class="bi bi-globe2"></i> Douane &amp; export</h1><span class="small text-muted">réglages de l'exportateur, données douanières des vins, Shopify, règles Chrono Viti par pays</span></div>
+{% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+<ul class="nav nav-tabs small mb-3" role="tablist">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#t-vins">Données douanières des vins {% if missing %}<span class="badge text-bg-warning">{{ missing }} à compléter</span>{% endif %}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-reglages">Exportateur (EORI, signature, cartons)</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-shopify">Shopify {% if plan and (plan.hs or plan.weight) %}<span class="badge text-bg-info">{{ plan.hs|length + plan.weight|length }}</span>{% endif %}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t-pays">Pays &amp; offres Chrono Viti</button></li>
+</ul>
+<div class="tab-content">
+<div class="tab-pane fade show active" id="t-vins">
+  <p class="small text-muted">La facture commerciale exige pour chaque vin : couleur, millésime, contenance, <strong>degré d'alcool</strong> (sur l'étiquette de la bouteille), pays d'origine et code SH. Couleur et code SH sont proposés (référence oWine : …RB = rouge, …BB = blanc ; NC 22042113 blanc / 22042143 rouge, AOP Bourgogne ≤ 15 % vol) ; le degré doit être saisi. <a href="?tous=1">Afficher aussi les vins inactifs</a></p>
+  <form method="post" action="/c/{{ company.code }}/owine/douane/vins">
+  <div class="table-responsive"><table class="table table-sm small align-middle"><thead><tr class="text-muted"><th>Vin</th><th>Couleur</th><th>Millésime</th><th style="width:90px">% vol</th><th style="width:70px">cl</th><th style="width:110px">Code SH / NC</th><th style="width:70px">Origine</th></tr></thead><tbody>
+  {% for r in rows %}<tr class="{{ 'table-warning' if r.missing else '' }}">
+    <td><a href="/c/{{ company.code }}/owine/stock/{{ r.sku }}" class="text-decoration-none">{{ r.title }}</a><div class="text-muted" style="font-size:.7rem">{{ r.sku }}{% if r.missing %} · manque : {{ r.missing|join(', ') }}{% endif %}</div></td>
+    <td><select class="form-select form-select-sm" name="colour_{{ r.sku }}"><option value="">?</option>{% for c in ('rouge', 'blanc', 'rosé') %}<option value="{{ c }}" {% if r.colour == c %}selected{% endif %}>{{ c }}{% if r.colour == c and not r.colour_saved %} (déduit){% endif %}</option>{% endfor %}</select></td>
+    <td>{{ r.vintage or '—' }}</td>
+    <td><input class="form-control form-control-sm" name="abv_{{ r.sku }}" value="{{ r.abv if r.abv else '' }}" placeholder="13"></td>
+    <td><input class="form-control form-control-sm" name="vol_{{ r.sku }}" value="{{ r.volume_cl }}"></td>
+    <td><input class="form-control form-control-sm" name="hs_{{ r.sku }}" value="{{ r.hs }}" title="{{ 'saisi' if r.hs_saved else 'proposé' }}"></td>
+    <td><input class="form-control form-control-sm" name="origin_{{ r.sku }}" value="{{ r.origin }}"></td>
+  </tr>{% endfor %}</tbody></table></div>
+  <button class="btn btn-sm btn-dark">Enregistrer toutes les lignes</button>
+  </form>
+</div>
+<div class="tab-pane fade" id="t-reglages">
+  <div class="row g-3"><div class="col-lg-7">
+    <form method="post" action="/c/{{ company.code }}/owine/douane/reglages" class="small">
+      <div class="row g-2">
+        <div class="col-md-6"><label class="form-label mb-0 text-muted">N° EORI d'oWine (obligatoire pour exporter ; à demander sur douane.gouv.fr si absent)</label><input class="form-control form-control-sm" name="eori" value="{{ settings.eori }}" placeholder="FR928409887000xx"></div>
+        <div class="col-md-6"><label class="form-label mb-0 text-muted">SIRET (pied de facture)</label><input class="form-control form-control-sm" name="siret" value="{{ settings.siret }}"></div>
+        <div class="col-md-4"><label class="form-label mb-0 text-muted">Capital social (ex. 10 000 €)</label><input class="form-control form-control-sm" name="capital" value="{{ settings.capital }}"></div>
+        <div class="col-md-4"><label class="form-label mb-0 text-muted">RCS</label><input class="form-control form-control-sm" name="rcs" value="{{ settings.rcs }}"></div>
+        <div class="col-md-4"><label class="form-label mb-0 text-muted">Téléphone (facture)</label><input class="form-control form-control-sm" name="phone" value="{{ settings.phone }}"></div>
+        <div class="col-md-6"><label class="form-label mb-0 text-muted">Signataire</label><input class="form-control form-control-sm" name="contact" value="{{ settings.contact }}"></div>
+        <div class="col-md-6"><label class="form-label mb-0 text-muted">Lieu de signature</label><input class="form-control form-control-sm" name="sign_place" value="{{ settings.sign_place }}"></div>
+        {% for k, lab in (('2031', 'Carton 1 btl 2031'), ('2033', 'Carton 3 btl 2033'), ('2036', 'Carton 6 btl 2036')) %}<div class="col-md-4"><label class="form-label mb-0 text-muted">Dimensions {{ lab }} (L×l×h cm)</label><input class="form-control form-control-sm" name="dims_{{ k }}" value="{{ settings.box_dims[k] }}" placeholder="ex. 40x27x36"></div>{% endfor %}
+      </div>
+      <div class="mt-2"><button class="btn btn-sm btn-dark">Enregistrer</button> <span class="text-muted">TVA {{ settings.vat }} · {{ settings.rcs }}</span></div>
+    </form>
+  </div><div class="col-lg-5">
+    <div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Signature (image PNG, fond transparent de préférence)</div><div class="card-body py-2 small">
+      {% if has_sig %}<img src="/c/{{ company.code }}/owine/douane/signature.png" alt="signature" style="max-height:70px;border:1px solid #dee2e6;border-radius:.3rem;padding:4px;background:#fff"><div class="text-success mt-1"><i class="bi bi-check2"></i> apposée automatiquement sur les 3 exemplaires de chaque facture commerciale</div>{% else %}<div class="text-warning-emphasis mb-1">Aucune signature : les factures devront être signées à la main (Alix imprime, mais seul l'exportateur signe) — chargez une image de votre signature.</div>{% endif %}
+      <form method="post" action="/c/{{ company.code }}/owine/douane/signature" enctype="multipart/form-data" class="d-flex gap-2 mt-2"><input type="file" name="file" accept="image/png,image/jpeg" class="form-control form-control-sm"><button class="btn btn-sm btn-dark">Charger</button></form>
+      {% if has_sig %}<form method="post" action="/c/{{ company.code }}/owine/douane/signature" class="mt-1"><button class="btn btn-sm btn-link p-0 text-danger" onclick="return confirm('Retirer la signature ?')">Retirer</button></form>{% endif %}
+    </div></div>
+  </div></div>
+</div>
+<div class="tab-pane fade" id="t-shopify">
+  {% if plan.error %}<div class="alert alert-warning small py-2">Shopify : {{ plan.error }}</div>{% else %}
+  <p class="small text-muted">Vaelan peut écrire dans Shopify le <strong>code SH</strong> et l'<strong>origine FR</strong> de chaque variante vin (Shopify les imprime sur ses propres documents douaniers et les exige pour les Markets) et corriger le <strong>poids des sélections</strong> (1,5 kg par bouteille contenue, aujourd'hui 0 kg pour la plupart : les frais de port au poids sont faux).</p>
+  <div class="row g-3"><div class="col-lg-6"><div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Codes SH + origine à écrire ({{ plan.hs|length }})</div><div class="card-body py-2 small" style="max-height:320px;overflow:auto">{% for x in plan.hs %}<div>{{ x.title }} <span class="text-muted">{{ x.from[0] }}/{{ x.from[1] }} → <strong>{{ x.hs }}/{{ x.origin }}</strong></span></div>{% else %}<span class="text-success">à jour</span>{% endfor %}</div></div></div>
+  <div class="col-lg-6"><div class="card shadow-sm"><div class="card-header py-2 small fw-semibold">Poids des sélections à corriger ({{ plan.weight|length }})</div><div class="card-body py-2 small" style="max-height:320px;overflow:auto">{% for x in plan.weight %}<div>{{ x.title }} <span class="text-muted">{{ x.bottles }} btl : {{ x.from }} kg → <strong>{{ x.to }} kg</strong></span></div>{% else %}<span class="text-success">à jour</span>{% endfor %}</div></div></div></div>
+  {% if plan.hs or plan.weight %}<form method="post" action="/c/{{ company.code }}/owine/douane/shopify" class="mt-2"><button class="btn btn-sm btn-primary" onclick="return confirm('Écrire ces {{ plan.hs|length + plan.weight|length }} modifications dans Shopify ?')"><i class="bi bi-cloud-upload"></i> Écrire dans Shopify</button></form>{% endif %}
+  {% endif %}
+</div>
+<div class="tab-pane fade" id="t-pays">
+  <p class="small text-muted">Lecture des fiches pays du <em>Guide export Chrono Viti 2024</em> (calques du PDF) et des zonings Chrono Classic / Chrono Express. « n.c. » = non communiqué dans le guide : demander confirmation à Chronopost avant d'ouvrir le pays sur Shopify. Destinations interdites Chrono Viti : {{ forbidden|join(', ') }}.</p>
+  <div class="table-responsive"><table class="table table-sm small align-middle"><thead><tr class="text-muted"><th>Pays</th><th>Zone</th><th>Particulier · Classic</th><th>Particulier · Express</th><th>Société · Classic</th><th>Société · Express</th><th>Notes</th></tr></thead><tbody>
+  {% for m in matrix %}<tr>
+    <td><strong>{{ m.name }}</strong> <span class="text-muted">{{ m.code }}</span></td><td>{{ 'UE' if m.zone == 'UE' else 'hors UE · douane' }}</td>
+    {% for who in ('b2c', 'b2b') %}{% for p in ('classic', 'express') %}{% set s = m[who][p] %}<td><span class="badge text-bg-{{ 'success' if s[0] == 'ok' else ('warning' if s[0] == 'warn' else 'danger') }}">{{ s[1]|replace('Chrono Classic ', '')|replace('Chrono Express ', '')|truncate(38) }}</span></td>{% endfor %}{% endfor %}
+    <td style="font-size:.72rem">{% for n in m.notes %}<div>• {{ n }}</div>{% endfor %}</td>
+  </tr>{% endfor %}</tbody></table></div>
+</div>
+</div>
+{% endblock %}

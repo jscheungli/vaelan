@@ -155,6 +155,33 @@
     renvoient 403, même par URL directe) et la nav masque « Tâches » sans accès.
   {% endcall %}
 
+  {% call sec('ow-export', 'OWINE — commandes internationales et export (Chrono Viti)') %}
+    <strong>Zones</strong> (pays de livraison Shopify) : <em>France</em> (FR, Monaco) = circuit habituel Chrono 13 ; <em>UE</em> = lettre de transport seule, mais TVA du pays de
+    destination (guichet OSS, dès le premier euro pour les produits soumis à accise) et accises à traiter (particulier : représentant fiscal dans le pays ; société : e-DSA GAMMA) ;
+    <em>hors UE et DROM-COM</em> = export : facture commerciale bilingue en <strong>3 exemplaires</strong> dans la pochette du colis A (1/n), rien sur les autres colis, stickers
+    multi-pièces, EORI d'oWine, incoterm <strong>DAP</strong> (droits et taxes payés par le destinataire), vente exonérée de TVA (art. 262 I CGI), justificatif d'export à archiver.
+    <br><strong>Règles par pays</strong> = fiches pays du guide export Chrono Viti 2024 (page Douane, onglet Pays) : offre autorisée (Chrono Classic route / Chrono Express avion) selon
+    particulier ou société, délai, limites (Suisse particuliers : Classic seul, 6 bouteilles et 10 kg par envoi → <strong>un envoi et une facture par carton</strong> au-delà de 6 bouteilles ;
+    Japon, Corée, Chine, Australie, Taïwan… : particuliers interdits ; Royaume-Uni : Express seul, TVA GB due par le vendeur sous 135 £ ; USA particuliers : avenant Chrono Viti B2C US).
+    Destinations interdites Chrono Viti : liste dans la configuration. « n.c. » = non communiqué → confirmer avec Chronopost.
+    <br><strong>Sur la commande</strong> (carte « International ») : type de client déduit (société si société, n° TVA ou EORI), produit Chronopost par défaut = premier autorisé,
+    contrôles automatiques (destination, coordonnées complètes : téléphone et e-mail obligatoires, pas de boîte postale, EORI/TVA pour une société, identifiant fiscal du particulier
+    quand le pays l'exige ; données douanières des vins : couleur, millésime, degré, code SH, origine ; valeurs HT non nulles ; limite bouteilles/envoi ; étiquettes) et étapes à cocher
+    (coordonnées confirmées, EUR.1 au-delà de 6 000 €, signature manuelle, facture Pennylane sans TVA, OSS / accises en UE, dédouané, justificatif). Les e-mails ne partent pas tant qu'un
+    contrôle bloquant est rouge ou que la facture commerciale définitive (numéros de colis) n'est pas générée.
+    <br><strong>Facture commerciale</strong> (modèle Chronopost « Facture commerciale Viti to B ») : n° FC-OWxxxx (ou n° Pennylane saisi), date, expéditeur avec EORI et TVA, destinataire avec
+    téléphone, e-mail, EORI/TVA (société) ou identifiant fiscal, numéros de colis et positions dans le groupage, poids brut (1,5 kg × bouteilles) et net (brut − emballage Chrono Viti),
+    une ligne par vin (description domaine · appellation · couleur · millésime · 75 cl · degré, origine FR, code SH/NC 22042113 blanc / 22042143 rouge), prix unitaires et totaux <strong>HT
+    en EUR</strong> (prix Shopify ÷ 1,2 tant que la boutique prélève la TVA française ; prix tels quels si aucune TVA), port et assurance à part, usage final (revente / usage personnel),
+    exonération de TVA, déclaration d'origine sur facture (UE préférentielle) datée, localisée et signée (image de signature de la page Douane, sinon à la main). Générée et archivée en
+    base (versionnée) ; jointe aux e-mails Alix (à imprimer ×3) et client (copie).
+    <br><strong>Formulaire public</strong> /douane/&lt;jeton&gt; (FR/EN selon la langue Shopify du client) : téléphone, précisions d'adresse, particulier / société, TVA, EORI, identifiant fiscal,
+    accord DAP → complète la commande et coche « coordonnées confirmées ». <strong>Page Douane</strong> : EORI, SIRET, capital, signature, dimensions des cartons ; données douanières des
+    vins (couleur déduite de la référence …RB/…BB, code SH proposé, degré à saisir) ; écriture dans Shopify des codes SH, de l'origine et du poids réel des sélections ; matrice pays.
+    <strong>Synchronisation</strong> : langue du client, TVA et port prélevés, attributs de commande (n° TVA / EORI saisis au panier), société de facturation ; tâches « formalités export »
+    et « données douanières manquantes » pour les commandes internationales à traiter ; à l'envoi : tâches « suivre le dédouanement » (J+2) et « justificatif d'exportation » (J+15).
+  {% endcall %}
+
   {% call sec('gl', 'Grand-livre client (Paiements)') %}
     Le détail d'un client reproduit le <strong>grand-livre Pennylane</strong> du compte 411, <strong>par exercice
     comptable (1<sup>er</sup> juillet → 30 juin)</strong> — sélecteur d'exercice, à-nouveaux du 1<sup>er</sup> juillet
